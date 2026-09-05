@@ -1,0 +1,156 @@
+{
+  "project_name": "FlixIT",
+  "archetype": "THE PERFORMANCE PRO / DARK STREAMING EXPERIENCE",
+  "theme": "Dark Theme (#050505 / #141414 with Netflix Red #E50914)",
+  "context": "SaaS / Streaming Platform (Italian)",
+  "typography": {
+    "headline_font": "'Unbounded', sans-serif",
+    "body_font": "'Inter', sans-serif",
+    "wordmark_font": "'Unbounded', sans-serif",
+    "font_weights": {
+      "wordmark": 900,
+      "h1": 800,
+      "h2": 700,
+      "h3": 600,
+      "body": 400,
+      "body_bold": 600
+    },
+    "hierarchy": {
+      "h1_hero": "text-4xl sm:text-5xl lg:text-6xl tracking-tight leading-tight",
+      "h2_section": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-bold",
+      "h3_card_title": "text-lg sm:text-xl font-semibold",
+      "body_large": "text-base sm:text-lg text-neutral-300 leading-relaxed",
+      "body_default": "text-sm sm:text-base text-neutral-300",
+      "caption": "text-xs text-neutral-400 uppercase tracking-widest"
+    }
+  },
+  "colors": {
+    "background_void": "#050505",
+    "background_surface": "#0F0F12",
+    "background_card": "#18181C",
+    "background_modal_panel": "rgba(18, 18, 22, 0.88)",
+    "primary_red": "#E50914",
+    "primary_red_hover": "#F6121D",
+    "primary_red_active": "#B80710",
+    "accent_glow": "rgba(229, 9, 20, 0.35)",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#A3A3A3",
+    "text_muted": "#666666",
+    "border_subtle": "rgba(255, 255, 255, 0.08)",
+    "border_focus": "#E50914",
+    "status_error_bg": "rgba(229, 9, 20, 0.15)",
+    "status_error_border": "rgba(229, 9, 20, 0.4)",
+    "status_success_bg": "rgba(34, 197, 94, 0.15)",
+    "status_success_border": "rgba(34, 197, 94, 0.4)"
+  },
+  "brand_identity": {
+    "wordmark_logo": {
+      "concept": "Modern typographic wordmark 'FLIX-IT' with geometric play-triangle notch inside the X character and crisp red/white split",
+      "split_definition": "'FLIX' rendered in Netflix Red (#E50914) with linear gradient to (#FF2E38); hyphen rendered as a subtle red accent dash; 'IT' rendered in pure sharp white (#FFFFFF)",
+      "svg_spec_header": {
+        "viewBox": "0 0 148 36",
+        "width": 132,
+        "height": 32,
+        "font_family": "Unbounded, sans-serif",
+        "font_weight": 900,
+        "letter_spacing": "-0.04em"
+      },
+      "svg_spec_modal": {
+        "viewBox": "0 0 180 44",
+        "width": 160,
+        "height": 40,
+        "font_family": "Unbounded, sans-serif",
+        "font_weight": 900,
+        "letter_spacing": "-0.04em"
+      },
+      "implementation_instructions": "Must be exported as an inline SVG React Component (`<Logo variant='header' | 'modal' />`) in `src/components/Logo.js` or `src/components/Logo.tsx`. Do NOT use raster image assets."
+    }
+  },
+  "auth_modal": {
+    "trigger_source": "Opened when clicking 'Accedi' button in the Main Header or avatar dropdown",
+    "layout_mode": "Full-screen fixed overlay (z-index 1300 / z-50)",
+    "backdrop": {
+      "background_image": "https://images.unsplash.com/photo-1626814026160-2237a95fc5a0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHxkYXJrJTIwY2luZW1hJTIwbW92aWUlMjBwb3N0ZXIlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4ODYwNTQ2Mnww&ixlib=rb-4.1.0&q=85",
+      "background_overlay": "radial-gradient(circle at center, rgba(5,5,5,0.78) 0%, rgba(5,5,5,0.96) 100%), linear-gradient(to bottom, rgba(5,5,5,0.85) 0%, rgba(5,5,5,0.95) 100%)",
+      "blur_effect": "backdrop-blur-xl"
+    },
+    "card_panel": {
+      "width_desktop": "450px",
+      "width_mobile": "100%",
+      "padding": "p-8 sm:p-10",
+      "border_radius": "20px",
+      "bg_color": "rgba(18, 18, 22, 0.88)",
+      "border": "1px solid rgba(255, 255, 255, 0.10)",
+      "box_shadow": "0 32px 80px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.05) inset"
+    },
+    "controls": {
+      "close_button": {
+        "position": "absolute top-6 right-6",
+        "style": "bg-white/10 hover:bg-white/20 text-white rounded-full p-2.5 transition-all duration-200 transform hover:scale-105",
+        "data_testid": "auth-modal-close-button"
+      },
+      "mode_switch": {
+        "text_login": "Non hai un account? Registrati ora",
+        "text_register": "Hai già un account? Accedi",
+        "style": "text-sm text-neutral-400 hover:text-white cursor-pointer transition-colors duration-200 font-medium mt-6 text-center"
+      },
+      "form_inputs": {
+        "container_style": "space-y-4",
+        "input_height": "h-12 (48px)",
+        "input_bg": "rgba(255, 255, 255, 0.07)",
+        "input_border": "1px solid rgba(255, 255, 255, 0.12)",
+        "input_focus": "focus:border-[#E50914] focus:ring-2 focus:ring-[#E50914]/30",
+        "input_radius": "rounded-xl",
+        "text_style": "text-white text-sm placeholder:text-neutral-500 font-sans"
+      },
+      "password_toggle": {
+        "icon": "Lucide Eye / EyeOff icon or MUI Visibility/VisibilityOff",
+        "button_style": "absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-white transition-colors"
+      },
+      "submit_button": {
+        "bg_color": "#E50914",
+        "bg_hover": "#F6121D",
+        "text_color": "#FFFFFF",
+        "font_family": "Unbounded, sans-serif",
+        "font_weight": 700,
+        "height": "h-12 (48px)",
+        "radius": "rounded-xl",
+        "style": "w-full shadow-lg shadow-[#E50914]/25 hover:shadow-[#E50914]/40 transition-all duration-200 transform active:scale-[0.99] flex items-center justify-center font-bold tracking-wide"
+      }
+    }
+  },
+  "media_assets": {
+    "auth_bg_wall": "https://images.unsplash.com/photo-1626814026160-2237a95fc5a0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MTN8MHwxfHNlYXJjaHwxfHxkYXJrJTIwY2luZW1hJTIwbW92aWUlMjBwb3N0ZXIlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4ODYwNTQ2Mnww&ixlib=rb-4.1.0&q=85"
+  },
+  "testing_and_data_ids": {
+    "main_header": "main-header",
+    "header_logo": "header-logo-svg",
+    "modal_logo": "modal-logo-svg",
+    "header_login_button": "header-login-button",
+    "auth_modal_overlay": "auth-modal-overlay",
+    "auth_modal_close_button": "auth-modal-close-button",
+    "auth_modal_title": "auth-modal-title",
+    "auth_modal_name_input": "auth-modal-name-input",
+    "auth_modal_email_input": "auth-modal-email-input",
+    "auth_modal_password_input": "auth-modal-password-input",
+    "auth_modal_password_toggle": "auth-modal-password-toggle",
+    "auth_modal_submit_button": "auth-modal-submit-button",
+    "auth_modal_mode_switch": "auth-modal-mode-switch",
+    "auth_modal_alert": "auth-modal-alert"
+  },
+  "universal_guidelines_for_main_agent": [
+    "You tend to converge toward generic outputs. In frontend design, this creates what users call 'AI slop'. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition (e.g., transition: all). This breaks transforms. Always add transitions for specific interactive elements like button, input.",
+    "You MUST NOT center align the app container (.App { text-align: center; }).",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER use AI assistant Emoji characters like 🤖, 🧠, 💭, 💡, 🔮, 🎯 for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "All interactive and key informational elements MUST include a data-testid attribute to facilitate robust automated testing."
+  ]
+}

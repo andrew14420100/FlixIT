@@ -1,0 +1,30 @@
+{
+  "summary": "Smoke test iteration 5. Backend: 7/7 pytest passed (health, trending non-empty, /content/550 title=Fight Club, /content/1399?type=tv 200 no 500, /search?q=matrix has items, admin login returns JWT, /public/sections contains all 4 expected Italian names). Frontend on REACT_APP_BACKEND_URL: home loads with hero (The Artful Dodger), 7 rows and 49 images rendered, 'Top 10 titoli oggi' text present after scroll, 'I titoli del momento' + 'Aggiunti di recente' visible. Header search icon expands, typing 'matrix' shows RISULTATI dropdown with Matrix / Matrix Reloaded / Revolutions / Resurrections. Clicking 'Altre info' navigates to a detail route /browse/tv/{id} showing title, overview, PANORAMICA/EPISODI/DETTAGLI/TRAILER tabs (page-based, not modal, but functionally matches spec of showing detail with title+overview - Play not pressed). Admin /admin login with admin@admin.com/admin123 redirects to /admin/dashboard showing Dashboard/Contenuti/Hero/Sezioni/Menu/Impostazioni sidebar. No backend errors observed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Detail page images (TMDB)", "issues": ["Mixed-content warnings: some tmdb image URLs are http://image.tmdb.org/... auto-upgraded to https by browser. Non-blocking but should be normalized to https at source."]},
+      {"screen": "React 19", "issues": ["Recurring console errors: 'Accessing element.ref was removed in React 19' from a third-party component (likely slick-carousel/MUI ref bridge). Non-blocking, tracked in iter4 too."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_smoke_iter5.py", "/app/test_reports/pytest/iter5.xml"],
+  "action_items": [
+    "(Cosmetic) Force TMDB image URLs to https to remove mixed-content warnings on detail pages.",
+    "(Cosmetic) Track and fix legacy element.ref usage that logs on every render under React 19."
+  ],
+  "critical_code_review_comments": [
+    "All 4 acceptance smoke endpoints are green: /api/health, /api/public/homepage/trending, /api/public/content/{id}, /api/public/search, /api/public/sections, /api/admin/login.",
+    "TMDB v4 bearer token in backend/.env is correctly loaded (Fight Club title returned).",
+    "/api/public/content/1399?type=tv returns 200 - no 500 regression from check_vixsrc_with_cache/vixsrc_cache path.",
+    "Admin sections seed is present with the 4 canonical Italian names."
+  ],
+  "updated_files": ["/app/backend/tests/test_smoke_iter5.py", "/app/test_reports/iteration_5.json"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@admin.com / admin123 (verified).",
+  "seed_data_creation": "None. Admin sections previously seeded via /api/admin/sections/add-predefined (verified all 4 names).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend smoke: /app/backend/tests/test_smoke_iter5.py. REACT_APP_BACKEND_URL must be exported. Detail flow: 'Altre info' opens a full page (/browse/{type}/{id}) not a modal - acceptance says 'detail modal/page', so page counts. Search flow: click [data-testid=search-box] then fill [data-testid=search-input]. Playback via vixsrc iframe is out of scope - don't press Riproduci/Guarda S1 E1."
+}

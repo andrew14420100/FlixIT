@@ -1,0 +1,125 @@
+{
+  "timestamp": "2026-04-14T11:42:03.061777",
+  "total_tests": 13,
+  "passed_tests": 13,
+  "success_rate": 100.0,
+  "results": [
+    {
+      "test": "Health Check",
+      "method": "GET",
+      "endpoint": "api/health",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"status\":\"healthy\",\"timestamp\":\"2026-04-14T11:42:00.413868+00:00\"}"
+    },
+    {
+      "test": "Public Menu",
+      "method": "GET",
+      "endpoint": "api/public/menu",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[]}"
+    },
+    {
+      "test": "Trending Movies",
+      "method": "GET",
+      "endpoint": "api/public/tmdb/trending/movie",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":83533,\"type\":\"movie\",\"title\":\"Avatar - Fuoco e cenere\",\"overview\":\"In seguito al"
+    },
+    {
+      "test": "Popular Movies",
+      "method": "GET",
+      "endpoint": "api/public/tmdb/popular/movie",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":83533,\"type\":\"movie\",\"title\":\"Avatar - Fuoco e cenere\",\"overview\":\"In seguito al"
+    },
+    {
+      "test": "Top Rated Movies",
+      "method": "GET",
+      "endpoint": "api/public/tmdb/top_rated/movie",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":13,\"type\":\"movie\",\"title\":\"Forrest Gump\",\"overview\":\"Forrest Gump - un ragazzo n"
+    },
+    {
+      "test": "Now Playing Movies",
+      "method": "GET",
+      "endpoint": "api/public/tmdb/now_playing",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":687163,\"type\":\"movie\",\"title\":\"L'ultima missione: Project Hail Mary\",\"overview\":"
+    },
+    {
+      "test": "Popular TV Shows",
+      "method": "GET",
+      "endpoint": "api/public/tmdb/popular/tv",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":456,\"type\":\"tv\",\"title\":\"I Simpson\",\"overview\":\"I Simpson (The Simpsons) \u00e8 una p"
+    },
+    {
+      "test": "Top Rated TV Shows",
+      "method": "GET",
+      "endpoint": "api/public/tmdb/top_rated/tv",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":246,\"type\":\"tv\",\"title\":\"Avatar - La leggenda di Aang\",\"overview\":\"I fratelli Ka"
+    },
+    {
+      "test": "TV On The Air",
+      "method": "GET",
+      "endpoint": "api/public/tmdb/on_the_air",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":2224,\"type\":\"tv\",\"title\":\"The Daily Show\",\"overview\":\"\",\"poster_path\":\"/ixcfyK7i"
+    },
+    {
+      "test": "Home Contents",
+      "method": "GET",
+      "endpoint": "api/public/contents/home",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":76479,\"type\":\"tv\",\"title\":\"The Boys\",\"overview\":\"Uno sguardo irriverente a ci\u00f2 c"
+    },
+    {
+      "test": "Homepage Trending",
+      "method": "GET",
+      "endpoint": "api/public/homepage/trending",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":76479,\"type\":\"tv\",\"title\":\"The Boys\",\"overview\":\"Uno sguardo irriverente a ci\u00f2 c"
+    },
+    {
+      "test": "Homepage Latest",
+      "method": "GET",
+      "endpoint": "api/public/homepage/latest",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"items\":[{\"tmdbId\":1290417,\"type\":\"movie\",\"title\":\"THRASH \u2013 Furia dall\u2019Oceano\",\"overview\":\"Un uraga"
+    },
+    {
+      "test": "Top 10",
+      "method": "GET",
+      "endpoint": "api/public/top10",
+      "expected_status": 200,
+      "actual_status": 200,
+      "success": true,
+      "response_preview": "{\"enabled\":true,\"items\":[{\"tmdbId\":1641319,\"type\":\"movie\",\"title\":\"Sniper: No Nation\",\"overview\":\"\","
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 6 tested new FlixIT features: mixed genre rows, hero fallback, auth modal, new logo, trailer components, enlarged audio buttons. Backend: 12/12 pytest passed (test_iter6_features.py) — /public/tmdb/genre/16/mixed returns both movie+tv, /public/available-sections all genre sections are media_type='mixed' with no banned names, /public/hero returns contentId+mediaType, /public/search?q=matrix and /public/homepage/{trending,latest} and /public/top10 non-empty, /public/tmdb/upcoming 200, register new user returns token, login with testutente@flixit.local/test1234 returns token, wrong password 4xx, repeated TMDB call still 200 (cache OK). Frontend: header-logo-svg present, header-login-button present when logged out, row titles ['I titoli del momento','Aggiunti di recente','Top 10 titoli oggi','In arrivo','Animazione'] — NO row contains '· Film' or '· Serie TV'. top10-slider with 10 top10-item-* rendered. Auth modal: header-login-button opens auth-modal-overlay with 'Bentornato' title; mode switch shows 'Crea il tuo account' + auth-modal-name-input; register with random TEST_ email succeeds, page reloads, header-login-button disappears, localStorage.user_token set. /account logged out shows account-logged-out with account-open-login that opens modal. Wrong password shows auth-modal-alert 'Invalid credentials'. Correct login (testutente@flixit.local/test1234) succeeds. Escape and close-button both close modal. Detail /browse/tv/1399: detail-cover-image + detail-trailer iframe both mounted, hero container starts at top:0 (no letterbox), audio-toggle-button is 58x58 (>=50w), icon toggles on click. Detail /browse/movie/550 TRAILER tab: trailer-tab-player + trailer-tab-player-start present; after click, trailer-tab-player-toggle-play + trailer-tab-player-toggle-mute controls appear. HOWEVER YouTube served 'Video unavailable / This content isn't available' inside the iframe (datacenter IP block) and our trailer-tab-player-unavailable fallback did NOT trigger — the raw YouTube error UI stays visible under our controls (expected caveat per spec; reported).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CleanTrailer (Trailer tab)", "issue": "On /browse/movie/550 the YouTube iframe returns 'Video unavailable / This content isn't available' (embed refused / datacenter IP). Our onError postMessage fallback does not fire so trailer-tab-player-unavailable state is never shown; user sees raw YouTube error UI with our play/mute controls overlaid on top.", "selector": "[data-testid='trailer-tab-player']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All pages", "issues": ["Repeated React 19 console error: 'Accessing element.ref was removed in React 19...' (carried over from iter5, non-blocking)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter6_features.py", "/app/test_reports/pytest/iter6.xml"],
+  "action_items": [
+    "Trailer fallback: current fallback relies on YouTube onError postMessage which does not fire for 'Video unavailable / This content isn't available'. Consider probing YouTube oEmbed (https://www.youtube.com/oembed?url=...) server-side or in the client and pre-hiding the iframe when 404, OR listen for the 'onStateChange' -1/150/101/150 error codes via YT IFrame API instead of postMessage-only."
+  ],
+  "critical_code_review_comments": [
+    "Backend mixed-genre and available-sections behave exactly as spec.",
+    "Hero endpoint returns contentId+mediaType (fallback path OK).",
+    "Auth register/login + wrong-password flows all working through the new AuthModal.",
+    "New TrailerPlayer on TV detail page renders full-bleed (top:0, no letterbox).",
+    "Enlarged audio-toggle-button confirmed at 58x58 (spec required >=50)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter6_features.py", "/app/test_reports/iteration_6.json"],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "test_credentials": "admin@admin.com/admin123, testutente@flixit.local/test1234 (both verified via API and via AuthModal).",
+  "seed_data_creation": "Registered several TEST_<uuid>@flixit.local users (throwaway). No cleanup performed — expected acceptable for test users prefixed TEST_.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend suite: /app/backend/tests/test_iter6_features.py. Detail /browse/movie/550 TRAILER tab: YouTube blocks the embed from datacenter IP with 'Video unavailable'; our controls appear but trailer-tab-player-unavailable fallback state does not activate — spec allows either state but flags raw YouTube UI staying visible as a bug. Tabs on movie/550 are ['PANORAMICA','DETTAGLI','TRAILER','SCARICA'] (no EPISODI); on tv/1399 they are ['PANORAMICA','EPISODI','DETTAGLI','TRAILER']. Home rows now render 'Animazione' etc. as mixed rows without '· Film' or '· Serie TV' suffixes.",
+  "rca of the issue": "Trailer 'Video unavailable' fallback miss: CleanTrailer.tsx relies on YouTube postMessage onError events. When YouTube's own embed player renders the 'Video unavailable / This content isn't available' inline UI (common for IP-blocked or region-restricted embeds), it does NOT dispatch an onError postMessage — the iframe is technically 'playing' the error card. Result: our fallback (trailer-tab-player-unavailable) never mounts, and the user sees YouTube's error UI behind our custom controls. Mitigation: (a) call YouTube oEmbed API to pre-check the videoId before instantiating the iframe, or (b) use YT.PlayerState error codes via IFrame API onStateChange (2,5,100,101,150) instead of postMessage, or (c) use a MutationObserver / timeout — if no 'playing' state within N seconds after user Start, switch to fallback."
+}

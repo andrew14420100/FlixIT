@@ -1,0 +1,22 @@
+{
+  "summary": "Verified FlixIT player-stability bug fix and watch-progress threshold change. All specified scenarios passed on public preview URL: iframe src / DOM node / window.history / page URL remained stable for 35+ seconds after mount for card-play, hero-play, and logged-in resume flows. In-app back-button returns to /browse. Browser go_back returns to /browse in a single call, confirming no history pollution. Watch-progress backend threshold now 10s (progress=5 -> skipped, progress=12 -> saved). Continue watching row renders and backend persists item with progress > 10.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_watch_progress.py",
+    "/app/test_reports/pytest/watch_progress.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "WatchPage.tsx: startAt persisted via useState + resolved once via effect before iframe mounts; useMemo on [id,type,season,episode,startAt] with key=url on iframe correctly prevents re-mount. Good fix.",
+    "handleGoBack uses history.length delta (extra = history.length - historyLenAtMount). Works but note history.length includes forward-history too; if user navigated forward before entering /watch this could over-estimate. Not observed in tests. Consider tracking a listener on 'popstate' or using a routed history stack for a more robust solution.",
+    "Backend threshold literal 10 duplicated in two places (frontend MIN_WATCH_SECONDS + backend). Consider centralising as env/config to avoid drift."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "See /app/memory/test_credentials.md - two test users appended (resume_<ts>@example.com / Testpass123!).",
+  "seed_data_creation": "Created 2 test users + 1 watch-progress entry (tmdb_id=1386315, progress=600->634) for the resume test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Player stability regression suite: pytest /app/backend/tests/test_watch_progress.py + Playwright checks on iframe src / history.length / DOM marker over 35s window on /watch/movie/<id>. vixsrc.to shows JW Player Error 102630 in headless Chrome (codec/DRM) - expected, ignore. Trending movie fields used: item.tmdbId, item.type."
+}

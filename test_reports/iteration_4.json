@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 4 testing PASSED across backend and frontend. Backend: 14/14 pytest tests green covering availability GET/POST, filtered list endpoints (trending, genre 37, popular tv, top10) with spot-checked items all available on vixsrc, upcoming NOT filtered and >=10 items, trailer tv/76479 returns tmdb key, movie/1 -> 404, admin settings GET/PUT (unauth 401, sc_base_url invalid domain -> trailer still falls back to tmdb), refresh-catalog returns ~movie 13501 / tv 4799. Frontend: row-title inner <a> left = first video-card left = 46px (aligned). Top 10 slick-active=7, svg text top/bottom within <=1px of poster img. Hover: opens (data-state=open), on leave data-state=closed at 150ms, DOM removed by 700ms. Header (logged out): menu shows Account/My-list/Accedi (no logout); header-avatar renders default.webp. Login via API + localStorage token: menu shows Account/My-list/Esci. Avatar picker: chose purple, /api/auth/me returns profileImage=purple, header-avatar src updates to /avatars/purple.webp. Admin /admin/settings shows vixsrc-movie-count 13501, vixsrc-tv-count 4799 with sc-base-url-input, save-settings-button, refresh-catalog-button all wired. Search 'Avatar' returns 7 results; 5/5 spot-checked results resolved as available on vixsrc.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Top10Slider RankNumber", "issues": ["Console warning: '<svg> attribute width: Expected length, \"auto\".' repeats 10x. RankNumber SVG is being rendered with width='auto' before getBBox measures. Cosmetic, not visible, but pollutes console. Consider defaulting width to a numeric px before measurement (e.g. width={measured || 0})."]},
+      {"screen": "Top10 poster height", "issues": ["Top10 poster img height=172.5px vs horizontal video-card img height=168.09px (diff 4.4px). Spec tolerance is 4px so this is marginal; visually not noticeable but exceeds tolerance by 0.4px."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter4_availability_trailer.py",
+    "/app/test_reports/pytest/iter4.xml"
+  ],
+  "action_items": [
+    "(Optional/cosmetic) Fix SVG width='auto' warning in Top10Slider RankNumber by initialising width to a numeric value before getBBox measurement.",
+    "(Optional) Tighten Top10 poster height to match horizontal card height within 4px (currently 4.4px off)."
+  ],
+  "critical_code_review_comments": [
+    "Availability filter is applied consistently across trending/genre/popular/top10, and upcoming correctly bypasses filtering per spec.",
+    "Trailer endpoint gracefully falls back to tmdb when sc_base_url is unreachable - verified with example.invalid.",
+    "Admin settings correctly requires auth (unauth GET -> 401/403).",
+    "React 19 'element.ref' deprecation warnings recur across renders (likely from a MUI/older third-party component using legacy ref access). Not blocking, but should be tracked."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "New test user registered for this iteration: iter4_1788551462@example.com / Testpass123! (added purple avatar). Admin: admin@admin.com / admin123.",
+  "seed_data_creation": "Registered 1 user (iter4_<ts>@example.com) with profileImage=purple.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend tests file: /app/backend/tests/test_iter4_availability_trailer.py. Requires REACT_APP_BACKEND_URL env var. Known vixsrc-available IDs used: movie 1084242, tv 76479. Movie 1 is a good known-unavailable id. Search flow: click [data-testid=search-box] first to expand the collapsible input; then fill [data-testid=search-input]. Header avatar image = /avatars/{color}.webp - defaults to default.webp when logged out. Console noise: React19 element.ref deprecation + '<svg width=auto>' from Top10 RankNumber - both non-blocking."
+}

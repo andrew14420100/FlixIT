@@ -1,0 +1,138 @@
+@import url('https://fonts.googleapis.com/css2?family=Unbounded:wght@200..900&family=Inter:wght@100..900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: #050505;
+    color: #fff;
+}
+
+code {
+    font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+/* ========== CSS VARIABLES ========== */
+@layer base {
+    :root {
+        --background: 0 0% 2%;
+        --foreground: 0 0% 98%;
+        --card: 0 0% 6%;
+        --card-foreground: 0 0% 98%;
+        --popover: 0 0% 6%;
+        --popover-foreground: 0 0% 98%;
+        --primary: 0 84% 46%;
+        --primary-foreground: 0 0% 98%;
+        --secondary: 0 0% 10%;
+        --secondary-foreground: 0 0% 98%;
+        --muted: 0 0% 10%;
+        --muted-foreground: 0 0% 63.9%;
+        --accent: 0 0% 10%;
+        --accent-foreground: 0 0% 98%;
+        --destructive: 0 62.8% 50%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 0 0% 14.9%;
+        --input: 0 0% 14.9%;
+        --ring: 0 84% 46%;
+        --radius: 0.5rem;
+    }
+}
+
+@layer base {
+    * { @apply border-border; }
+    body { @apply bg-background text-foreground; }
+}
+
+@layer base {
+    [data-debug-wrapper="true"] { display: contents !important; }
+    [data-debug-wrapper="true"] > * {
+        margin-left: inherit; margin-right: inherit; margin-top: inherit; margin-bottom: inherit;
+        padding-left: inherit; padding-right: inherit; padding-top: inherit; padding-bottom: inherit;
+        column-gap: inherit; row-gap: inherit; gap: inherit;
+        border-left-width: inherit; border-right-width: inherit; border-top-width: inherit; border-bottom-width: inherit;
+    }
+}
+
+/* ========== HERO ========== */
+.hero-video-container {
+    position: absolute !important; inset: 0 !important; overflow: hidden !important;
+}
+.hero-content-block {
+    bottom: 44%;
+    padding-left: clamp(12px, 3vw, 40px);
+}
+@media (max-width: 900px) {
+    .hero-content-block { bottom: 30%; width: 80% !important; }
+}
+
+/* Row titles aligned with the left edge of the first card (arrow gutter + track gap + slide padding) */
+.row-title { padding-left: 46px; }
+@media (max-width: 600px) { .row-title { padding-left: 22px; } }
+
+/* Height of a horizontal card (16:9) per breakpoint: shared by the Top 10 row */
+:root { --page-w: 100vw; --top10-h: calc(var(--card-h) * 1.27);
+  --card-h: calc(((var(--page-w) - 80px) / 6 - 8px) * 9 / 16); }
+@media (max-width: 1535px) { :root { --card-h: calc(((var(--page-w) - 80px) / 5 - 8px) * 9 / 16); } }
+@media (max-width: 1199px) { :root { --card-h: calc(((var(--page-w) - 80px) / 4 - 8px) * 9 / 16); } }
+@media (max-width: 899px) { :root { --card-h: calc(((var(--page-w) - 80px) / 3 - 8px) * 9 / 16); } }
+@media (max-width: 599px) { :root { --card-h: calc(((var(--page-w) - 40px) / 2 - 8px) * 9 / 16); } }
+
+/* ========== HOVER CARD ANIMATION ========== */
+@keyframes flixCardIn {
+    from { opacity: 0; transform: scale(0.66); }
+    to { opacity: 1; transform: scale(1); }
+}
+@keyframes flixPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+}
+
+/* ========== CARD ANIMATIONS - StreamingCommunity style ========== */
+.slick-slider {
+    position: relative;
+}
+.slick-slider .slick-slide {
+    position: relative;
+    z-index: 1;
+}
+.slick-slider .slick-slide:hover {
+    z-index: 50 !important;
+}
+.slick-slider .slick-list {
+    overflow: visible !important;
+    padding-bottom: 180px !important;
+    margin-bottom: -180px !important;
+    padding-top: 20px !important;
+    margin-top: -20px !important;
+}
+.slick-slider .slick-track {
+    display: flex !important;
+    gap: 4px;
+}
+/* GPU acceleration */
+.slick-slider .slick-slide img {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+/* Remove any white margins on body/html */
+html, body, #root {
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    background: #050505 !important;
+}
+
+/* ========== CUSTOM SCROLLBAR ========== */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
