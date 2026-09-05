@@ -10,7 +10,6 @@ import { APP_BAR_HEIGHT } from "src/constant";
 export const PLACEHOLDER_SECTIONS = {
   "/serie-tv": "Serie TV",
   "/film": "Film",
-  "/archivio": "Archivio",
   "/premium": "Premium",
   "/richiedi-un-titolo": "Richiedi un titolo",
 };

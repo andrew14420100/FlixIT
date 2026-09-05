@@ -95,6 +95,10 @@ const router = createBrowserRouter([
         path: "my-list",
         lazy: () => import("src/pages/MyListPage"),
       },
+      {
+        path: "archivio",
+        lazy: () => import("src/pages/ArchivePage"),
+      },
       ...Object.keys(PLACEHOLDER_SECTIONS).map((p) => ({
         path: p.slice(1),
         element: <ComingSoonPage />,

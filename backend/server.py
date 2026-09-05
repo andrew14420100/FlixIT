@@ -449,6 +449,10 @@ async def refresh_vixsrc_catalog(force: bool = False) -> dict:
             fresh = doc and datetime.fromisoformat(doc["updated_at"]) > now - timedelta(hours=VIX_REFRESH_HOURS)
             if fresh and not force:
                 _vix_ids[t] = set(doc["ids"])
+                try:
+                    _record_added(t, _vix_ids[t])
+                except Exception as e:
+                    logger.warning(f"vixsrc added-tracking failed for {t}: {e}")
                 continue
             try:
                 async with httpx.AsyncClient(timeout=90.0, follow_redirects=True, headers={"User-Agent": BROWSER_UA}) as client:
@@ -464,8 +468,29 @@ async def refresh_vixsrc_catalog(force: bool = False) -> dict:
                 logger.warning(f"vixsrc catalog refresh failed for {t}: {e}")
                 if doc:
                     _vix_ids[t] = set(doc["ids"])
+            try:
+                _record_added(t, _vix_ids[t])
+            except Exception as e:
+                logger.warning(f"vixsrc added-tracking failed for {t}: {e}")
         _vix_loaded_at = now
     return {t: len(v) for t, v in _vix_ids.items()}
+
+
+# First-seen timestamp per catalog id -> powers the "Data di aggiunta" ordering of the Archive
+vixsrc_added = db["vixsrc_added"]
+vixsrc_added.create_index([("type", 1), ("tmdbId", 1)], unique=True)
+vixsrc_added.create_index([("type", 1), ("added_at", -1), ("tmdbId", -1)])
+
+
+def _record_added(t: str, ids: set):
+    if not ids:
+        return
+    known = set(vixsrc_added.distinct("tmdbId", {"type": t}))
+    new = ids - known
+    if new:
+        now = datetime.now(timezone.utc).isoformat()
+        vixsrc_added.insert_many([{"type": t, "tmdbId": i, "added_at": now} for i in new], ordered=False)
+        logger.info(f"vixsrc added-tracking: {len(new)} new {t} ids")
 
 
 def is_on_vixsrc(media_type: str, tmdb_id: int) -> bool:
@@ -3355,6 +3380,199 @@ async def get_homepage_genre(genre_id: int, media_type: str = "movie", page: int
     }
 
 
+# =====================
+# ARCHIVE - advanced catalog browsing (filters + sorting on TMDB discover/search, strict Italian filter)
+# =====================
+ARCHIVE_PAGE_SIZE = 24
+ARCHIVE_PROVIDERS = [
+    {"id": 8, "name": "Netflix"}, {"id": 119, "name": "Prime Video"}, {"id": 337, "name": "Disney+"},
+    {"id": 350, "name": "Apple TV+"}, {"id": 531, "name": "Paramount+"}, {"id": 39, "name": "NOW"},
+    {"id": 222, "name": "RaiPlay"}, {"id": 359, "name": "Mediaset Infinity"}, {"id": 524, "name": "Discovery+"},
+    {"id": 109, "name": "TIMVISION"},
+]
+ARCHIVE_COUNTRIES = [
+    ("IT", "Italia"), ("US", "Stati Uniti"), ("GB", "Regno Unito"), ("FR", "Francia"), ("DE", "Germania"), ("ES", "Spagna"),
+    ("KR", "Corea del Sud"), ("JP", "Giappone"), ("CN", "Cina"), ("IN", "India"), ("CA", "Canada"), ("AU", "Australia"),
+    ("BR", "Brasile"), ("MX", "Messico"), ("AR", "Argentina"), ("TR", "Turchia"), ("SE", "Svezia"), ("DK", "Danimarca"),
+    ("NO", "Norvegia"), ("NL", "Paesi Bassi"), ("BE", "Belgio"), ("IE", "Irlanda"), ("PL", "Polonia"), ("RU", "Russia"),
+    ("TH", "Thailandia"), ("HK", "Hong Kong"),
+]
+ARCHIVE_AGE_GROUPS = {"tutti": {"T"}, "7": {"6+", "7+"}, "14": {"12+", "13+", "14+"}, "18": {"16+", "18+"}}
+ARCHIVE_AGES = [{"key": "tutti", "label": "Per tutti"}, {"key": "7", "label": "6+ / 7+"}, {"key": "14", "label": "12+ / 14+"}, {"key": "18", "label": "16+ / 18+"}]
+ARCHIVE_VIEWS = [{"key": 10000, "label": "Oltre 10.000"}, {"key": 1000, "label": "Oltre 1.000"}, {"key": 100, "label": "Oltre 100"}]
+ARCHIVE_SORTS = [
+    {"key": "popularity", "label": "Popolarità"}, {"key": "release", "label": "Data di uscita"}, {"key": "added", "label": "Data di aggiunta"},
+    {"key": "rating", "label": "Valutazione"}, {"key": "votes", "label": "Più votati"}, {"key": "title", "label": "Titolo A-Z"},
+]
+ARCHIVE_QUALITIES = [{"key": "hd", "label": "HD 1080p"}]
+
+
+@app.get("/api/public/archive/options")
+async def get_archive_options():
+    """Option lists for the Archive filter bar."""
+    year_now = datetime.now(timezone.utc).year
+    genres = [{"id": s["genre_id"], "name": s["name"]} for s in AVAILABLE_SECTIONS if s["section_type"] == "genre" and not s.get("origin_country")]
+    return {
+        "types": [{"key": "movie", "label": "Film"}, {"key": "tv", "label": "Serie TV"}],
+        "genres": genres,
+        "countries": [{"key": c, "label": n} for c, n in ARCHIVE_COUNTRIES],
+        "years": [{"key": str(y), "label": str(y)} for y in range(year_now, 1979, -1)] + [{"key": f"{d}s", "label": f"Anni {str(d)[2:]}"} for d in (1970, 1960, 1950)],
+        "ratings": [{"key": r, "label": f"{r}+"} for r in range(9, 0, -1)],
+        "views": ARCHIVE_VIEWS,
+        "providers": [{"key": p["id"], "label": p["name"]} for p in ARCHIVE_PROVIDERS],
+        "ages": ARCHIVE_AGES,
+        "qualities": ARCHIVE_QUALITIES,
+        "sorts": ARCHIVE_SORTS,
+    }
+
+
+def _archive_item(raw: dict, mtype: str) -> dict:
+    return {
+        "tmdbId": raw.get("id"), "type": mtype,
+        "title": raw.get("title") or raw.get("name"), "overview": raw.get("overview", ""),
+        "poster_path": raw.get("poster_path"), "backdrop_path": raw.get("backdrop_path"),
+        "release_date": raw.get("release_date") or raw.get("first_air_date") or "",
+        "vote_average": raw.get("vote_average") or 0, "vote_count": raw.get("vote_count") or 0,
+        "popularity": raw.get("popularity") or 0,
+        "genre_ids": raw.get("genre_ids") or [g.get("id") for g in raw.get("genres") or []],
+        "origin_country": raw.get("origin_country") or [c.get("iso_3166_1") for c in raw.get("production_countries") or []],
+    }
+
+
+def _archive_sort_key(sort: str):
+    return {
+        "release": lambda i: i.get("release_date") or "",
+        "rating": lambda i: (i.get("vote_average") or 0, i.get("vote_count") or 0),
+        "votes": lambda i: i.get("vote_count") or 0,
+        "title": lambda i: (i.get("title") or "").lower(),
+    }.get(sort, lambda i: i.get("popularity") or 0)
+
+
+def _year_bounds(year: Optional[str]):
+    if not year:
+        return None, None
+    if year.endswith("s"):
+        d = int(year[:-1])
+        return f"{d}-01-01", f"{d + 9}-12-31"
+    return f"{year}-01-01", f"{year}-12-31"
+
+
+def _archive_post_filter(items: list, genre, country, year, rating, views) -> list:
+    lo, hi = _year_bounds(year)
+    wanted = set(x for x in genre_pair(genre) if x) if genre else None
+    out = []
+    for i in items:
+        if wanted and not wanted.intersection(i.get("genre_ids") or []):
+            continue
+        if country and country not in (i.get("origin_country") or []):
+            continue
+        if lo and not (lo <= (i.get("release_date") or "") <= hi):
+            continue
+        if rating and (i.get("vote_average") or 0) < rating:
+            continue
+        if views and (i.get("vote_count") or 0) < views:
+            continue
+        out.append(i)
+    return out
+
+
+def _discover_params(mtype: str, page: int, genre, country, year, rating, views, provider, sort) -> Optional[dict]:
+    today = datetime.now(timezone.utc).date().isoformat()
+    date_field = "primary_release_date" if mtype == "movie" else "first_air_date"
+    p = {"page": page, "include_adult": "false", "vote_count.gte": max(views or 0, 200 if sort == "rating" else 0)}
+    p["sort_by"] = {
+        "popularity": "popularity.desc", "release": f"{date_field}.desc", "rating": "vote_average.desc",
+        "votes": "vote_count.desc", "title": ("title.asc" if mtype == "movie" else "name.asc"),
+    }.get(sort, "popularity.desc")
+    if sort == "release":
+        p[f"{date_field}.lte"] = today
+    if genre:
+        movie_gid, tv_gid = genre_pair(genre)
+        gid = movie_gid if mtype == "movie" else tv_gid
+        if not gid:
+            return None
+        p["with_genres"] = gid
+    if country:
+        p["with_origin_country"] = country
+    lo, hi = _year_bounds(year)
+    if lo:
+        p[f"{date_field}.gte"], p[f"{date_field}.lte"] = lo, min(hi, p.get(f"{date_field}.lte", hi))
+    if rating:
+        p["vote_average.gte"] = rating
+        p["vote_count.gte"] = max(p["vote_count.gte"], 50)
+    if provider:
+        p["with_watch_providers"], p["watch_region"] = provider, "IT"
+    return p
+
+
+async def _archive_added(types: list, page: int, genre, country, year, rating, views, provider) -> tuple:
+    """Newest catalog entries first (first-seen timestamp, then TMDB id), enriched with TMDB details."""
+    await refresh_vixsrc_catalog()
+    q = {"type": {"$in": types}}
+    total = vixsrc_added.count_documents(q)
+    batch = ARCHIVE_PAGE_SIZE * (2 if any([genre, country, year, rating, views, provider]) else 1)
+    docs = list(vixsrc_added.find(q, {"_id": 0}).sort([("added_at", -1), ("tmdbId", -1)]).skip((page - 1) * batch).limit(batch))
+
+    async def details(doc):
+        data = await fetch_tmdb_data(f"/{doc['type']}/{doc['tmdbId']}", {"append_to_response": "watch/providers"})
+        if not data:
+            return None
+        item = _archive_item(data, doc["type"])
+        if is_anime_content({**data, "genre_ids": item["genre_ids"], "origin_country": item["origin_country"]}):
+            return None
+        if provider:
+            offers = ((data.get("watch/providers") or {}).get("results") or {}).get("IT") or {}
+            ids = {o.get("provider_id") for k in ("flatrate", "ads", "free") for o in offers.get(k) or []}
+            if provider not in ids:
+                return None
+        return item
+
+    items = [i for i in await asyncio.gather(*(details(d) for d in docs)) if i]
+    return _archive_post_filter(items, genre, country, year, rating, views), total, (page * batch) < total
+
+
+@app.get("/api/public/archive")
+async def get_archive(
+    q: Optional[str] = None, type: str = "all", genre: Optional[int] = None, country: Optional[str] = None,
+    year: Optional[str] = None, rating: Optional[int] = None, views: Optional[int] = None, provider: Optional[int] = None,
+    age: Optional[str] = None, quality: Optional[str] = None, sort: str = "popularity", page: int = 1,
+):
+    """Filtered, sorted, paginated catalog. Only Italian-dubbed titles are returned."""
+    types = ["movie", "tv"] if type not in ("movie", "tv") else [type]
+    page = max(1, page)
+    total_estimate, has_more = 0, False
+
+    if sort == "added" and not q:
+        items, total_estimate, has_more = await _archive_added(types, page, genre, country, year, rating, views, provider)
+    elif q:
+        results = await asyncio.gather(*(fetch_tmdb_data(f"/search/{t}", {"query": q, "page": page, "include_adult": "false"}) for t in types))
+        items = []
+        for t, data in zip(types, results):
+            items += [_archive_item(r, t) for r in (data or {}).get("results") or [] if not is_anime_content(r)]
+            total_estimate += (data or {}).get("total_results") or 0
+            has_more = has_more or page < ((data or {}).get("total_pages") or 0)
+        items = _archive_post_filter(items, genre, country, year, rating, views)  # provider filter not applicable to text search
+        items.sort(key=_archive_sort_key(sort), reverse=sort != "title")
+    else:
+        pages = 3 if age else 2
+        plans = [(t, _discover_params(t, page, genre, country, year, rating, views, provider, sort)) for t in types]
+        plans = [(t, p) for t, p in plans if p]
+        results = await asyncio.gather(*(fetch_tmdb_pages(f"/discover/{t}", p, pages=pages) for t, p in plans))
+        firsts = await asyncio.gather(*(fetch_tmdb_data(f"/discover/{t}", {**p, "page": 1}) for t, p in plans))
+        items = []
+        for (t, _), data, first in zip(plans, results, firsts):
+            items += [_archive_item(r, t) for r in (data or {}).get("results") or [] if not is_anime_content(r)]
+            total_estimate += (first or {}).get("total_results") or 0
+            has_more = has_more or (page * pages) < min(500, (first or {}).get("total_pages") or 0)
+        if len(plans) > 1:
+            items.sort(key=_archive_sort_key(sort), reverse=sort != "title")
+
+    items = await filter_available(items, limit=ARCHIVE_PAGE_SIZE * 2)
+    items = await enrich_items(items)
+    if age in ARCHIVE_AGE_GROUPS:
+        items = [i for i in items if i.get("certification") in ARCHIVE_AGE_GROUPS[age]]
+    total_estimate = min(total_estimate, sum(len(_vix_ids[t]) for t in types) or total_estimate)
+    return {"items": items[:ARCHIVE_PAGE_SIZE], "page": page, "hasMore": has_more, "total_estimate": total_estimate, "sort": sort}
 
 if __name__ == "__main__":
     import uvicorn

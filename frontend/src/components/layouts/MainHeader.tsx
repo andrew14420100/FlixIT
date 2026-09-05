@@ -82,7 +82,7 @@ const MainHeader = () => {
       }}
     >
       <Toolbar disableGutters sx={{ height: '100%', minHeight: 'unset !important' }}>
-        <Logo sx={{ mr: { xs: 3, sm: 5 } }} />
+        <Logo sx={{ mr: { xs: 3, sm: 5 } }} variant="header" />
 
         {/* Mobile Menu */}
         <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
@@ -120,8 +120,8 @@ const MainHeader = () => {
                 onClick={() => { const p = item.path || item.link || "/browse"; p.startsWith("http") ? window.open(p, "_blank") : navigate(p); }}
                 sx={{
                   background: 'none', border: 'none', cursor: 'pointer',
-                  px: 1.5, py: 0.7, borderRadius: '8px',
-                  fontFamily: "'Inter', sans-serif", fontSize: '14px',
+                  px: 1.8, py: 0.8, borderRadius: '8px',
+                  fontFamily: "'Inter', sans-serif", fontSize: '15.5px',
                   fontWeight: active ? 600 : 400,
                   color: active ? '#fff' : 'rgba(255,255,255,0.72)',
                   transition: 'color 0.2s ease', position: 'relative', whiteSpace: 'nowrap',
@@ -129,7 +129,7 @@ const MainHeader = () => {
                   '&::after': active ? {
                     content: '""', position: 'absolute', bottom: '0px',
                     left: '50%', transform: 'translateX(-50%)',
-                    width: '14px', height: '2px', borderRadius: '1px', bgcolor: '#E50914',
+                    width: '16px', height: '2.5px', borderRadius: '2px', bgcolor: '#E50914',
                   } : {},
                 }}
               >
@@ -140,7 +140,7 @@ const MainHeader = () => {
         </Stack>
 
         {/* Right: Search + Avatar */}
-        <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" spacing={1.5} alignItems="center">
           <SearchBox />
 
           {!isLoggedIn && (
@@ -149,8 +149,8 @@ const MainHeader = () => {
               onClick={() => openAuthModal("login")}
               data-testid="header-login-button"
               sx={{
-                height: 34, px: 2, borderRadius: '8px', border: 'none', cursor: 'pointer', color: '#fff', bgcolor: '#E50914',
-                fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 13.5, letterSpacing: '0.01em',
+                height: 40, px: 2.4, borderRadius: '9px', border: 'none', cursor: 'pointer', color: '#fff', bgcolor: '#E50914',
+                fontFamily: "'Inter', sans-serif", fontWeight: 600, fontSize: 15, letterSpacing: '0.01em',
                 transition: 'background-color 200ms ease, transform 150ms ease, box-shadow 200ms ease',
                 '&:hover': { bgcolor: '#F6121D', boxShadow: '0 6px 18px rgba(229,9,20,0.35)' }, '&:active': { transform: 'scale(0.98)' },
               }}
@@ -159,7 +159,8 @@ const MainHeader = () => {
             </Box>
           )}
 
-          {/* Avatar Button - Premium */}
+          {/* Avatar Button - only for authenticated users */}
+          {isLoggedIn && (
           <Box
             onClick={(e) => setAnchorElUser(e.currentTarget)}
             data-testid="avatar-menu-button"
@@ -181,7 +182,7 @@ const MainHeader = () => {
               alt={isLoggedIn ? (userInfo?.name || 'Profilo') : 'Ospite'}
               data-testid="header-avatar"
               sx={{
-                width: 32, height: 32, borderRadius: '6px', bgcolor: '#222',
+                width: 38, height: 38, borderRadius: '8px', bgcolor: '#222',
                 border: '2px solid rgba(255,255,255,0.12)',
                 transition: 'border-color 0.25s ease, transform 0.25s ease',
                 '&:hover': { borderColor: 'rgba(255,255,255,0.4)', transform: 'scale(1.05)' },
@@ -194,8 +195,10 @@ const MainHeader = () => {
               display: { xs: 'none', md: 'block' },
             }} />
           </Box>
+          )}
 
           {/* Dropdown - Premium glassmorphism */}
+          {isLoggedIn && (
           <Menu
             sx={{
               mt: '50px',
@@ -244,18 +247,12 @@ const MainHeader = () => {
               La mia lista
             </MenuItem>
             <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', mx: 1 }} />
-            {isLoggedIn ? (
-              <MenuItem onClick={() => { setAnchorElUser(null); localStorage.removeItem('user_token'); window.location.reload(); }} data-testid="menu-logout">
-                <ListItemIcon><LogoutIcon sx={{ color: '#E50914', fontSize: 18 }} /></ListItemIcon>
-                <Typography sx={{ color: '#E50914', fontSize: 13.5, fontWeight: 500 }}>Esci</Typography>
-              </MenuItem>
-            ) : (
-              <MenuItem onClick={() => { setAnchorElUser(null); openAuthModal('login'); }} data-testid="menu-login">
-                <ListItemIcon><PersonIcon sx={{ color: '#E50914', fontSize: 18 }} /></ListItemIcon>
-                <Typography sx={{ color: '#E50914', fontSize: 13.5, fontWeight: 500 }}>Accedi</Typography>
-              </MenuItem>
-            )}
+            <MenuItem onClick={() => { setAnchorElUser(null); localStorage.removeItem('user_token'); window.location.reload(); }} data-testid="menu-logout">
+              <ListItemIcon><LogoutIcon sx={{ color: '#E50914', fontSize: 18 }} /></ListItemIcon>
+              <Typography sx={{ color: '#E50914', fontSize: 13.5, fontWeight: 500 }}>Esci</Typography>
+            </MenuItem>
           </Menu>
+          )}
         </Stack>
       </Toolbar>
     </AppBar>

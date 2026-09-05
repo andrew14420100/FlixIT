@@ -39,7 +39,7 @@ export function Wordmark({ height = 32, testId = "header-logo-svg" }) {
 }
 
 export default function Logo({ sx, variant = "header", link = true }: Props) {
-  const mark = <Wordmark height={variant === "modal" ? 44 : 32} testId={variant === "modal" ? "modal-logo-svg" : "header-logo-svg"} />;
+  const mark = <Wordmark height={variant === "modal" ? 44 : 36} testId={variant === "modal" ? "modal-logo-svg" : "header-logo-svg"} />;
   if (!link) return <Box sx={sx}>{mark}</Box>;
   return (
     <Box sx={sx} className="flixit-logo">

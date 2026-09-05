@@ -57,17 +57,17 @@ export default function SearchBox() {
         display: 'flex', alignItems: 'center', gap: '6px',
         bgcolor: open ? 'rgba(255,255,255,0.08)' : 'transparent',
         border: open ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
-        borderRadius: '8px', px: open ? 1.2 : 0.5, py: 0.4,
+        borderRadius: '10px', px: open ? 1.5 : 0.7, py: 0.5,
         transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
-        width: open ? { xs: '220px', md: '280px' } : '36px',
-        height: '36px',
+        width: open ? { xs: '240px', md: '380px' } : '42px',
+        height: '42px',
         overflow: 'hidden',
         cursor: open ? 'text' : 'pointer',
         '&:hover': !open ? { bgcolor: 'rgba(255,255,255,0.06)', borderRadius: '8px' } : {},
       }}
         onClick={() => { if (!open) setOpen(true); }}
       >
-        <SearchIcon sx={{ fontSize: 19, color: open ? '#fff' : 'rgba(255,255,255,0.6)', flexShrink: 0, transition: 'color 0.2s' }} />
+        <SearchIcon sx={{ fontSize: 24, color: open ? '#fff' : 'rgba(255,255,255,0.75)', flexShrink: 0, transition: 'color 0.2s' }} />
         {open && (
           <input
             ref={inputRef}
@@ -77,7 +77,7 @@ export default function SearchBox() {
             data-testid="search-input"
             style={{
               background: 'none', border: 'none', outline: 'none',
-              color: '#fff', fontSize: '13px', fontFamily: "'Inter', sans-serif",
+              color: '#fff', fontSize: '15px', fontFamily: "'Inter', sans-serif",
               width: '100%', padding: 0,
             }}
           />
@@ -85,7 +85,7 @@ export default function SearchBox() {
         {open && query && (
           <CloseIcon
             onClick={(e) => { e.stopPropagation(); setQuery(""); setResults([]); }}
-            sx={{ fontSize: 16, color: 'rgba(255,255,255,0.4)', cursor: 'pointer', flexShrink: 0, '&:hover': { color: '#fff' } }}
+            sx={{ fontSize: 19, color: 'rgba(255,255,255,0.4)', cursor: 'pointer', flexShrink: 0, '&:hover': { color: '#fff' } }}
           />
         )}
         {loading && <CircularProgress size={14} sx={{ color: '#E50914', flexShrink: 0 }} />}
@@ -95,7 +95,7 @@ export default function SearchBox() {
       {open && results.length > 0 && (
         <Box sx={{
           position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-          width: { xs: '300px', md: '360px' },
+          width: { xs: '300px', md: '400px' },
           bgcolor: 'rgba(12,12,12,0.97)', backdropFilter: 'blur(24px) saturate(180%)',
           border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px',
           boxShadow: '0 20px 60px rgba(0,0,0,0.6)', overflow: 'hidden', zIndex: 1100,
