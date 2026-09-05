@@ -5,14 +5,14 @@ import { Movie } from "src/types/Movie";
 import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
-import ExpandedCard, { TMDB_IMG, useMediaAssets } from "./ExpandedCard";
+import ExpandedCard, { TMDB_IMG, useMediaAssets, formatReleaseLabel } from "./ExpandedCard";
 
-interface Props { video: Movie; mediaType?: any; }
+interface Props { video: Movie; mediaType?: any; watch?: any; }
 
 const EXPAND_SCALE = 1.5;
 const getExpandedWidth = (r: DOMRect) => Math.round(r.width * EXPAND_SCALE);
 
-export default function VideoItemWithHover({ video, mediaType }: Props) {
+export default function VideoItemWithHover({ video, mediaType, watch }: Props) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
   const mType = mediaType || MEDIA_TYPE.Movie;
@@ -32,8 +32,9 @@ export default function VideoItemWithHover({ video, mediaType }: Props) {
   const goPlay = useCallback((e) => {
     e?.stopPropagation();
     window.scrollTo(0, 0);
-    navigate(`/${MAIN_PATH.watch}/${typeSlug}/${video.id}`);
-  }, [navigate, typeSlug, video.id]);
+    const ep = watch && typeSlug === "tv" ? `?s=${watch.season || 1}&e=${watch.episode || 1}` : "";
+    navigate(`/${MAIN_PATH.watch}/${typeSlug}/${video.id}${ep}`);
+  }, [navigate, typeSlug, video.id, watch]);
   const goDetail = useCallback((e) => {
     e?.stopPropagation?.();
     window.scrollTo(0, 0);
@@ -69,11 +70,22 @@ export default function VideoItemWithHover({ video, mediaType }: Props) {
             />
           </>
         )}
+        {video.upcoming && (
+          <div data-testid={`upcoming-badge-${video.id}`} style={{ position: "absolute", top: 8, left: 8, padding: "3px 8px", borderRadius: 6, background: "#E50914", color: "#fff",
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}>
+            {video.release_date ? formatReleaseLabel(video.release_date) : "Prossimamente"}
+          </div>
+        )}
+        {watch && (
+          <div data-testid={`progress-bar-${video.id}`} style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 4, background: "rgba(255,255,255,0.25)" }}>
+            <div style={{ width: `${watch.percent || 0}%`, height: "100%", background: "#e50914", transition: "width 0.3s ease" }} />
+          </div>
+        )}
       </div>
 
       {open && (
         <ExpandOverlay align={align} width={width} entered={entered} initialScale={1 / EXPAND_SCALE} testId={`hover-overlay-${video.id}`}>
-          <ExpandedCard item={{ ...video, ...assets, id: video.id }} mediaType={mType} onPlay={goPlay} onDetail={goDetail} entered={entered} />
+          <ExpandedCard item={{ ...video, ...assets, id: video.id }} mediaType={mType} onPlay={goPlay} onDetail={goDetail} entered={entered} watch={watch} />
         </ExpandOverlay>
       )}
     </div>

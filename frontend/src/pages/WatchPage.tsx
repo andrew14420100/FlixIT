@@ -12,6 +12,8 @@ const LOCAL_STORAGE_KEY = "netflix_continue_watching";
 const MIN_WATCH_SECONDS = 10;
 const SAVE_INTERVAL_MS = 15000;
 const RESUME_RESOLVE_TIMEOUT_MS = 2500;
+const RESUME_REWIND_SECONDS = 10;
+const SEEK_GRACE_MS = 20000;
 
 function readLocalProgress(tmdbId) {
   try {
@@ -52,7 +54,9 @@ function WatchPlayer() {
   const [episodeInfo, setEpisodeInfo] = useState({ name: "", hasNext: false });
 
   const metaRef = useRef({ title: "", backdrop_path: "", poster_path: "", duration: isTv ? 2700 : 7200 });
-  const playbackRef = useRef({ currentTime: 0, duration: 0, hasEvents: false });
+  // Playback model: the last position reported by the player (anchor) + wall-clock time elapsed while playing.
+  // Works even when the embedded player only emits play/pause/seek events (no timeupdate).
+  const playbackRef = useRef({ anchorTime: 0, anchorAt: 0, playing: false, duration: 0, hasEvents: false, lastSaved: 0 });
   const startAtRef = useRef(0);
   const mountedAtRef = useRef(Date.now());
   const historyLenAtMount = useRef(window.history.length);
@@ -70,7 +74,8 @@ function WatchPlayer() {
     const localProgress = local && matchesEpisode(local) ? local.progress || 0 : 0;
     const finish = (progress) => {
       if (cancelled) return;
-      const value = progress > 30 ? Math.floor(progress) : 0;
+      // Resume slightly BEFORE the exact stop point so the viewer picks the thread back up (7:49 -> 7:39)
+      const value = progress > 30 ? Math.max(0, Math.floor(progress) - RESUME_REWIND_SECONDS) : 0;
       startAtRef.current = value;
       setStartAt(value);
     };
@@ -139,8 +144,13 @@ function WatchPlayer() {
     const elapsed = (Date.now() - mountedAtRef.current) / 1000;
     if (elapsed < MIN_WATCH_SECONDS) return;
     const p = playbackRef.current;
-    const progress = p.hasEvents ? p.currentTime : startAtRef.current + elapsed;
+    const live = p.anchorTime + (p.playing ? (Date.now() - p.anchorAt) / 1000 : 0);
+    let progress = p.hasEvents ? live : startAtRef.current + elapsed;
     const duration = p.duration || metaRef.current.duration;
+    if (duration > 0) progress = Math.min(progress, duration);
+    // Never move the saved position backwards unless the player explicitly reported a seek/rewind.
+    if (!p.hasEvents && progress < p.lastSaved) progress = p.lastSaved;
+    p.lastSaved = progress;
     saveProgress({
       tmdb_id: tmdbId,
       media_type: isTv ? "tv" : "movie",
@@ -160,9 +170,20 @@ function WatchPlayer() {
       if (!d || d.type !== "PLAYER_EVENT" || !d.data) return;
       const { event: name, currentTime, duration } = d.data;
       const p = playbackRef.current;
-      p.hasEvents = true;
-      if (typeof currentTime === "number" && currentTime >= 0) p.currentTime = currentTime;
+      const now = Date.now();
       if (typeof duration === "number" && duration > 0) p.duration = duration;
+      // Ignore the initial "position 0" events emitted before the player has seeked to startAt.
+      const preSeek = startAtRef.current > 30 && typeof currentTime === "number" && currentTime < 5 && now - mountedAtRef.current < SEEK_GRACE_MS;
+      if (typeof currentTime === "number" && currentTime >= 0 && !preSeek) {
+        p.anchorTime = currentTime;
+        p.anchorAt = now;
+        p.hasEvents = true;
+      } else if (!p.hasEvents) {
+        p.anchorTime = startAtRef.current;
+        p.anchorAt = now;
+      }
+      if (name === "play" || name === "playing") p.playing = true;
+      if (name === "pause" || name === "ended" || name === "waiting") { if (p.hasEvents && p.playing) p.anchorTime = p.anchorTime + (now - p.anchorAt) / 1000; p.anchorAt = now; p.playing = false; }
       if (name === "pause" || name === "ended") persist();
     };
     window.addEventListener("message", onMessage);

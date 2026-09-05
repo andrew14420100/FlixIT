@@ -44,8 +44,18 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
 }
 
+function readLocalStorage(): ContinueWatchingItem[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 export function useContinueWatching() {
-  const [items, setItems] = useState<ContinueWatchingItem[]>([]);
+  // Guests keep their list in localStorage; logged-in users sync it with the account (localStorage = cache).
+  const [items, setItems] = useState<ContinueWatchingItem[]>(() => readLocalStorage());
   const [username, setUsername] = useState<string>('Utente');
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(!!getToken());
 
@@ -69,8 +79,8 @@ export function useContinueWatching() {
       });
     } else {
       setIsLoggedIn(false);
-      setItems([]);
-      setUsername('Utente');
+      setItems(readLocalStorage());
+      setUsername(localStorage.getItem(USERNAME_KEY) || 'Utente');
     }
   }, []);
 
@@ -94,9 +104,9 @@ export function useContinueWatching() {
           }
         });
       } else if (!token && wasLoggedIn) {
-        // User logged out — clear
+        // User logged out — keep only the local (guest) list
         setIsLoggedIn(false);
-        setItems([]);
+        setItems(readLocalStorage());
         setUsername('Utente');
       }
     };
@@ -117,7 +127,8 @@ export function useContinueWatching() {
       const fullItem: ContinueWatchingItem = { ...item, updated_at: now };
 
       setItems((prev) => {
-        const filtered = prev.filter((i) => i.tmdb_id !== item.tmdb_id);
+        const base = prev.length ? prev : readLocalStorage();
+        const filtered = base.filter((i) => i.tmdb_id !== item.tmdb_id);
 
         if (item.duration > 0 && item.progress / item.duration >= 0.95) {
           saveToLocalStorage(filtered);
@@ -135,6 +146,7 @@ export function useContinueWatching() {
         await apiFetch('/api/auth/watch-progress', {
           method: 'POST',
           body: JSON.stringify(item),
+          keepalive: true,
         });
       }
     },
@@ -175,7 +187,7 @@ export function useContinueWatching() {
     const token = getToken();
     if (!token) {
       setIsLoggedIn(false);
-      setItems([]);
+      setItems(readLocalStorage());
       return;
     }
     setIsLoggedIn(true);

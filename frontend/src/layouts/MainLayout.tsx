@@ -10,6 +10,7 @@ import { MAIN_PATH } from "src/constant";
 import { Footer, MainHeader } from "src/components/layouts";
 import MainLoadingScreen from "src/components/MainLoadingScreen";
 import AuthModal from "src/components/auth/AuthModal";
+import SessionGuards from "src/components/auth/SessionGuards";
 
 export default function MainLayout() {
   const location = useLocation();
@@ -41,6 +42,7 @@ export default function MainLayout() {
     >
       <MainHeader />
       <AuthModal />
+      <SessionGuards />
       {navigation.state !== "idle" && <MainLoadingScreen />}
       <DetailModalProvider>
         <PortalProvider>

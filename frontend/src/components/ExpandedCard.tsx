@@ -9,6 +9,7 @@ import StarIcon from "@mui/icons-material/Star";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import VolumeOffIcon from "@mui/icons-material/VolumeOff";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
+import CloseIcon from "@mui/icons-material/Close";
 import { MEDIA_TYPE } from "src/types/Common";
 import { useGetGenresQuery } from "src/store/slices/genre";
 import TrailerPlayer from "./TrailerPlayer";
@@ -17,7 +18,7 @@ export const TMDB_IMG = "https://image.tmdb.org/t/p/";
 const TRAILER_DELAY_MS = 5000;
 
 const circleBtn = {
-  width: 38, height: 38, color: "#fff",
+  width: 40, height: 40, color: "#fff",
   border: "2px solid rgba(255,255,255,0.5)", bgcolor: "rgba(30,30,30,0.6)",
   transition: "border-color 0.15s, background-color 0.15s",
   "&:hover": { borderColor: "#fff", bgcolor: "rgba(255,255,255,0.12)" },
@@ -45,15 +46,40 @@ export const formatRuntime = (min) => {
   return min >= 60 ? `${Math.floor(min / 60)}h ${min % 60 ? `${min % 60}min` : ""}`.trim() : `${min} min`;
 };
 
-interface Props { item: any; mediaType: MEDIA_TYPE; onPlay: (e) => void; onDetail: (e?) => void; entered?: boolean; }
+interface Props { item: any; mediaType: MEDIA_TYPE; onPlay: (e) => void; onDetail: (e?) => void; entered?: boolean; watch?: any; }
 
-export default function ExpandedCard({ item, mediaType, onPlay, onDetail, entered = true }: Props) {
+const MONTHS_IT = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
+export const formatReleaseLabel = (date) => {
+  if (!date) return "Prossimamente";
+  const [y, m, d] = String(date).split("-").map(Number);
+  if (!y || !m || !d) return "Prossimamente";
+  return `In arrivo il ${d} ${MONTHS_IT[m - 1]}${y !== new Date().getFullYear() ? ` ${y}` : ""}`;
+};
+
+// Episode name for "Continua a guardare" entries (TV only)
+function useEpisodeName(id, watch, enabled) {
+  const [name, setName] = useState("");
+  useEffect(() => {
+    if (!enabled || !watch?.season || !id) return;
+    let alive = true;
+    fetch(`/api/public/tv/${id}/season/${watch.season}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { const ep = (d?.episodes || []).find((e) => e.episode_number === Number(watch.episode || 1)); if (alive && ep) setName(ep.name || ""); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [id, watch?.season, watch?.episode, enabled]);
+  return name;
+}
+
+export default function ExpandedCard({ item, mediaType, onPlay, onDetail, entered = true, watch }: Props) {
   const { data: genres } = useGetGenresQuery(mediaType);
   const assets = useMediaAssets(item, mediaType);
   const [showTrailer, setShowTrailer] = useState(false);
   const [trailerPlaying, setTrailerPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const id = item.id || item.tmdbId;
+  const isUpcoming = !!item.upcoming;
+  const episodeName = useEpisodeName(id, watch, mediaType === MEDIA_TYPE.Tv && !!watch);
 
   const [trailerKey, setTrailerKey] = useState(null);
   const assetsRef = useRef(assets);
@@ -152,12 +178,37 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, entere
           </IconButton>
           <IconButton sx={circleBtn} data-testid={`card-add-${id}`}><AddIcon sx={{ fontSize: 20 }} /></IconButton>
           <IconButton sx={circleBtn} data-testid={`card-star-${id}`}><StarIcon sx={{ fontSize: 18 }} /></IconButton>
+          {watch?.onRemove && (
+            <IconButton onClick={(e) => { e.stopPropagation(); watch.onRemove(); }} sx={circleBtn} data-testid={`card-remove-${id}`} aria-label="Rimuovi da Continua a guardare">
+              <CloseIcon sx={{ fontSize: 20 }} />
+            </IconButton>
+          )}
           <div style={{ flex: 1 }} />
           <IconButton onClick={onDetail} sx={circleBtn} data-testid={`card-expand-${id}`}>
             <ExpandMoreIcon sx={{ fontSize: 22 }} />
           </IconButton>
         </Stack>
 
+        {isUpcoming && (
+          <Typography data-testid={`card-upcoming-${id}`} sx={{ fontSize: 14, fontWeight: 700, color: "#ff2e38", letterSpacing: "0.02em", mb: 0.6, textTransform: "uppercase" }}>
+            {formatReleaseLabel(item.release_date)}
+          </Typography>
+        )}
+        {watch && (
+          <div data-testid={`card-watch-meta-${id}`} style={{ marginBottom: 10 }}>
+            {mediaType === MEDIA_TYPE.Tv && watch.season && (
+              <Typography sx={{ fontSize: 14.5, color: "#fff", fontWeight: 600, lineHeight: 1.3 }}>
+                S{watch.season}:E{watch.episode || 1}{episodeName ? ` "${episodeName}"` : ""}
+              </Typography>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+              <div style={{ flex: 1, height: 4, background: "rgba(255,255,255,0.25)", borderRadius: 2 }}>
+                <div style={{ width: `${watch.percent || 0}%`, height: "100%", background: "#e50914", borderRadius: 2 }} />
+              </div>
+              <span style={{ fontSize: 12.5, color: "rgba(255,255,255,0.7)", whiteSpace: "nowrap" }}>{watch.minutesLabel}</span>
+            </div>
+          </div>
+        )}
         <Typography sx={{ fontSize: 15, lineHeight: 1.3, color: "rgba(255,255,255,0.85)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
           {rating && <span style={{ color: "#46d369", fontWeight: 700 }}>Valutazione {rating}</span>}
           {rating && year && <span style={{ color: "rgba(255,255,255,0.5)" }}>-</span>}
@@ -171,7 +222,7 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, entere
         </Typography>
 
         {genreNames.length > 0 && (
-          <Typography sx={{ fontSize: 14, mt: 0.8, color: "rgba(255,255,255,0.75)" }}>
+          <Typography data-testid={`card-genres-${id}`} sx={{ fontSize: 14, mt: 0.8, color: "rgba(255,255,255,0.75)" }}>
             {genreNames.join("  \u2022  ")}
           </Typography>
         )}

@@ -13,6 +13,7 @@ import jwt
 import re
 import httpx
 import asyncio
+import random
 import json
 import ssl
 import certifi
@@ -1669,20 +1670,31 @@ async def get_tmdb_by_genre(genre_id: int, media_type: str = "movie", page: int 
 
     if media_type == "mixed":
         movie_gid, tv_gid = genre_pair(genre_id)
-        movie_data, tv_data = await asyncio.gather(
-            fetch_tmdb_pages("/discover/movie", base_params(movie_gid)) if movie_gid else asyncio.sleep(0, result=None),
-            fetch_tmdb_pages("/discover/tv", base_params(tv_gid)) if tv_gid else asyncio.sleep(0, result=None),
-        )
-        sources = [("movie", movie_data), ("tv", tv_data)]
+        # Pool = most popular (3 pages) + most recent (1 page) for each side, then a daily-seeded shuffle:
+        # every genre row shows a different, mixed selection that changes once a day.
+        today_iso = datetime.now(timezone.utc).date().isoformat()
+
+        def recent_params(gid, side):
+            field = "primary_release_date" if side == "movie" else "first_air_date"
+            return {**base_params(gid), "sort_by": f"{field}.desc", "vote_count.gte": 30, f"{field}.lte": today_iso}
+
+        tasks = []
+        if movie_gid:
+            tasks += [("movie", fetch_tmdb_pages("/discover/movie", base_params(movie_gid), pages=3)), ("movie", fetch_tmdb_data("/discover/movie", recent_params(movie_gid, "movie")))]
+        if tv_gid:
+            tasks += [("tv", fetch_tmdb_pages("/discover/tv", base_params(tv_gid), pages=3)), ("tv", fetch_tmdb_data("/discover/tv", recent_params(tv_gid, "tv")))]
+        results = await asyncio.gather(*(t[1] for t in tasks))
+        sources = list(zip((t[0] for t in tasks), results))
     else:
         endpoint = "/discover/tv" if media_type == "tv" else "/discover/movie"
         sources = [(media_type, await fetch_tmdb_pages(endpoint, base_params(genre_id)))]
 
-    items = []
+    items, seen = [], set()
     for mtype, data in sources:
         for item in (data or {}).get("results") or []:
-            if is_anime_content(item):
+            if is_anime_content(item) or (mtype, item.get("id")) in seen:
                 continue
+            seen.add((mtype, item.get("id")))
             items.append({
                 "tmdbId": item.get("id"),
                 "type": mtype,
@@ -1696,8 +1708,12 @@ async def get_tmdb_by_genre(genre_id: int, media_type: str = "movie", page: int 
                 "genre_ids": item.get("genre_ids", []),
             })
     if media_type == "mixed":
-        items.sort(key=lambda i: i.get("popularity") or 0, reverse=True)
-    items = await filter_available(items)
+        items = await filter_available(items, limit=500)
+        daily = random.Random(f"{datetime.now(timezone.utc).date()}-{genre_id}-{origin_country or ''}")
+        daily.shuffle(items)
+        items = items[:24]
+    else:
+        items = await filter_available(items)
     return {"items": await enrich_items(items), "total": len(items)}
 
 
@@ -1735,11 +1751,34 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         user = users.find_one({"id": user_id}, {"_id": 0, "password": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        if user.get("banned"):
+            raise HTTPException(status_code=403, detail={"code": "banned", "message": "Account sospeso", "reason": user.get("ban_reason") or ""})
+        changed_at = user.get("password_changed_at")
+        if changed_at and payload.get("iat") and datetime.fromisoformat(changed_at).timestamp() > float(payload["iat"]) + 1:
+            raise HTTPException(status_code=401, detail="Sessione scaduta, accedi di nuovo")
+        users.update_one({"id": user_id}, {"$set": {"last_seen_at": datetime.now(timezone.utc).isoformat()}})
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+def issue_user_token(user: dict) -> str:
+    payload = {
+        "user_id": user["id"],
+        "email": user["email"],
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS * 7),
+        "iat": datetime.now(timezone.utc),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def public_user(user: dict) -> dict:
+    return {
+        "id": user["id"], "email": user["email"], "name": user.get("name"), "profileImage": user.get("profileImage"),
+        "role": user.get("role", "user"), "must_reset_password": bool(user.get("must_reset_password")),
+    }
 
 @app.post("/api/auth/register")
 def register_user(data: UserRegister):
@@ -1765,28 +1804,14 @@ def register_user(data: UserRegister):
         "password": hashed.decode(),
         "name": sanitize_string(data.name) or data.email.split("@")[0],
         "profileImage": None,
+        "role": "user",
+        "banned": False,
+        "must_reset_password": False,
         "createdAt": now,
         "updatedAt": now
     }
     users.insert_one(user)
-    
-    payload = {
-        "user_id": user["id"],
-        "email": user["email"],
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS * 7),
-        "iat": datetime.now(timezone.utc)
-    }
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    
-    return {
-        "token": token,
-        "user": {
-            "id": user["id"],
-            "email": user["email"],
-            "name": user["name"],
-            "profileImage": user["profileImage"]
-        }
-    }
+    return {"token": issue_user_token(user), "user": public_user(user)}
 
 @app.post("/api/auth/login")
 def login_user(data: UserLogin):
@@ -1797,24 +1822,10 @@ def login_user(data: UserLogin):
     
     if not bcrypt.checkpw(data.password.encode(), user["password"].encode()):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    payload = {
-        "user_id": user["id"],
-        "email": user["email"],
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS * 7),
-        "iat": datetime.now(timezone.utc)
-    }
-    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    
-    return {
-        "token": token,
-        "user": {
-            "id": user["id"],
-            "email": user["email"],
-            "name": user["name"],
-            "profileImage": user.get("profileImage")
-        }
-    }
+    if user.get("banned"):
+        raise HTTPException(status_code=403, detail={"code": "banned", "message": "Account sospeso", "reason": user.get("ban_reason") or ""})
+    users.update_one({"id": user["id"]}, {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}})
+    return {"token": issue_user_token(user), "user": public_user(user)}
 
 @app.get("/api/auth/me")
 def get_user_profile(user = Depends(get_current_user)):
@@ -1842,12 +1853,16 @@ def update_user_profile(data: UserUpdate, user = Depends(get_current_user)):
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
         hashed = bcrypt.hashpw(data.password.encode(), bcrypt.gensalt())
         update_data["password"] = hashed.decode()
+        update_data["password_changed_at"] = datetime.now(timezone.utc).isoformat()
+        update_data["must_reset_password"] = False
     
     if data.profileImage is not None:
         update_data["profileImage"] = data.profileImage
     
     users.update_one({"id": user["id"]}, {"$set": update_data})
     updated = users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+    if data.password is not None:
+        updated["token"] = issue_user_token(updated)
     return updated
 
 @app.get("/api/auth/history")
@@ -2215,13 +2230,18 @@ async def get_tmdb_now_playing(page: int = 1, verify_vixsrc: bool = False):
 
 @app.get("/api/public/tmdb/upcoming")
 async def get_tmdb_upcoming(page: int = 1):
-    """Get upcoming movies from TMDB"""
-    data = await fetch_tmdb_data("/movie/upcoming", {"page": page})
+    """Upcoming movies: only titles with a FUTURE release date (Italian region), soonest first."""
+    today = datetime.now(timezone.utc).date()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    horizon = (today + timedelta(days=180)).isoformat()
+    params = {"page": page, "region": "IT", "sort_by": "popularity.desc", "with_release_type": "2|3",
+              "primary_release_date.gte": tomorrow, "primary_release_date.lte": horizon, "vote_count.gte": 0}
+    data = await fetch_tmdb_pages("/discover/movie", params, pages=2)
     if not data or "results" not in data:
         return {"items": [], "total": 0}
     items = []
     for item in data["results"]:
-        if is_anime_content(item):
+        if is_anime_content(item) or not (item.get("release_date") or "") > today.isoformat():
             continue
         items.append({
             "tmdbId": item.get("id"),
@@ -2234,7 +2254,9 @@ async def get_tmdb_upcoming(page: int = 1):
             "vote_average": item.get("vote_average", 0),
             "popularity": item.get("popularity", 0),
             "genre_ids": item.get("genre_ids", []),
+            "upcoming": True,
         })
+    items = sorted((i for i in items if i.get("backdrop_path") or i.get("poster_path")), key=lambda i: i.get("release_date") or "")[:24]
     return {"items": await enrich_items(items), "total": len(items), "page": page}
 
 @app.get("/api/public/tmdb/airing_today")
@@ -3397,14 +3419,19 @@ ARCHIVE_COUNTRIES = [
     ("NO", "Norvegia"), ("NL", "Paesi Bassi"), ("BE", "Belgio"), ("IE", "Irlanda"), ("PL", "Polonia"), ("RU", "Russia"),
     ("TH", "Thailandia"), ("HK", "Hong Kong"),
 ]
-ARCHIVE_AGE_GROUPS = {"tutti": {"T"}, "7": {"6+", "7+"}, "14": {"12+", "13+", "14+"}, "18": {"16+", "18+"}}
-ARCHIVE_AGES = [{"key": "tutti", "label": "Per tutti"}, {"key": "7", "label": "6+ / 7+"}, {"key": "14", "label": "12+ / 14+"}, {"key": "18", "label": "16+ / 18+"}]
-ARCHIVE_VIEWS = [{"key": 10000, "label": "Oltre 10.000"}, {"key": 1000, "label": "Oltre 1.000"}, {"key": 100, "label": "Oltre 100"}]
+ARCHIVE_AGE_GROUPS = {"7": {"T", "6+", "7+"}, "12": {"12+", "13+"}, "14": {"14+"}, "16": {"16+"}, "18": {"18+"}}
+ARCHIVE_AGES = [{"key": k, "label": f"{k}+"} for k in ("7", "12", "14", "16", "18")]
+# Views = real plays recorded by FlixIT users (content_views collection)
+ARCHIVE_VIEWS = [{"key": v, "label": lbl} for v, lbl in ((25000, "25K+"), (50000, "50K+"), (75000, "75K+"), (100000, "100K+"), (200000, "200K+"),
+                                                          (500000, "500K+"), (1000000, "1M+"), (2000000, "2M+"), (5000000, "5M+"), (10000000, "10M+"))]
+# Quality is a transparent heuristic: CAM = in cinemas < 30 days and not on any Italian streaming service, TS = 30-60 days, SD = before 1995, HD = everything else
+ARCHIVE_QUALITY_DAYS = {"cam": (0, 30), "ts": (30, 60)}
+ARCHIVE_SD_BEFORE = "1995-01-01"
 ARCHIVE_SORTS = [
     {"key": "popularity", "label": "Popolarità"}, {"key": "release", "label": "Data di uscita"}, {"key": "added", "label": "Data di aggiunta"},
     {"key": "rating", "label": "Valutazione"}, {"key": "votes", "label": "Più votati"}, {"key": "title", "label": "Titolo A-Z"},
 ]
-ARCHIVE_QUALITIES = [{"key": "hd", "label": "HD 1080p"}]
+ARCHIVE_QUALITIES = [{"key": "hd", "label": "HD"}, {"key": "sd", "label": "SD"}, {"key": "ts", "label": "TS"}, {"key": "cam", "label": "CAM"}]
 
 
 @app.get("/api/public/archive/options")
@@ -3417,7 +3444,7 @@ async def get_archive_options():
         "genres": genres,
         "countries": [{"key": c, "label": n} for c, n in ARCHIVE_COUNTRIES],
         "years": [{"key": str(y), "label": str(y)} for y in range(year_now, 1979, -1)] + [{"key": f"{d}s", "label": f"Anni {str(d)[2:]}"} for d in (1970, 1960, 1950)],
-        "ratings": [{"key": r, "label": f"{r}+"} for r in range(9, 0, -1)],
+        "ratings": [{"key": r, "label": f"{r} stell{'a' if r == 1 else 'e'}"} for r in range(10, 0, -1)],
         "views": ARCHIVE_VIEWS,
         "providers": [{"key": p["id"], "label": p["name"]} for p in ARCHIVE_PROVIDERS],
         "ages": ARCHIVE_AGES,
@@ -3457,7 +3484,11 @@ def _year_bounds(year: Optional[str]):
     return f"{year}-01-01", f"{year}-12-31"
 
 
-def _archive_post_filter(items: list, genre, country, year, rating, views) -> list:
+def _rating_threshold(rating) -> float:
+    return 9.5 if rating and rating >= 10 else float(rating or 0)
+
+
+def _archive_post_filter(items: list, genre, country, year, rating) -> list:
     lo, hi = _year_bounds(year)
     wanted = set(x for x in genre_pair(genre) if x) if genre else None
     out = []
@@ -3468,24 +3499,22 @@ def _archive_post_filter(items: list, genre, country, year, rating, views) -> li
             continue
         if lo and not (lo <= (i.get("release_date") or "") <= hi):
             continue
-        if rating and (i.get("vote_average") or 0) < rating:
-            continue
-        if views and (i.get("vote_count") or 0) < views:
+        if rating and (i.get("vote_average") or 0) < _rating_threshold(rating):
             continue
         out.append(i)
     return out
 
 
-def _discover_params(mtype: str, page: int, genre, country, year, rating, views, provider, sort) -> Optional[dict]:
-    today = datetime.now(timezone.utc).date().isoformat()
+def _discover_params(mtype: str, page: int, genre, country, year, rating, provider, sort, quality) -> Optional[dict]:
+    today = datetime.now(timezone.utc).date()
     date_field = "primary_release_date" if mtype == "movie" else "first_air_date"
-    p = {"page": page, "include_adult": "false", "vote_count.gte": max(views or 0, 200 if sort == "rating" else 0)}
+    p = {"page": page, "include_adult": "false", "vote_count.gte": 200 if sort == "rating" else 0}
     p["sort_by"] = {
         "popularity": "popularity.desc", "release": f"{date_field}.desc", "rating": "vote_average.desc",
         "votes": "vote_count.desc", "title": ("title.asc" if mtype == "movie" else "name.asc"),
     }.get(sort, "popularity.desc")
     if sort == "release":
-        p[f"{date_field}.lte"] = today
+        p[f"{date_field}.lte"] = today.isoformat()
     if genre:
         movie_gid, tv_gid = genre_pair(genre)
         gid = movie_gid if mtype == "movie" else tv_gid
@@ -3498,21 +3527,54 @@ def _discover_params(mtype: str, page: int, genre, country, year, rating, views,
     if lo:
         p[f"{date_field}.gte"], p[f"{date_field}.lte"] = lo, min(hi, p.get(f"{date_field}.lte", hi))
     if rating:
-        p["vote_average.gte"] = rating
+        p["vote_average.gte"] = _rating_threshold(rating)
         p["vote_count.gte"] = max(p["vote_count.gte"], 50)
     if provider:
         p["with_watch_providers"], p["watch_region"] = provider, "IT"
+    if quality in ARCHIVE_QUALITY_DAYS:
+        if mtype != "movie":
+            return None
+        d_hi, d_lo = ARCHIVE_QUALITY_DAYS[quality]
+        p[f"{date_field}.gte"] = (today - timedelta(days=d_lo)).isoformat()
+        p[f"{date_field}.lte"] = (today - timedelta(days=d_hi)).isoformat()
+    elif quality == "sd":
+        p[f"{date_field}.lte"] = min(ARCHIVE_SD_BEFORE, p.get(f"{date_field}.lte", ARCHIVE_SD_BEFORE))
     return p
 
 
-async def _archive_added(types: list, page: int, genre, country, year, rating, views, provider) -> tuple:
-    """Newest catalog entries first (first-seen timestamp, then TMDB id), enriched with TMDB details."""
-    await refresh_vixsrc_catalog()
-    q = {"type": {"$in": types}}
-    total = vixsrc_added.count_documents(q)
-    batch = ARCHIVE_PAGE_SIZE * (2 if any([genre, country, year, rating, views, provider]) else 1)
-    docs = list(vixsrc_added.find(q, {"_id": 0}).sort([("added_at", -1), ("tmdbId", -1)]).skip((page - 1) * batch).limit(batch))
+async def _has_it_offer(item: dict) -> bool:
+    data = await fetch_tmdb_data(f"/{item['type']}/{item['tmdbId']}/watch/providers")
+    offers = ((data or {}).get("results") or {}).get("IT") or {}
+    return any(offers.get(k) for k in ("flatrate", "ads", "free", "rent", "buy"))
 
+
+async def _apply_quality(items: list, quality: Optional[str]) -> list:
+    """Heuristic video quality (no real source exists): see ARCHIVE_QUALITY_DAYS / ARCHIVE_SD_BEFORE."""
+    if not quality:
+        return items
+    today = datetime.now(timezone.utc).date()
+    recent_from = (today - timedelta(days=60)).isoformat()
+    if quality == "sd":
+        return [i for i in items if (i.get("release_date") or "9999") < ARCHIVE_SD_BEFORE]
+    if quality in ARCHIVE_QUALITY_DAYS:
+        d_hi, d_lo = ARCHIVE_QUALITY_DAYS[quality]
+        lo, hi = (today - timedelta(days=d_lo)).isoformat(), (today - timedelta(days=d_hi)).isoformat()
+        window = [i for i in items if i.get("type") == "movie" and lo <= (i.get("release_date") or "") <= hi]
+        flags = await asyncio.gather(*(_has_it_offer(i) for i in window))
+        return [i for i, on_streaming in zip(window, flags) if not on_streaming]
+    # hd: everything except very recent cinema-only titles and pre-1995 titles
+    keep, recent = [], []
+    for i in items:
+        rd = i.get("release_date") or ""
+        if rd < ARCHIVE_SD_BEFORE and rd:
+            continue
+        (recent if rd >= recent_from else keep).append(i)
+    flags = await asyncio.gather(*(_has_it_offer(i) for i in recent))
+    return keep + [i for i, on_streaming in zip(recent, flags) if on_streaming]
+
+
+async def _archive_from_ids(docs: list, total: int, page: int, batch: int, genre, country, year, rating, provider) -> tuple:
+    """Build archive items from a list of {type, tmdbId} docs (added / views orderings) using TMDB details."""
     async def details(doc):
         data = await fetch_tmdb_data(f"/{doc['type']}/{doc['tmdbId']}", {"append_to_response": "watch/providers"})
         if not data:
@@ -3525,10 +3587,31 @@ async def _archive_added(types: list, page: int, genre, country, year, rating, v
             ids = {o.get("provider_id") for k in ("flatrate", "ads", "free") for o in offers.get(k) or []}
             if provider not in ids:
                 return None
+        if "views" in doc:
+            item["views"] = doc["views"]
         return item
 
     items = [i for i in await asyncio.gather(*(details(d) for d in docs)) if i]
-    return _archive_post_filter(items, genre, country, year, rating, views), total, (page * batch) < total
+    return _archive_post_filter(items, genre, country, year, rating), total, (page * batch) < total
+
+
+async def _archive_added(types: list, page: int, genre, country, year, rating, provider) -> tuple:
+    """Newest catalog entries first (first-seen timestamp, then TMDB id)."""
+    await refresh_vixsrc_catalog()
+    q = {"type": {"$in": types}}
+    total = vixsrc_added.count_documents(q)
+    batch = ARCHIVE_PAGE_SIZE * (2 if any([genre, country, year, rating, provider]) else 1)
+    docs = list(vixsrc_added.find(q, {"_id": 0}).sort([("added_at", -1), ("tmdbId", -1)]).skip((page - 1) * batch).limit(batch))
+    return await _archive_from_ids(docs, total, page, batch, genre, country, year, rating, provider)
+
+
+async def _archive_by_views(types: list, min_views: int, page: int, genre, country, year, rating, provider) -> tuple:
+    """Titles watched at least `min_views` times by FlixIT users, most viewed first."""
+    q = {"type": {"$in": types}, "views": {"$gte": min_views}}
+    total = content_views.count_documents(q)
+    batch = ARCHIVE_PAGE_SIZE * 2
+    docs = list(content_views.find(q, {"_id": 0}).sort([("views", -1), ("updatedAt", -1)]).skip((page - 1) * batch).limit(batch))
+    return await _archive_from_ids(docs, total, page, batch, genre, country, year, rating, provider)
 
 
 @app.get("/api/public/archive")
@@ -3542,8 +3625,12 @@ async def get_archive(
     page = max(1, page)
     total_estimate, has_more = 0, False
 
-    if sort == "added" and not q:
-        items, total_estimate, has_more = await _archive_added(types, page, genre, country, year, rating, views, provider)
+    if views:
+        items, total_estimate, has_more = await _archive_by_views(types, views, page, genre, country, year, rating, provider)
+        if sort != "popularity":
+            items.sort(key=_archive_sort_key(sort), reverse=sort != "title")
+    elif sort == "added" and not q:
+        items, total_estimate, has_more = await _archive_added(types, page, genre, country, year, rating, provider)
     elif q:
         results = await asyncio.gather(*(fetch_tmdb_data(f"/search/{t}", {"query": q, "page": page, "include_adult": "false"}) for t in types))
         items = []
@@ -3551,11 +3638,11 @@ async def get_archive(
             items += [_archive_item(r, t) for r in (data or {}).get("results") or [] if not is_anime_content(r)]
             total_estimate += (data or {}).get("total_results") or 0
             has_more = has_more or page < ((data or {}).get("total_pages") or 0)
-        items = _archive_post_filter(items, genre, country, year, rating, views)  # provider filter not applicable to text search
+        items = _archive_post_filter(items, genre, country, year, rating)  # provider filter not applicable to text search
         items.sort(key=_archive_sort_key(sort), reverse=sort != "title")
     else:
-        pages = 3 if age else 2
-        plans = [(t, _discover_params(t, page, genre, country, year, rating, views, provider, sort)) for t in types]
+        pages = 3 if (age or quality) else 2
+        plans = [(t, _discover_params(t, page, genre, country, year, rating, provider, sort, quality)) for t in types]
         plans = [(t, p) for t, p in plans if p]
         results = await asyncio.gather(*(fetch_tmdb_pages(f"/discover/{t}", p, pages=pages) for t, p in plans))
         firsts = await asyncio.gather(*(fetch_tmdb_data(f"/discover/{t}", {**p, "page": 1}) for t, p in plans))
@@ -3567,6 +3654,7 @@ async def get_archive(
         if len(plans) > 1:
             items.sort(key=_archive_sort_key(sort), reverse=sort != "title")
 
+    items = await _apply_quality(items, quality)
     items = await filter_available(items, limit=ARCHIVE_PAGE_SIZE * 2)
     items = await enrich_items(items)
     if age in ARCHIVE_AGE_GROUPS:
@@ -3577,3 +3665,10 @@ async def get_archive(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
+
+
+# =====================
+# SUPPORT MODULE: admin user management, forced password reset, tickets, notifications
+# =====================
+import support as _support  # noqa: E402
+_support.register(app, db, get_current_user, get_current_admin, JWT_SECRET, log_admin_action, issue_user_token)

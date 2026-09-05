@@ -60,9 +60,9 @@ function RankNumber({ n }) {
         fontFamily="'Arial Black', Impact, 'Helvetica Neue', Arial, sans-serif"
         fontWeight="900"
         fontSize="100"
-        fill="#1c1c1c"
-        stroke="#6f6f6f"
-        strokeWidth="3"
+        fill="#0b0b0b"
+        stroke="#5c5c5c"
+        strokeWidth="2.6"
         paintOrder="stroke"
         style={{ letterSpacing: "-0.06em" }}
       >
@@ -88,7 +88,7 @@ function Top10Card({ item, index }) {
       sx={{ width: "100%", height: "var(--top10-h)", position: "relative", zIndex: open ? 100 : 1, px: 0.25 }}
     >
       <Stack direction="row" alignItems="stretch" justifyContent="center" sx={{ height: "100%", gap: "-4px" }}>
-        <Box sx={{ height: "100%", display: "flex", alignItems: "stretch", mr: { xs: "-14px", md: "-24px" }, position: "relative", zIndex: 1 }}>
+        <Box sx={{ height: "100%", display: "flex", alignItems: "stretch", mr: { xs: "-16px", md: "-30px" }, position: "relative", zIndex: 1 }}>
           <RankNumber n={index + 1} />
         </Box>
         <div

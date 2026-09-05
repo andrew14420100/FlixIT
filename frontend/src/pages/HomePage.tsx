@@ -13,6 +13,7 @@ import store from "src/store";
 import HomepageSlider from "src/components/HomepageSlider";
 import Top10Slider from "src/components/Top10Slider";
 import { useQuery } from "@tanstack/react-query";
+import { useHomeDedupe, itemKey, claimedAbove } from "src/store/homeDedupe";
 
 const INITIAL_ROWS = 3;
 const ROWS_PER_LOAD = 2;
@@ -75,20 +76,36 @@ function RowSkeleton({ title }) {
   );
 }
 
-function SectionRow({ section, onSettled }) {
+function SectionRow({ section, index, onSettled }) {
   const url = sectionUrl(section);
+  const isTop10 = (section.section_type || section.apiString) === "top10";
   const { data, isPending } = useQuery({
     queryKey: ["home-row", url],
     queryFn: () => (url ? fetchJson(url, { items: [] }) : { items: [] }),
     ...liveQueryOptions,
   });
-  const items = isPending ? null : data?.items || [];
+  const rows = useHomeDedupe((s) => s.rows);
+  const claim = useHomeDedupe((s) => s.claim);
+  const release = useHomeDedupe((s) => s.release);
+
+  // Titles already shown by the rows above are dropped here (Top 10 is a ranking: never deduped)
+  const items = useMemo(() => {
+    if (isPending) return null;
+    const all = data?.items || [];
+    if (isTop10) return all;
+    const taken = claimedAbove(rows, index);
+    const kept = all.filter((i) => !taken.has(itemKey(i)));
+    return kept.length >= 6 ? kept : all;
+  }, [data, isPending, rows, index, isTop10]);
 
   useEffect(() => { if (!isPending) onSettled(); }, [isPending, onSettled]);
+  const idsKey = items && !isTop10 ? items.map(itemKey).join("|") : "";
+  useEffect(() => { if (idsKey) claim(section.key, index, idsKey.split("|")); }, [idsKey, section.key, index, claim]);
+  useEffect(() => () => release(section.key), [section.key, release]);
 
   if (items === null) return <RowSkeleton title={section.name} />;
   if (!items.length) return null;
-  if ((section.section_type || section.apiString) === "top10") return <Top10Slider title={section.name} items={items} />;
+  if (isTop10) return <Top10Slider title={section.name} items={items} />;
   return <HomepageSlider title={section.name} items={items} />;
 }
 
@@ -132,8 +149,8 @@ export function Component() {
       <Stack spacing={{ xs: 4.5, md: 6 }} sx={{ position: "relative", zIndex: 5, mt: { xs: "-20vh", md: "-31vh" }, pb: 8 }} data-testid="home-rows">
         <ContinueWatchingSection />
 
-        {visibleSections.map((section) => (
-          <SectionRow key={section.key} section={section} onSettled={onRowSettled} />
+        {visibleSections.map((section, index) => (
+          <SectionRow key={section.key} section={section} index={index} onSettled={onRowSettled} />
         ))}
 
         {feed && feed.length === 0 && (

@@ -172,6 +172,7 @@ export default function HomepageSlider({ title, items, linkTo }: HomepageSliderP
                       genre_ids: item.genre_ids || [],
                     }}
                     mediaType={item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie}
+                    watch={item.watch}
                   />
                 </Box>
               ))}

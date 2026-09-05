@@ -37,7 +37,8 @@ export function AuthForm({ mode, onSuccess }) {
         body: JSON.stringify(isRegister ? { email, password, name } : { email, password }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || (isRegister ? "Errore nella registrazione" : "Credenziali non valide"));
+      if (res.status === 403 && data.detail?.code === "banned") throw new Error(`Account sospeso${data.detail.reason ? `: ${data.detail.reason}` : ""}. Contatta l'assistenza.`);
+      if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : (isRegister ? "Errore nella registrazione" : "Credenziali non valide"));
       localStorage.setItem("user_token", data.token);
       setAlert({ type: "success", text: isRegister ? "Account creato, benvenuto!" : "Accesso effettuato" });
       setTimeout(() => onSuccess?.(data), 600);

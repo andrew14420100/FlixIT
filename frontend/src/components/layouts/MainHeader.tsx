@@ -22,6 +22,9 @@ import { APP_BAR_HEIGHT } from "src/constant";
 import Logo from "../Logo";
 import SearchBox from "../SearchBox";
 import { useAuthModal } from "src/store/authModal";
+import ProfileMenu from "./ProfileMenu";
+import NotificationsBell from "./NotificationsBell";
+import { useNotifications } from "src/hooks/useNotifications";
 
 const API_URL = "";
 import { avatarSrc } from "src/config/avatars";
@@ -60,6 +63,7 @@ const MainHeader = () => {
 
   const isLoggedIn = !!localStorage.getItem("user_token");
   const openAuthModal = useAuthModal((s) => s.openModal);
+  const notifications = useNotifications();
   const visibleMenuItems = menuItems.filter(i => i.active !== false && i.visible !== false);
   const isActive = (path) => {
     if (path === "/browse") return location.pathname === "/browse" || location.pathname === "/";
@@ -159,6 +163,8 @@ const MainHeader = () => {
             </Box>
           )}
 
+          {isLoggedIn && <NotificationsBell notifications={notifications} />}
+
           {/* Avatar Button - only for authenticated users */}
           {isLoggedIn && (
           <Box
@@ -197,61 +203,15 @@ const MainHeader = () => {
           </Box>
           )}
 
-          {/* Dropdown - Premium glassmorphism */}
           {isLoggedIn && (
-          <Menu
-            sx={{
-              mt: '50px',
-              '& .MuiPaper-root': {
-                bgcolor: 'rgba(10,10,10,0.92)',
-                backdropFilter: 'blur(32px) saturate(200%)',
-                border: '1px solid rgba(255,255,255,0.07)',
-                borderRadius: '14px',
-                minWidth: 220,
-                boxShadow: '0 24px 64px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.03) inset',
-                overflow: 'hidden',
-                py: 0.5,
-              },
-              '& .MuiMenuItem-root': {
-                color: 'rgba(255,255,255,0.55)', py: 1.2, px: 2, fontSize: 13.5,
-                fontFamily: "'Inter', sans-serif", borderRadius: '8px', mx: 0.5,
-                transition: 'all 0.15s ease',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.06)', color: '#fff' },
-              },
-            }}
-            anchorEl={anchorElUser}
-            anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-            keepMounted
-            transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-            open={Boolean(anchorElUser)}
-            onClose={() => setAnchorElUser(null)}
-          >
-            {isLoggedIn && userInfo && (
-              <Box sx={{ px: 2, py: 1.5, mx: 0.5 }}>
-                <Stack direction="row" spacing={1.5} alignItems="center">
-                  <Avatar variant="rounded" src={avatarImage} sx={{ width: 36, height: 36, borderRadius: '6px', bgcolor: '#222' }} />
-                  <Box>
-                    <Typography sx={{ color: '#fff', fontWeight: 600, fontSize: 14, lineHeight: 1.2 }}>{userInfo.name}</Typography>
-                    <Typography sx={{ color: 'rgba(255,255,255,0.3)', fontSize: 11.5 }}>{userInfo.email}</Typography>
-                  </Box>
-                </Stack>
-              </Box>
-            )}
-            {isLoggedIn && <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', mx: 1 }} />}
-            <MenuItem onClick={() => { setAnchorElUser(null); navigate('/account'); }} data-testid="menu-account">
-              <ListItemIcon><PersonIcon sx={{ color: 'rgba(255,255,255,0.35)', fontSize: 18 }} /></ListItemIcon>
-              Account
-            </MenuItem>
-            <MenuItem onClick={() => { setAnchorElUser(null); navigate('/my-list'); }} data-testid="menu-my-list">
-              <ListItemIcon><PlayCircleOutlineIcon sx={{ color: 'rgba(255,255,255,0.35)', fontSize: 18 }} /></ListItemIcon>
-              La mia lista
-            </MenuItem>
-            <Divider sx={{ borderColor: 'rgba(255,255,255,0.05)', mx: 1 }} />
-            <MenuItem onClick={() => { setAnchorElUser(null); localStorage.removeItem('user_token'); window.location.reload(); }} data-testid="menu-logout">
-              <ListItemIcon><LogoutIcon sx={{ color: '#E50914', fontSize: 18 }} /></ListItemIcon>
-              <Typography sx={{ color: '#E50914', fontSize: 13.5, fontWeight: 500 }}>Esci</Typography>
-            </MenuItem>
-          </Menu>
+            <ProfileMenu
+              anchorEl={anchorElUser}
+              onClose={() => setAnchorElUser(null)}
+              user={userInfo}
+              avatarImage={avatarImage}
+              onNavigate={(to) => { setAnchorElUser(null); navigate(to); }}
+              onLogout={() => { setAnchorElUser(null); localStorage.removeItem('user_token'); window.location.reload(); }}
+            />
           )}
         </Stack>
       </Toolbar>

@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import SupportAgentOutlinedIcon from "@mui/icons-material/SupportAgentOutlined";
+import TicketsPanel from "src/components/support/TicketsPanel";
 import {
   Box,
   Container,
@@ -50,7 +52,10 @@ export function Component() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<"profile" | "watching" | "settings">("profile");
+  const [searchParams] = useSearchParams();
+  const initialSection = searchParams.get("ticket") || searchParams.get("section") === "support" ? "support" : "profile";
+  const [activeSection, setActiveSection] = useState<"profile" | "watching" | "settings" | "support">(initialSection);
+  useEffect(() => { if (searchParams.get("ticket")) setActiveSection("support"); }, [searchParams]);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   // Form states
@@ -180,6 +185,7 @@ export function Component() {
         throw new Error(data.detail || "Errore nell'aggiornamento");
       }
       const data = await response.json();
+      if (data.token) localStorage.setItem("user_token", data.token);
       setUser(data);
       setPassword("");
       setEditMode(false);
@@ -270,6 +276,7 @@ export function Component() {
   const sideNav = [
     { key: "profile" as const, label: "Profilo", icon: <PersonIcon /> },
     { key: "watching" as const, label: "Continua a guardare", icon: <PlayCircleOutlineIcon />, badge: watchItems.length },
+    { key: "support" as const, label: "Assistenza", icon: <SupportAgentOutlinedIcon /> },
     { key: "settings" as const, label: "Impostazioni", icon: <SettingsIcon /> },
   ];
 
@@ -518,6 +525,8 @@ export function Component() {
             )}
 
             {/* === IMPOSTAZIONI === */}
+            {activeSection === "support" && <TicketsPanel token={token} />}
+
             {activeSection === "settings" && (
               <Box sx={{ bgcolor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 3, p: { xs: 3, sm: 4 } }}>
                 <Typography variant="h5" color="#fff" fontWeight={700} mb={3}>Impostazioni</Typography>

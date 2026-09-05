@@ -75,7 +75,7 @@ code {
 @media (max-width: 600px) { .row-title { padding-left: 22px; } }
 
 /* Height of a horizontal card (16:9) per breakpoint: shared by the Top 10 row */
-:root { --page-w: 100vw; --top10-h: calc(var(--card-h) * 1.27);
+:root { --page-w: 100vw; --top10-h: calc(var(--card-h) * 1.42);
   --card-h: calc(((var(--page-w) - 80px) / 6 - 8px) * 9 / 16); }
 @media (max-width: 1535px) { :root { --card-h: calc(((var(--page-w) - 80px) / 5 - 8px) * 9 / 16); } }
 @media (max-width: 1199px) { :root { --card-h: calc(((var(--page-w) - 80px) / 4 - 8px) * 9 / 16); } }

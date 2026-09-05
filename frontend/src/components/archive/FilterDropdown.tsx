@@ -53,8 +53,17 @@ export default function FilterDropdown({ id, label, options = [], value, onChang
   );
 }
 
-export const ratingOption = (o) => (
-  <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.6 }}>
-    {o.label} <StarIcon sx={{ fontSize: 15, color: "#f5c518" }} />
-  </Box>
-);
+// 1..10 progressive stars: N filled, the rest dimmed
+export const ratingOption = (o) => {
+  const n = Number(o.key) || 0;
+  return (
+    <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 1 }} data-testid={`rating-stars-${n}`}>
+      <Box component="span" sx={{ display: "inline-flex", gap: "1px" }}>
+        {Array.from({ length: 10 }).map((_, i) => (
+          <StarIcon key={i} sx={{ fontSize: 13, color: i < n ? "#f5c518" : "rgba(255,255,255,0.18)" }} />
+        ))}
+      </Box>
+      <Box component="span" sx={{ fontSize: 13, color: "rgba(255,255,255,0.7)", minWidth: 58 }}>{o.label}</Box>
+    </Box>
+  );
+};
