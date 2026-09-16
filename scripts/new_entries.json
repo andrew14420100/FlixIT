@@ -1,0 +1,272 @@
+[
+  {
+    "tmdb_id": 202555,
+    "name": "Daredevil Born Again",
+    "poster": "1de5f21c-8f95-4812-ad4d-0ec708b2e0c7",
+    "detail_backdrop": "defb2ad8-4014-4609-b1a4-59341f999ef5"
+  },
+  {
+    "tmdb_id": 1084242,
+    "name": "Zootopia 2",
+    "poster": "cf79b60c-5a2e-4698-9a2b-729f2df6aa9c",
+    "detail_backdrop": "d31f6a8c-e851-4653-8ff7-d7f75c74c38f"
+  },
+  {
+    "tmdb_id": 56570,
+    "name": "Outlander",
+    "poster": "9d4a4d97-cf1a-4f21-ba08-530924938a4e",
+    "detail_backdrop": "7d857753-b8c6-431a-b92f-92bf8e47be09"
+  },
+  {
+    "tmdb_id": 91239,
+    "name": "Bridgerton",
+    "poster": "7b21f2cf-3cc3-4115-b9f0-752b6a233350",
+    "detail_backdrop": "106ca68f-a3d2-4492-bf81-6caf5efac9b3"
+  },
+  {
+    "tmdb_id": 66732,
+    "name": "Stranger Things",
+    "poster": "8a37a864-fe0e-4ef7-b294-7221318efd90",
+    "detail_backdrop": "636dd50b-5a4e-4fef-8ea2-b5d83913e112"
+  },
+  {
+    "tmdb_id": 71912,
+    "name": "The Witcher",
+    "poster": "e46e8e75-4553-4ac1-8370-c30ddf2d16ff",
+    "detail_backdrop": "b681adf3-fb33-4dfa-88ed-0e8a29ef024a"
+  },
+  {
+    "tmdb_id": 1126166,
+    "name": "Heated Rivalry",
+    "poster": "fe822af4-718a-458e-9702-77913aaae3b4",
+    "detail_backdrop": "df79a153-eb63-46a5-8810-d8b56b6012d1"
+  },
+  {
+    "tmdb_id": 1433,
+    "name": "American Dad",
+    "poster": "75b39d6d-c0f9-45c0-90c8-fc93cbcb691f",
+    "detail_backdrop": "6da01035-cc9e-476c-84a6-cdf8ade08d61"
+  },
+  {
+    "tmdb_id": 127532,
+    "name": "The Night Agent",
+    "poster": "985268c7-f6fc-4587-8800-b75af9bb291f",
+    "detail_backdrop": "664d2174-c6b0-404b-b617-ca64619456aa"
+  },
+  {
+    "tmdb_id": 218128,
+    "name": "Hazbin Hotel",
+    "poster": "754ff0de-8212-42e0-b4b8-9a71c1216ab1",
+    "detail_backdrop": "ca6cbc7b-4d05-4d23-bc35-cef0aafd33b4"
+  },
+  {
+    "tmdb_id": 258150,
+    "name": "IT Welcome to Derry",
+    "poster": "1c452e95-861b-4060-90f6-4a87bc4d3b71",
+    "detail_backdrop": "0c498548-29c2-429f-a53b-1b9a170a3d60"
+  },
+  {
+    "tmdb_id": 44006,
+    "name": "Chicago Fire",
+    "poster": "86d2bbf7-9cf7-496c-a50c-4f4ed69c1309",
+    "detail_backdrop": "af11c3f9-2699-4df7-b301-b23f4c2a3ed4"
+  },
+  {
+    "tmdb_id": 58841,
+    "name": "Chicago PD",
+    "poster": "1798acee-35d4-433b-b055-be95ffdd71b1",
+    "detail_backdrop": "6a72a7b4-b246-472d-a99b-dbd158ddc75f"
+  },
+  {
+    "tmdb_id": 62650,
+    "name": "Chicago Med",
+    "poster": "43301f7b-e91b-4726-b678-0a3a4e245fde",
+    "detail_backdrop": "cdfec936-2b46-4114-8a80-af67ffdeb970"
+  },
+  {
+    "tmdb_id": 180770,
+    "name": "Abbott Elementary",
+    "poster": "b6948995-ab00-4232-8b96-f4969ce389f7",
+    "detail_backdrop": "d7a789fe-4533-420d-b860-9ab61804b84e"
+  },
+  {
+    "tmdb_id": 191726,
+    "name": "Hijack",
+    "poster": "96ea0103-fb3c-4473-9733-729936b77ee5",
+    "detail_backdrop": "38a5430c-d5f6-4f1f-8c73-455179872e19"
+  },
+  {
+    "tmdb_id": 134549,
+    "name": "Tell Me Lies",
+    "poster": "fd1f94a5-51e3-4a3d-ba13-2daab4d0369b",
+    "detail_backdrop": "ecf53360-f543-4046-bf49-df007c0dc455"
+  },
+  {
+    "tmdb_id": 249522,
+    "name": "The Pitt",
+    "poster": "82a3860a-c54f-4d62-b881-4033738405a3",
+    "detail_backdrop": "2232609c-569b-4091-b391-bc8de4f043b3"
+  },
+  {
+    "tmdb_id": 136311,
+    "name": "Shrinking",
+    "poster": "5f3734d7-49f5-4624-9842-630aa46a770e",
+    "detail_backdrop": "91212cdb-4bb6-4790-80ec-c6f8e5f52938"
+  },
+  {
+    "tmdb_id": 237908,
+    "name": "A Knight of the Seven Kingdoms",
+    "poster": "410c0e24-8c37-42b2-bbe4-a97e80a4496c",
+    "detail_backdrop": "a13682b3-9c29-4cfc-a92c-202561a95d60"
+  },
+  {
+    "tmdb_id": 239522,
+    "name": "Italia Shore",
+    "poster": "b6fd3d8a-56f8-4564-a8ec-a66d06821dc6",
+    "detail_backdrop": "3c97af45-746d-43cb-91c1-cb2e0ff7fd89"
+  },
+  {
+    "tmdb_id": 100698,
+    "name": "Emily in Paris",
+    "poster": "6f17fcb1-60a4-4c4c-867a-221183d38cb7",
+    "detail_backdrop": "4609a1c4-2fe1-42c4-9289-ce5a5dbd74a6"
+  },
+  {
+    "tmdb_id": 106379,
+    "name": "Fallout",
+    "poster": "6d7df7e1-061c-4328-bb15-51b9baac09c7",
+    "detail_backdrop": "da6a5c85-8ba6-4341-b3fe-5c2ce40151dd"
+  },
+  {
+    "tmdb_id": 136394,
+    "name": "Percy Jackson",
+    "poster": "77ef4cb6-6891-4311-aad1-761bff3fe605",
+    "detail_backdrop": "7889e6d4-6f35-41e1-9c3e-a56d01903771"
+  },
+  {
+    "tmdb_id": 2190,
+    "name": "South Park",
+    "poster": "bc8d0160-4c81-49d8-a4a3-9b269e93de33",
+    "detail_backdrop": "54aa8d56-1e3f-4659-83cc-3575aea97922"
+  },
+  {
+    "tmdb_id": 207893,
+    "name": "The Kardashians",
+    "poster": "f4cecadb-2092-4c77-9ba9-6d26433a642a",
+    "detail_backdrop": "774cbe7c-f47e-4e9b-9f4a-599472a3417e"
+  },
+  {
+    "tmdb_id": 110316,
+    "name": "Alice in Borderland",
+    "poster": "a8192706-100a-4456-a9bd-cd7e168baa14",
+    "detail_backdrop": "282482c4-6465-466b-bcda-71a9b1ff5594"
+  },
+  {
+    "tmdb_id": 237806,
+    "name": "The Walking Dead Daryl Dixon",
+    "poster": "9020aaf6-0c67-4198-9c5c-68639801028b",
+    "detail_backdrop": "afe5aa3b-474f-467f-b5b6-d1822a7cc63a"
+  },
+  {
+    "tmdb_id": 195868,
+    "name": "Tulsa King",
+    "poster": "1b2bc6ba-6112-4790-867d-1e238e524828",
+    "detail_backdrop": "7b164ebf-93dc-4588-9787-73b6e809683c"
+  },
+  {
+    "tmdb_id": 253491,
+    "name": "High Potential",
+    "poster": "1d3cb97d-f7b0-4103-95ff-ff420c1e7e5a",
+    "detail_backdrop": "a9acaa78-4d55-48a5-b16a-223e7ba10dfe"
+  },
+  {
+    "tmdb_id": 202765,
+    "name": "Smiling Friends",
+    "poster": "fc54b486-65ca-49e8-8534-3bb04fe7a43a",
+    "detail_backdrop": "36f8302c-cc7d-480d-9395-b25a9c627ca0"
+  },
+  {
+    "tmdb_id": 282449,
+    "name": "Reality Check Inside Americas Next Top Model",
+    "poster": "33e04be6-001d-4c01-9f12-c8c401382a66",
+    "detail_backdrop": "4cfbbfd5-499f-4ba8-95c5-32b88887188c"
+  },
+  {
+    "tmdb_id": 1296060,
+    "name": "Love Me Love Me",
+    "poster": "582249a6-50e6-45a0-909d-021f35fa081f",
+    "detail_backdrop": "7bfdb621-363e-4786-acfd-983415d7cea0"
+  },
+  {
+    "tmdb_id": 1233975,
+    "name": "Five Nights at Freddys 2",
+    "poster": "413174da-2d76-45e8-b742-ba3bef063473",
+    "detail_backdrop": "a467fa9a-8122-48b4-bcad-83405c9bb04c"
+  },
+  {
+    "tmdb_id": 945961,
+    "name": "Predator Badlands",
+    "poster": "ee1fb40b-d666-4813-8ac8-1586faa7a171",
+    "detail_backdrop": "588e9312-c728-4ae9-a764-e710417b88a6"
+  },
+  {
+    "tmdb_id": 402431,
+    "name": "Wicked For Good",
+    "poster": "4d56b637-26f9-4a1a-a85d-6149adb87bc0",
+    "detail_backdrop": "32d1731a-8dfa-48ec-876e-e1d5bc1718b7"
+  },
+  {
+    "tmdb_id": 946353,
+    "name": "Now You See Me Now You Dont",
+    "poster": "01d09fe2-2f46-4ea8-b3c6-5061f9ef4102",
+    "detail_backdrop": "f702ee5f-8164-4ebc-be0c-b7e4b8966f8c"
+  },
+  {
+    "tmdb_id": 253475,
+    "name": "Pluribus",
+    "poster": "adca4f21-f48c-421f-ae76-837b19cf897f",
+    "detail_backdrop": "a09d5293-32f5-4d32-bd07-af0d884124d9"
+  },
+  {
+    "tmdb_id": 222766,
+    "name": "Gen V",
+    "poster": "f247688c-7a0b-4f79-a501-2a067791df50",
+    "detail_backdrop": "69c4cc1a-6f23-400c-acf7-b2a949d52a9e"
+  },
+  {
+    "tmdb_id": 79696,
+    "name": "9-1-1",
+    "poster": "5868fb08-a3b0-4a64-b1d2-a279bbc89c6f",
+    "detail_backdrop": "ab41d351-0b81-4c31-9d8a-b76d399b0905"
+  },
+  {
+    "tmdb_id": 263760,
+    "name": "Wonderfully Weird World of Gumball",
+    "poster": "33fdb4e9-28dc-4699-91f9-d412b5063864",
+    "detail_backdrop": "9edf5f58-16c0-455a-aa5e-33738b2f6a45"
+  },
+  {
+    "tmdb_id": 247685,
+    "name": "Alessandro Borghese 4 Ristoranti",
+    "poster": "81d65114-4060-42d2-af9f-a0faaa14fd8c",
+    "detail_backdrop": "b31013e4-647b-438d-afd9-49ce9b8dd8fa"
+  },
+  {
+    "tmdb_id": 1252310,
+    "name": "Warfare",
+    "poster": "196d40f2-82d0-49d6-8418-0931947e1624",
+    "detail_backdrop": "f4c8e8ec-d6db-4076-a1fa-05148e38f317"
+  },
+  {
+    "tmdb_id": 933981,
+    "name": "One Battle After Another",
+    "poster": "2a31bd0d-6f6e-462e-b5bf-3bb2b5514d7d",
+    "detail_backdrop": "bae18f65-4f2b-4167-8bbc-d991139b5594"
+  },
+  {
+    "tmdb_id": 1126164,
+    "name": "Our Fault",
+    "poster": "17495ecd-13d4-4f9e-84e3-af80610fd9a2",
+    "detail_backdrop": "d5fc4ca9-b4b8-4a15-b9f8-a58c42fe6860"
+  }
+]

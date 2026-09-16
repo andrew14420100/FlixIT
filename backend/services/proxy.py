@@ -1,0 +1,171 @@
+"""
+Internal HLS/segment proxy.
+
+Some providers (e.g. VixSrc) serve HLS that only works with a `Referer` header
+that browsers cannot set. This module proxies the manifest and its segments
+server-side, injecting the required headers, and rewrites every child URL in the
+manifest to keep flowing through the proxy.
+
+The registry produces stream URLs like `/api/proxy/hls?d=<b64>&h_referer=...`.
+Because the SPA and the API share the same origin (ingress routes `/api/*` to the
+backend), a root-relative URL resolves correctly both for the initial `fetch`
+and for hls.js segment loading.
+"""
+import base64
+import logging
+from urllib.parse import urlencode, urljoin, urlsplit
+
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
+
+logger = logging.getLogger("player.proxy")
+
+router = APIRouter(prefix="/api/proxy", tags=["proxy"])
+
+DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+CORS = {"Access-Control-Allow-Origin": "*"}
+
+
+def _b64(url: str) -> str:
+    return base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
+
+
+def _unb64(data: str) -> str:
+    pad = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode((data + pad).encode()).decode()
+
+
+def _header_params(headers) -> dict:
+    return {f"h_{str(k).lower()}": str(v) for k, v in (headers or {}).items() if v}
+
+
+def _proxy_path(target_url: str, headers: dict, is_m3u8: bool) -> str:
+    endpoint = "hls" if is_m3u8 else "seg"
+    params = {"d": _b64(target_url)}
+    params.update(_header_params(headers))
+    return f"/api/proxy/{endpoint}?{urlencode(params)}"
+
+
+def _is_m3u8(url: str) -> bool:
+    return ".m3u8" in urlsplit(url).path.lower() or "/playlist/" in urlsplit(url).path.lower()
+
+
+def wrap_stream_internal(result: dict) -> dict:
+    """Rewrite a resolved stream so it is served through the internal proxy."""
+    output = dict(result)
+    stream = str(output.get("stream") or "").strip()
+    if not stream:
+        return output
+    headers = output.get("headers") or {}
+    stype = str(output.get("type") or "").lower()
+    is_m3u8 = stype in ("hls", "m3u8") or _is_m3u8(stream)
+    output["original_stream"] = stream
+    output["stream"] = _proxy_path(stream, headers, is_m3u8)
+    output["proxied"] = True
+    return output
+
+
+def _extract_headers(request: Request) -> dict:
+    headers = {}
+    for key, value in request.query_params.multi_items():
+        if key.lower().startswith("h_"):
+            headers[key[2:]] = value
+    return headers
+
+
+def _upstream_headers(headers: dict) -> dict:
+    out = {"User-Agent": headers.get("user-agent") or DEFAULT_UA}
+    if headers.get("referer"):
+        out["Referer"] = headers["referer"]
+    if headers.get("origin"):
+        out["Origin"] = headers["origin"]
+    return out
+
+
+def _rewrite_manifest(body: str, base_url: str, headers: dict) -> str:
+    import re
+
+    lines = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            lines.append(line)
+            continue
+        if stripped.startswith("#"):
+            if 'URI="' in stripped:
+                def _uri_repl(m):
+                    absu = urljoin(base_url, m.group(1))
+                    return 'URI="' + _proxy_path(absu, headers, _is_m3u8(absu)) + '"'
+                line = re.sub(r'URI="([^"]+)"', _uri_repl, line)
+            lines.append(line)
+            continue
+        absu = urljoin(base_url, stripped)
+        lines.append(_proxy_path(absu, headers, _is_m3u8(absu)))
+    return "\n".join(lines)
+
+
+@router.get("/hls")
+async def proxy_hls(request: Request):
+    data = request.query_params.get("d")
+    if not data:
+        raise HTTPException(status_code=400, detail="missing d")
+    target = _unb64(data)
+    headers = _extract_headers(request)
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            r = await client.get(target, headers=_upstream_headers(headers))
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"upstream error: {e.__class__.__name__}")
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"upstream HTTP {r.status_code}")
+    rewritten = _rewrite_manifest(r.text, str(r.url), headers)
+    return Response(
+        content=rewritten,
+        media_type="application/vnd.apple.mpegurl",
+        headers={**CORS, "Cache-Control": "no-cache"},
+    )
+
+
+@router.get("/seg")
+async def proxy_seg(request: Request):
+    data = request.query_params.get("d")
+    if not data:
+        raise HTTPException(status_code=400, detail="missing d")
+    target = _unb64(data)
+    headers = _extract_headers(request)
+    req_headers = _upstream_headers(headers)
+    range_header = request.headers.get("range")
+    if range_header:
+        req_headers["Range"] = range_header
+
+    client = httpx.AsyncClient(timeout=None, follow_redirects=True)
+    try:
+        req = client.build_request("GET", target, headers=req_headers)
+        upstream = await client.send(req, stream=True)
+    except httpx.HTTPError as e:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"upstream error: {e.__class__.__name__}")
+
+    resp_headers = dict(CORS)
+    for h in ("content-type", "content-length", "content-range", "accept-ranges", "cache-control"):
+        if h in upstream.headers:
+            resp_headers[h] = upstream.headers[h]
+
+    async def body_iter():
+        try:
+            async for chunk in upstream.aiter_bytes():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        body_iter(),
+        status_code=upstream.status_code,
+        headers=resp_headers,
+        media_type=resp_headers.get("content-type"),
+    )

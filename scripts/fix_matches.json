@@ -1,0 +1,76 @@
+{
+  "456": {
+    "poster": "c1ad3b88-cd17-45bd-a87c-41b6a1060678",
+    "detail_backdrop": "01054cb6-b52b-4456-a39a-83b3e81688f7",
+    "name": "The Simpsons"
+  },
+  "1434": {
+    "poster": "92ce7f0f-c698-4200-8244-639a07ecf8d7",
+    "detail_backdrop": "faa5b159-76ed-40c8-acb1-6b27bcddc668",
+    "name": "Family Guy"
+  },
+  "1408": {
+    "poster": "2a7cb4a3-7fc2-49d9-a73d-b8dacf7cf032",
+    "detail_backdrop": "872b9981-4069-43b5-b8ff-d55c758477d5",
+    "name": "Trap House"
+  },
+  "45790": null,
+  "95479": null,
+  "209867": null,
+  "37854": null,
+  "1314786": null,
+  "1226863": null,
+  "1327819": null,
+  "1266127": {
+    "poster": "f34e077c-31b1-40d5-a5b6-7e835236c489",
+    "detail_backdrop": "299f34c7-f0d4-4ddc-8b01-ee3ee8f74f6b",
+    "name": "Ready or Not: Here I Come"
+  },
+  "1572073": null,
+  "22980": null,
+  "2224": null,
+  "2661": null,
+  "4504": null,
+  "61818": null,
+  "14610": null,
+  "90": null,
+  "83533": {
+    "poster": "66d327b7-7cee-4c26-ac70-9c3f06f87be9",
+    "detail_backdrop": "a9804ac2-f503-4ed4-98bb-e19bf12cd128",
+    "name": "Avatar: Fire and Ash"
+  },
+  "1168190": null,
+  "112527": null,
+  "279388": null,
+  "33238": null,
+  "4656": null,
+  "270462": null,
+  "1311031": null,
+  "1419406": null,
+  "1582770": null,
+  "1084242": {
+    "poster": "cf79b60c-5a2e-4698-9a2b-729f2df6aa9c",
+    "detail_backdrop": "d31f6a8c-e851-4653-8ff7-d7f75c74c38f",
+    "name": "Zootopia 2"
+  },
+  "549": {
+    "poster": "bcd2da88-79a1-4c32-a00b-c337110cdd49",
+    "detail_backdrop": "51544b7e-f665-4600-96e0-b814e716fc9e",
+    "name": "Law & Order"
+  },
+  "2734": {
+    "poster": "e7a6dec1-b552-4583-90cb-ead61489c975",
+    "detail_backdrop": "2d5a8911-eb5b-4690-bbd0-6ccb09cae4df",
+    "name": "Law & Order: Special Victims Unit"
+  },
+  "1297842": {
+    "poster": "dd02fb94-66ab-4885-a3cf-bc72faaf6faf",
+    "detail_backdrop": "dc63a6fa-f8aa-445c-8d62-6edeec18d52c",
+    "name": "Goat"
+  },
+  "1198994": {
+    "poster": "d46b65df-ba7f-4ce6-bf29-3e6ef145e002",
+    "detail_backdrop": "a170a864-aeaf-47aa-bcaa-6b81a16c4a03",
+    "name": "Send Help"
+  }
+}

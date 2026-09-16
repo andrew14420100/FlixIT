@@ -1,0 +1,272 @@
+{
+  "Bones": {
+    "id": 1911,
+    "name": "Bones",
+    "type": "tv"
+  },
+  "Dr. House": {
+    "id": 1408,
+    "name": "Dr. House - Medical Division",
+    "type": "tv"
+  },
+  "Grey's Anatomy": {
+    "id": 1416,
+    "name": "Grey's Anatomy",
+    "type": "tv"
+  },
+  "Invincible": {
+    "id": 95557,
+    "name": "Invincible",
+    "type": "tv"
+  },
+  "Law Order": {
+    "id": 549,
+    "name": "Law & Order - I due volti della giustizia",
+    "type": "tv"
+  },
+  "NCIS": {
+    "id": 4614,
+    "name": "NCIS - Unit\u00e0 anticrimine",
+    "type": "tv"
+  },
+  "ONE PIECE live action": {
+    "id": 111110,
+    "name": "ONE PIECE",
+    "type": "tv"
+  },
+  "Paradise": {
+    "id": 245927,
+    "name": "Paradise",
+    "type": "tv"
+  },
+  "Peaky Blinders": {
+    "id": 60574,
+    "name": "Peaky Blinders",
+    "type": "tv"
+  },
+  "Supernatural": {
+    "id": 1622,
+    "name": "Supernatural",
+    "type": "tv"
+  },
+  "The Mentalist": {
+    "id": 5920,
+    "name": "The Mentalist",
+    "type": "tv"
+  },
+  "The Rookie": {
+    "id": 79744,
+    "name": "The Rookie",
+    "type": "tv"
+  },
+  "Will Trent": {
+    "id": 208569,
+    "name": "Will Trent",
+    "type": "tv"
+  },
+  "Bridgerton": {
+    "id": 91239,
+    "name": "Bridgerton",
+    "type": "tv"
+  },
+  "The Witcher": {
+    "id": 71912,
+    "name": "The Witcher",
+    "type": "tv"
+  },
+  "Heated Rivalry": {
+    "id": 301507,
+    "name": "Heated Rivalry",
+    "type": "tv"
+  },
+  "American Dad": {
+    "id": 1433,
+    "name": "American Dad!",
+    "type": "tv"
+  },
+  "The Night Agent": {
+    "id": 129552,
+    "name": "The Night Agent",
+    "type": "tv"
+  },
+  "Hazbin Hotel": {
+    "id": 94954,
+    "name": "Hazbin Hotel",
+    "type": "tv"
+  },
+  "IT Welcome to Derry": {
+    "id": 200875,
+    "name": "IT: Welcome to Derry",
+    "type": "tv"
+  },
+  "Chicago Fire": {
+    "id": 44006,
+    "name": "Chicago Fire",
+    "type": "tv"
+  },
+  "Chicago P.D.": {
+    "id": 58841,
+    "name": "Chicago P.D.",
+    "type": "tv"
+  },
+  "Chicago Med": {
+    "id": 62650,
+    "name": "Chicago Med",
+    "type": "tv"
+  },
+  "Abbott Elementary": {
+    "id": 125935,
+    "name": "Abbott Elementary",
+    "type": "tv"
+  },
+  "Hijack": {
+    "id": 198102,
+    "name": "Hijack",
+    "type": "tv"
+  },
+  "Tell Me Lies": {
+    "id": 130464,
+    "name": "Tell Me Lies",
+    "type": "tv"
+  },
+  "The Pitt": {
+    "id": 250307,
+    "name": "The Pitt",
+    "type": "tv"
+  },
+  "Shrinking": {
+    "id": 136311,
+    "name": "Shrinking",
+    "type": "tv"
+  },
+  "A Knight of the Seven Kingdoms": {
+    "id": 224372,
+    "name": "A Knight of the Seven Kingdoms",
+    "type": "tv"
+  },
+  "Italia Shore": {
+    "id": 236102,
+    "name": "Italia Shore",
+    "type": "tv"
+  },
+  "Emily in Paris": {
+    "id": 82596,
+    "name": "Emily in Paris",
+    "type": "tv"
+  },
+  "Fallout": {
+    "id": 106379,
+    "name": "Fallout",
+    "type": "tv"
+  },
+  "Percy Jackson": {
+    "id": 103540,
+    "name": "Percy Jackson e gli dei dell'Olimpo",
+    "type": "tv"
+  },
+  "South Park": {
+    "id": 2190,
+    "name": "South Park",
+    "type": "tv"
+  },
+  "The Kardashians": {
+    "id": 154521,
+    "name": "The Kardashians",
+    "type": "tv"
+  },
+  "Alice in Borderland": {
+    "id": 110316,
+    "name": "Alice in Borderland",
+    "type": "tv"
+  },
+  "Walking Dead Daryl Dixon": {
+    "id": 211684,
+    "name": "The Walking Dead: Daryl Dixon",
+    "type": "tv"
+  },
+  "Tulsa King": {
+    "id": 153312,
+    "name": "Tulsa King",
+    "type": "tv"
+  },
+  "High Potential": {
+    "id": 226637,
+    "name": "High Potential",
+    "type": "tv"
+  },
+  "Smiling Friends": {
+    "id": 126506,
+    "name": "Smiling Friends",
+    "type": "tv"
+  },
+  "Reality Check Americas Next Top Model": {
+    "id": 312423,
+    "name": "Reality Check: la verit\u00e0 su America's Next Top Model",
+    "type": "tv"
+  },
+  "Gen V": {
+    "id": 205715,
+    "name": "Gen V",
+    "type": "tv"
+  },
+  "9-1-1": {
+    "id": 75219,
+    "name": "9-1-1",
+    "type": "tv"
+  },
+  "Gumball": {
+    "id": 37606,
+    "name": "Lo straordinario mondo di Gumball",
+    "type": "tv"
+  },
+  "Alessandro Borghese 4 Ristoranti": {
+    "id": 96171,
+    "name": "Alessandro Borghese - 4 Ristoranti",
+    "type": "tv"
+  },
+  "Five Nights at Freddy's 2": {
+    "id": 1228246,
+    "name": "Five Nights at Freddy's 2",
+    "type": "movie"
+  },
+  "Predator Badlands": {
+    "id": 1242898,
+    "name": "Predator: Badlands",
+    "type": "movie"
+  },
+  "Wicked For Good": {
+    "id": 967941,
+    "name": "Wicked - Parte 2",
+    "type": "movie"
+  },
+  "Now You See Me": {
+    "id": 425274,
+    "name": "L'illusione perfetta - Now You See Me: Now You Don't",
+    "type": "movie"
+  },
+  "Pluribus": {
+    "id": 225171,
+    "name": "Pluribus",
+    "type": "tv"
+  },
+  "Warfare": {
+    "id": 1241436,
+    "name": "Warfare - Tempo di guerra",
+    "type": "movie"
+  },
+  "Our Fault": {
+    "id": 1477319,
+    "name": "Our Fault: London",
+    "type": "movie"
+  },
+  "Daredevil Born Again": {
+    "id": 202555,
+    "name": "Daredevil: Rinascita",
+    "type": "tv"
+  },
+  "Outlander": {
+    "id": 56570,
+    "name": "Outlander",
+    "type": "tv"
+  }
+}
