@@ -149,8 +149,8 @@ export default function HomepageSlider({
         sx={{
           position: "relative",
           zIndex: 2,
-          pl: { xs: 2, sm: 3, md: "4vw" },
-          pr: { xs: 2, sm: 3, md: "4vw" },
+          pl: { xs: 2, sm: 3, md: "4%" },
+          pr: { xs: 2, sm: 3, md: "4%" },
           mb: { xs: "7px", md: "10px" },
           minHeight: { xs: 25, md: 34 },
           display: "flex",
@@ -252,7 +252,7 @@ export default function HomepageSlider({
           className="show-peek"
           sx={{
             width: "100%",
-            pl: { xs: 2, sm: 3, md: "4vw" },
+            pl: { xs: 2, sm: 3, md: "4%" },
             pr: 0,
             boxSizing: "border-box",
             overflow: "visible",
@@ -272,8 +272,9 @@ export default function HomepageSlider({
                     className="slider-item"
                     key={item.id || item.tmdbId}
                     sx={{
-                      px: { xs: "2px", sm: "3px", md: "3px" },
+                      px: { xs: "2px", sm: "3px", md: "3.82005px" },
                       boxSizing: "border-box",
+                      "&:first-of-type": { pl: 0 },
                       position: "relative",
                     }}
                   >
