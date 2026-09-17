@@ -5,25 +5,10 @@ import MainLayout from "src/layouts/MainLayout";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import ComingSoonPage, { PLACEHOLDER_SECTIONS } from "src/pages/ComingSoonPage";
-import {
-  AuthProvider,
-  ProtectedRoute,
-  AdminLayout,
-  LoginPage,
-  DashboardPage,
-  ContentsPage,
-  HeroPage,
-  SectionsPage,
-  MenuPage,
-  LogsPage,
-  SettingsPage,
-  UsersPage,
-  TicketsPage,
-  PlansPage,
-  PremiumPagesPage,
-  ComingSoonAdminPage,
-  PaymentsPage,
-} from "src/admin";
+
+// Admin bundle is code-split: nothing from src/admin is loaded until an /admin route is visited.
+const adminChunk = () => import("src/admin/lazyRoutes");
+const adminPage = (name) => () => adminChunk().then((m) => ({ Component: m[name] }));
 
 function ErrorPage() {
   return (
@@ -155,24 +140,14 @@ const router = createBrowserRouter([
   // Admin Login (standalone, no layout)
   {
     path: "/admin/login",
-    element: (
-      <AuthProvider>
-        <LoginPage />
-      </AuthProvider>
-    ),
+    lazy: adminPage("AdminLoginShell"),
     errorElement: <ErrorPage />,
   },
 
   // Admin Protected Routes
   {
     path: "/admin",
-    element: (
-      <AuthProvider>
-        <ProtectedRoute>
-          <AdminLayout />
-        </ProtectedRoute>
-      </AuthProvider>
-    ),
+    lazy: adminPage("AdminShell"),
     errorElement: <ErrorPage />,
     children: [
       {
@@ -181,38 +156,38 @@ const router = createBrowserRouter([
       },
       {
         path: "dashboard",
-        element: <DashboardPage />,
+        lazy: adminPage("DashboardPage"),
       },
       {
         path: "contents",
-        element: <ContentsPage />,
+        lazy: adminPage("ContentsPage"),
       },
       {
         path: "hero",
-        element: <HeroPage />,
+        lazy: adminPage("HeroPage"),
       },
       {
         path: "sections",
-        element: <SectionsPage />,
+        lazy: adminPage("SectionsPage"),
       },
       {
         path: "menu",
-        element: <MenuPage />,
+        lazy: adminPage("MenuPage"),
       },
       {
         path: "settings",
-        element: <SettingsPage />,
+        lazy: adminPage("SettingsPage"),
       },
       {
         path: "logs",
-        element: <LogsPage />,
+        lazy: adminPage("LogsPage"),
       },
-      { path: "users", element: <UsersPage /> },
-      { path: "tickets", element: <TicketsPage /> },
-      { path: "plans", element: <PlansPage /> },
-      { path: "premium-pages", element: <PremiumPagesPage /> },
-      { path: "coming-soon", element: <ComingSoonAdminPage /> },
-      { path: "payments", element: <PaymentsPage /> },
+      { path: "users", lazy: adminPage("UsersPage") },
+      { path: "tickets", lazy: adminPage("TicketsPage") },
+      { path: "plans", lazy: adminPage("PlansPage") },
+      { path: "premium-pages", lazy: adminPage("PremiumPagesPage") },
+      { path: "coming-soon", lazy: adminPage("ComingSoonAdminPage") },
+      { path: "payments", lazy: adminPage("PaymentsPage") },
     ],
   },
 

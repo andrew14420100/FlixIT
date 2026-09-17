@@ -331,27 +331,31 @@ const Top10Page: React.FC = () => {
                 onClick={() => !content && openAddDialog(pos)}
                 data-testid={`position-${pos}`}
               >
-                {/* Position Badge */}
-                <Box
+                {/* Large outlined Top 10 number */}
+                <Typography
+                  aria-hidden="true"
                   sx={{
                     position: 'absolute',
-                    top: 8,
-                    left: 8,
-                    width: 32,
-                    height: 32,
-                    borderRadius: '50%',
-                    bgcolor: '#e50914',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    left: { xs: -6, sm: -8 },
+                    bottom: { xs: -18, sm: -22 },
                     zIndex: 2,
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.5)',
+                    m: 0,
+                    p: 0,
+                    fontFamily: 'Arial Black, Impact, sans-serif',
+                    fontSize: { xs: '8.2rem', sm: '9.5rem', md: '10.5rem' },
+                    fontWeight: 900,
+                    lineHeight: 0.82,
+                    letterSpacing: '-0.09em',
+                    color: 'rgba(5,5,5,0.82)',
+                    WebkitTextStroke: { xs: '2px rgba(255,255,255,0.92)', sm: '3px rgba(255,255,255,0.92)' },
+                    paintOrder: 'stroke fill',
+                    textShadow: '0 5px 18px rgba(0,0,0,0.75)',
+                    pointerEvents: 'none',
+                    userSelect: 'none',
                   }}
                 >
-                  <Typography sx={{ color: '#fff', fontWeight: 800, fontSize: 14 }}>
-                    {pos}
-                  </Typography>
-                </Box>
+                  {pos}
+                </Typography>
 
                 {content ? (
                   <>

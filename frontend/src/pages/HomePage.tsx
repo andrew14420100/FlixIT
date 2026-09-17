@@ -66,11 +66,11 @@ function buildExtraSections(templates, adminSections) {
 
 function RowSkeleton({ title }) {
   return (
-    <Box data-testid="row-skeleton" className="row-title">
+    <Box data-testid="row-skeleton" className="row-title" sx={{ pl: { xs: 2, sm: 3, md: "4vw" } }}>
       <Typography variant="h5" sx={{ fontWeight: 700, color: "#fff", mb: 1.5 }}>{title}</Typography>
       <Stack direction="row" spacing={1} sx={{ overflow: "hidden" }}>
         {Array.from({ length: 6 }).map((_, i) => (
-          <Box key={i} sx={{ flex: "0 0 auto", width: { xs: "45%", sm: "30%", md: "16%" }, aspectRatio: "16/9", borderRadius: "6px", bgcolor: "#141414",
+          <Box key={i} sx={{ flex: "0 0 auto", width: { xs: "46vw", sm: "31vw", md: "15.1vw" }, aspectRatio: "16/9", borderRadius: "6px", bgcolor: "#141414",
             animation: "flixPulse 1.4s ease-in-out infinite" }} />
         ))}
       </Stack>
@@ -145,10 +145,24 @@ export function Component() {
   const visibleSections = useMemo(() => (feed || []).slice(0, visibleCount), [feed, visibleCount]);
 
   return (
-    <Box data-testid="home-page">
+    <Box data-testid="home-page" sx={{ width: "100%", maxWidth: "none", mx: 0, overflowX: "hidden", fontFamily: '"Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif' }}>
       <HeroSection mediaType={currentMediaType} />
 
-      <Stack spacing={{ xs: 4.5, md: 6 }} sx={{ position: "relative", zIndex: 5, mt: { xs: "-20vh", md: "-31vh" }, pb: 8 }} data-testid="home-rows">
+      <Stack
+        spacing={{ xs: 3.2, md: 4.0 }}
+        sx={{
+          position: "relative",
+          zIndex: 12,
+          mt: { xs: "-7.5vh", md: "-7vh" },
+          pt: { xs: 1.25, md: 1.5 },
+          pb: 8,
+          bgcolor: "transparent",
+          background:
+            "linear-gradient(to bottom, rgba(20,20,20,0) 0px, rgba(20,20,20,.18) 28px, rgba(20,20,20,.72) 92px, #141414 175px, #141414 100%)",
+          "& > *": { position: "relative" },
+        }}
+        className="sliders" data-testid="home-rows"
+      >
         <ContinueWatchingSection />
 
         {visibleSections.map((section, index) => (

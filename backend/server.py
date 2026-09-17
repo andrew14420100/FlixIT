@@ -44,6 +44,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# GZip for JSON APIs (row payloads shrink ~4-5x); media proxied segments are never compressed.
+from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
+
+
+class SelectiveGZip:
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").startswith("/api/proxy"):
+            await self.app(scope, receive, send)
+        else:
+            await self.gzip(scope, receive, send)
+
+
+app.add_middleware(SelectiveGZip)
+
 # MongoDB Connection
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "netflix_clone")
@@ -127,6 +145,13 @@ tv_seasons.create_index([("tmdbId", 1), ("season_number", 1)], unique=True)
 tv_episodes.create_index([("tmdbId", 1), ("season_number", 1), ("episode_number", 1)], unique=True)
 watch_progress.create_index([("user_id", 1), ("tmdb_id", 1)], unique=True)
 watch_progress.create_index([("user_id", 1), ("updated_at", DESCENDING)])
+# Hot lookups from the detail page / Top 10 / settings (small collections but read on every request)
+user_lists.create_index([("user_id", 1), ("media_type", 1), ("media_id", 1)])
+user_ratings.create_index([("user_id", 1), ("media_type", 1), ("media_id", 1)])
+user_likes.create_index([("user_id", 1), ("media_type", 1), ("media_id", 1)])
+content_views.create_index([("views", DESCENDING)])
+db["app_settings"].create_index("key", unique=True)
+sections.create_index("order")
 
 # =====================
 # MODELS
@@ -276,12 +301,39 @@ def is_anime_content(item: dict) -> bool:
     return False
 
 TMDB_CACHE_TTL = timedelta(hours=1)
+TMDB_STALE_TTL = timedelta(hours=12)  # stale-if-error: keep serving old data while TMDB is unreachable
 TMDB_CACHE_MAX = 4000
 _tmdb_cache: dict = {}
+_tmdb_inflight: dict = {}  # coalesce identical concurrent TMDB requests into one upstream call
+_tmdb_client: Optional[httpx.AsyncClient] = None
+_tmdb_semaphore = asyncio.Semaphore(16)
+
+
+def tmdb_client() -> httpx.AsyncClient:
+    """Shared keep-alive client: avoids a TLS handshake per TMDB call."""
+    global _tmdb_client
+    if _tmdb_client is None or _tmdb_client.is_closed:
+        _tmdb_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=5.0),
+            limits=httpx.Limits(max_connections=32, max_keepalive_connections=16, keepalive_expiry=60.0),
+        )
+    return _tmdb_client
+
+
+async def _tmdb_get(endpoint: str, params: dict, headers: dict):
+    last_exc = None
+    for attempt in range(2):
+        try:
+            async with _tmdb_semaphore:
+                return await tmdb_client().get(f"{TMDB_BASE_URL}{endpoint}", params=params, headers=headers)
+        except httpx.HTTPError as e:  # transport/timeout: one quick retry
+            last_exc = e
+            await asyncio.sleep(0.3 * (attempt + 1))
+    raise last_exc
 
 
 async def fetch_tmdb_data(endpoint: str, params: dict = None) -> dict:
-    """Fetch data from TMDB API (1h in-memory cache so rows refresh at most hourly)"""
+    """Fetch data from TMDB API (1h in-memory cache, request coalescing, retry, stale-if-error). Never raises."""
     if params is None:
         params = {}
     params["language"] = "it-IT"
@@ -290,14 +342,22 @@ async def fetch_tmdb_data(endpoint: str, params: dict = None) -> dict:
     now = datetime.now(timezone.utc)
     if hit and now - hit[0] < TMDB_CACHE_TTL:
         return hit[1]
-    headers = {}
-    if TMDB_API_KEY.startswith("eyJ"):
-        headers["Authorization"] = f"Bearer {TMDB_API_KEY}"
-    else:
-        params["api_key"] = TMDB_API_KEY
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{TMDB_BASE_URL}{endpoint}", params=params, headers=headers)
+    pending = _tmdb_inflight.get(cache_key)
+    if pending is not None:
+        return await pending
+
+    async def _load():
+        headers = {}
+        q = dict(params)
+        if TMDB_API_KEY.startswith("eyJ"):
+            headers["Authorization"] = f"Bearer {TMDB_API_KEY}"
+        else:
+            q["api_key"] = TMDB_API_KEY
+        try:
+            response = await _tmdb_get(endpoint, q, headers)
+        except httpx.HTTPError as e:
+            logger.warning(f"TMDB unreachable for {endpoint}: {e.__class__.__name__}")
+            return hit[1] if hit and now - hit[0] < TMDB_STALE_TTL else None
         if response.status_code == 200:
             data = response.json()
             if len(_tmdb_cache) >= TMDB_CACHE_MAX:
@@ -305,8 +365,66 @@ async def fetch_tmdb_data(endpoint: str, params: dict = None) -> dict:
                     _tmdb_cache.pop(k, None)
             _tmdb_cache[cache_key] = (now, data)
             return data
-        logger.error(f"TMDB API error: {response.status_code} - {response.text}")
-        return None
+        logger.error(f"TMDB API error: {response.status_code} - {response.text[:200]}")
+        return hit[1] if hit and now - hit[0] < TMDB_STALE_TTL else None
+
+    task = asyncio.ensure_future(_load())
+    _tmdb_inflight[cache_key] = task
+    try:
+        return await task
+    finally:
+        _tmdb_inflight.pop(cache_key, None)
+
+
+# ---- Response cache for hot public endpoints (TTL + stale-while-revalidate) ----
+RESPONSE_CACHE_TTL = timedelta(minutes=10)
+RESPONSE_STALE_TTL = timedelta(hours=3)
+_response_cache: dict = {}
+_response_refreshing: set = set()
+
+
+def clear_response_cache() -> None:
+    _response_cache.clear()
+
+
+def cached_response(ttl: timedelta = RESPONSE_CACHE_TTL):
+    """Cache a dict-returning endpoint by (name, kwargs). Fresh hits return instantly; stale hits are
+    returned immediately while a single background refresh recomputes the entry (no user waits)."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            key = (fn.__name__, tuple(sorted((k, str(v)) for k, v in kwargs.items())))
+            now = datetime.now(timezone.utc)
+            hit = _response_cache.get(key)
+            if hit:
+                age = now - hit[0]
+                if age < ttl:
+                    return hit[1]
+                if age < RESPONSE_STALE_TTL:
+                    if key not in _response_refreshing:
+                        _response_refreshing.add(key)
+
+                        async def refresh():
+                            try:
+                                data = await fn(*args, **kwargs)
+                                if data and (not isinstance(data, dict) or data.get("items") or not hit[1].get("items")):
+                                    _response_cache[key] = (datetime.now(timezone.utc), data)
+                            except Exception as e:
+                                logger.warning(f"background refresh failed for {fn.__name__}: {e}")
+                            finally:
+                                _response_refreshing.discard(key)
+                        asyncio.ensure_future(refresh())
+                    return hit[1]
+            data = await fn(*args, **kwargs)
+            if data and not (isinstance(data, dict) and "items" in data and not data["items"] and hit):
+                _response_cache[key] = (now, data)
+            elif hit:
+                return hit[1]
+            return data
+        return wrapper
+    return deco
 
 # =====================
 # MEDIA ASSETS - uniform extraction pipeline (titled backdrop, logo, trailer, runtime, certification)
@@ -510,12 +628,23 @@ _vix_loaded_at: Optional[datetime] = None
 _vix_lock = asyncio.Lock()
 
 
+_settings_memo: dict = {}
+_SETTINGS_MEMO_TTL = 30.0
+
+
 def get_setting(key: str, default=None):
+    import time
+    hit = _settings_memo.get(key)
+    if hit and time.monotonic() - hit[0] < _SETTINGS_MEMO_TTL:
+        return hit[1] if hit[1] is not None else default
     doc = app_settings.find_one({"key": key}, {"_id": 0})
-    return doc.get("value", default) if doc else default
+    value = doc.get("value", default) if doc else None
+    _settings_memo[key] = (time.monotonic(), value)
+    return value if value is not None else default
 
 
 def set_setting(key: str, value):
+    _settings_memo.pop(key, None)
     app_settings.update_one({"key": key}, {"$set": {"key": key, "value": value, "updatedAt": datetime.now(timezone.utc).isoformat()}}, upsert=True)
 
 
@@ -901,8 +1030,22 @@ async def _startup_catalog():
                 await refresh_vixsrc_catalog()
             except Exception as e:
                 logger.warning(f"catalog loop error: {e}")
+            try:
+                await warm_home_rows()
+            except Exception as e:
+                logger.warning(f"home warmup error: {e}")
             await asyncio.sleep(VIX_REFRESH_HOURS * 3600)
     asyncio.create_task(loop())
+
+
+async def warm_home_rows():
+    """Pre-compute the first homepage rows so the very first visitor gets cached (instant) responses."""
+    tasks = [get_homepage_trending(), get_homepage_latest(), get_top10()]
+    for tpl in AVAILABLE_SECTIONS:
+        if tpl["section_type"] == "genre" and len(tasks) < 9:
+            tasks.append(get_tmdb_by_genre(genre_id=tpl["genre_id"], media_type="mixed", page=1, origin_country=tpl.get("origin_country")))
+    await asyncio.gather(*tasks, return_exceptions=True)
+    logger.info("home rows warmed (%d)", len(tasks))
 
 
 
@@ -1899,6 +2042,7 @@ def add_predefined_section(data: AddPredefinedSection, admin = Depends(get_curre
     return section
 
 @app.get("/api/public/tmdb/genre/{genre_id}/{media_type}")
+@cached_response()
 async def get_tmdb_by_genre(genre_id: int, media_type: str = "movie", page: int = 1, origin_country: Optional[str] = None):
     """Get content by genre from TMDB. media_type 'mixed' merges movies and TV shows in one row."""
     def base_params(gid):
@@ -2281,6 +2425,7 @@ async def check_vixsrc_with_cache(tmdb_id: int, content_type: str, cache_hours: 
     return result["available"]
 
 @app.get("/api/public/tmdb/trending/{media_type}")
+@cached_response()
 async def get_tmdb_trending(media_type: str = "all", page: int = 1, verify_vixsrc: bool = False):
     """Get trending content directly from TMDB, filtered by vixsrc availability and NO ANIME"""
     endpoint = f"/trending/{media_type}/week"
@@ -2325,6 +2470,7 @@ async def get_tmdb_trending(media_type: str = "all", page: int = 1, verify_vixsr
     return {"items": await enrich_items(items), "total": len(items), "page": page}
 
 @app.get("/api/public/tmdb/popular/{media_type}")
+@cached_response()
 async def get_tmdb_popular(media_type: str = "movie", page: int = 1, verify_vixsrc: bool = False):
     """Get popular content directly from TMDB, filtered by vixsrc availability and NO ANIME"""
     endpoint = f"/{media_type}/popular"
@@ -2367,6 +2513,7 @@ async def get_tmdb_popular(media_type: str = "movie", page: int = 1, verify_vixs
     return {"items": await enrich_items(items), "total": len(items), "page": page}
 
 @app.get("/api/public/tmdb/top_rated/{media_type}")
+@cached_response()
 async def get_tmdb_top_rated(media_type: str = "movie", page: int = 1, verify_vixsrc: bool = False):
     """Get top rated content directly from TMDB, filtered by vixsrc availability and NO ANIME"""
     endpoint = f"/{media_type}/top_rated"
@@ -2409,6 +2556,7 @@ async def get_tmdb_top_rated(media_type: str = "movie", page: int = 1, verify_vi
     return {"items": await enrich_items(items), "total": len(items), "page": page}
 
 @app.get("/api/public/tmdb/now_playing")
+@cached_response()
 async def get_tmdb_now_playing(page: int = 1, verify_vixsrc: bool = False):
     """Get now playing movies from TMDB, filtered by vixsrc availability and NO ANIME"""
     data = await fetch_tmdb_pages("/movie/now_playing", {"page": page})
@@ -2486,6 +2634,7 @@ async def get_tmdb_upcoming(page: int = 1):
     return {"items": await enrich_items(items), "total": len(items), "page": page}
 
 @app.get("/api/public/tmdb/airing_today")
+@cached_response()
 async def get_tmdb_airing_today(page: int = 1):
     """Get TV airing today from TMDB"""
     data = await fetch_tmdb_pages("/tv/airing_today", {"page": page})
@@ -2512,6 +2661,7 @@ async def get_tmdb_airing_today(page: int = 1):
 
 
 @app.get("/api/public/tmdb/on_the_air")
+@cached_response()
 async def get_tmdb_on_the_air(page: int = 1, verify_vixsrc: bool = False):
     """Get TV shows on the air from TMDB, filtered by vixsrc availability and NO ANIME"""
     data = await fetch_tmdb_pages("/tv/on_the_air", {"page": page})
@@ -2827,33 +2977,34 @@ async def get_public_hero():
                 hero["contentId"] = str(tmdb_id)
                 hero["fallback"] = True
         
-        tmdb_data = await fetch_tmdb_data(f"/{media_type}/{tmdb_id}")
+        tmdb_data, assets = await asyncio.gather(fetch_tmdb_data(f"/{media_type}/{tmdb_id}"), get_media_assets(media_type, tmdb_id))
         
         hero_response = dict(hero)
+        hero_response["mediaType"] = media_type
         if tmdb_data:
-            hero_response["mediaType"] = media_type
             hero_response["release_date_it"] = format_italian_date(
                 tmdb_data.get("release_date") or tmdb_data.get("first_air_date")
             )
-        else:
-            hero_response["mediaType"] = media_type
+            # Everything the hero needs to paint in ONE request (no client-side TMDB waterfall)
+            hero_response["detail"] = {
+                "id": tmdb_data.get("id"),
+                "title": tmdb_data.get("title"), "name": tmdb_data.get("name"),
+                "overview": tmdb_data.get("overview"),
+                "backdrop_path": tmdb_data.get("backdrop_path"), "poster_path": tmdb_data.get("poster_path"),
+                "release_date": tmdb_data.get("release_date"), "first_air_date": tmdb_data.get("first_air_date"),
+                "vote_average": tmdb_data.get("vote_average"),
+                "genres": tmdb_data.get("genres") or [],
+                "number_of_seasons": tmdb_data.get("number_of_seasons"),
+                "runtime": tmdb_data.get("runtime"),
+            }
+        if assets:
+            hero_response["assets"] = {k: assets.get(k) for k in ("titled_backdrop_path", "logo_path", "trailer_key", "runtime", "number_of_seasons", "certification", "backdrop_path", "poster_path")}
         
         return JSONResponse(
             content=hero_response,
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0"
-            }
+            headers={"Cache-Control": "public, max-age=60, stale-while-revalidate=300"},
         )
-    return JSONResponse(
-        content={},
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0"
-        }
-    )
+    return JSONResponse(content={}, headers={"Cache-Control": "no-cache"})
 
 @app.get("/api/public/check-availability/{media_type}/{tmdb_id}")
 async def check_content_availability(media_type: str, tmdb_id: int):
@@ -3006,6 +3157,7 @@ async def record_view(data: ViewRecord):
 
 
 @app.get("/api/public/top10")
+@cached_response()
 async def get_top10():
     """
     Return the top 10 most-viewed contents from the content_views collection.
@@ -3022,12 +3174,11 @@ async def get_top10():
     await refresh_vixsrc_catalog()
     items = []
     if top_views:
-        for i, record in enumerate(top_views):
+        top_views = [r for r in top_views if is_on_vixsrc(r["type"], r["tmdbId"])][:12]
+        details = await asyncio.gather(*(fetch_tmdb_data(f"/{r['type']}/{r['tmdbId']}") for r in top_views))
+        for record, tmdb_data in zip(top_views, details):
             tmdb_id = record["tmdbId"]
             media_type = record["type"]
-            if not is_on_vixsrc(media_type, tmdb_id):
-                continue
-            tmdb_data = await fetch_tmdb_data(f"/{media_type}/{tmdb_id}")
             if not tmdb_data:
                 continue
             items.append({
@@ -3085,6 +3236,7 @@ async def get_top10():
 
 
 @app.get("/api/public/homepage/trending")
+@cached_response()
 async def get_homepage_trending():
     """Get trending content for the homepage 'I titoli del momento' row."""
     data = await fetch_tmdb_pages("/trending/all/week", {"page": 1}, pages=3)
@@ -3115,10 +3267,10 @@ async def get_homepage_trending():
 
 
 @app.get("/api/public/homepage/latest")
+@cached_response()
 async def get_homepage_latest():
     """Get recently added / now playing content for the homepage 'Aggiunti di recente' row."""
-    movies_data = await fetch_tmdb_pages("/movie/now_playing", {"page": 1})
-    tv_data = await fetch_tmdb_pages("/tv/on_the_air", {"page": 1})
+    movies_data, tv_data = await asyncio.gather(fetch_tmdb_pages("/movie/now_playing", {"page": 1}), fetch_tmdb_pages("/tv/on_the_air", {"page": 1}))
 
     items = []
     seen = set()
@@ -3591,6 +3743,7 @@ async def track_content_view(media_type: str, tmdb_id: int):
     return {"success": True}
 
 @app.get("/api/public/homepage/genre/{genre_id}")
+@cached_response()
 async def get_homepage_genre(genre_id: int, media_type: str = "movie", page: int = 1):
     """Get content by genre for infinite scroll sections"""
     endpoint = f"/discover/{media_type}"

@@ -30,6 +30,24 @@ const SAVE_EVERY_MS = 5000;
 const RESUME_MIN_SECONDS = 30;
 const END_THRESHOLD_SECONDS = 20;
 const STORAGE_PREFIX = "flixit_player_time:";
+const MAX_NETWORK_RECOVERIES = 4;
+const MAX_MEDIA_RECOVERIES = 2;
+const HLS_CONFIG = {
+  enableWorker: true,
+  lowLatencyMode: false,
+  backBufferLength: 60,
+  maxBufferLength: 30,
+  maxMaxBufferLength: 120,
+  maxBufferSize: 60 * 1000 * 1000,
+  startFragPrefetch: true,       // fetch the first fragment while the level playlist is still parsing
+  capLevelToPlayerSize: true,    // never download 1080p into a 720px box
+  abrEwmaDefaultEstimate: 2_000_000, // start around 720p on unknown networks, ABR adjusts within seconds
+  abrBandWidthUpFactor: 0.8,
+  manifestLoadingTimeOut: 15000, manifestLoadingMaxRetry: 2, manifestLoadingRetryDelay: 800,
+  levelLoadingTimeOut: 15000, levelLoadingMaxRetry: 3, levelLoadingRetryDelay: 800,
+  fragLoadingTimeOut: 20000, fragLoadingMaxRetry: 4, fragLoadingRetryDelay: 800, fragLoadingMaxRetryTimeout: 8000,
+  nudgeMaxRetry: 5,
+};
 
 export function readSavedTime(storageKey) {
   try {
@@ -79,7 +97,7 @@ const ctrlBtnSx = {
 
 export default function CustomVideoPlayer({
   src, type = "hls", storageKey, startAt = 0, title = "", subtitle = "", poster,
-  hasNext = false, onNext, onBack, onProgress, onEnded, onError, autoPlay = true,
+  hasNext = false, onNext, onBack, onProgress, onEnded, onError, autoPlay = false,
 }) {
   const containerRef = useRef(null);
   const videoRef = useRef(null);
@@ -88,6 +106,8 @@ export default function CustomVideoPlayer({
   const lastSaveRef = useRef(0);
   const resumeAppliedRef = useRef(false);
   const seekingRef = useRef(false);
+  const userRequestedPlayRef = useRef(false);
+  const fatalErrorTimerRef = useRef(null);
 
   const [playing, setPlaying] = useState(false);
   const [buffering, setBuffering] = useState(true);
@@ -117,39 +137,98 @@ export default function CustomVideoPlayer({
     const useHls = type === "hls" || /\.m3u8(\?|$)/i.test(src) || /\/proxy\/hls/i.test(src);
     const canNative = video.canPlayType("application/vnd.apple.mpegurl");
     let hls = null;
+    let recoveryTimer = null;
 
     if (useHls && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 90 });
+      hls = new Hls(HLS_CONFIG);
       hlsRef.current = hls;
+      let networkRecoveries = 0;
+      let mediaRecoveries = 0;
+      const fail = (_msg) => {
+        // HLS fatal events are not allowed to create the player error overlay.
+        // hls.js may recover/reload the manifest or media after the event.
+        // The explicit video.play() promise is the source of truth for a
+        // user-visible playback failure.
+        setBuffering(true);
+        clearTimeout(fatalErrorTimerRef.current);
+      };
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         const tracks = hls.audioTracks || [];
         setAudioTracks(tracks.map((t, i) => ({ id: i, name: t.name || t.lang || `Traccia ${i + 1}`, lang: t.lang || "" })));
         const italian = tracks.findIndex(isItalianTrack);
         if (italian >= 0) hls.audioTrack = italian;
         setAudioTrackId(italian >= 0 ? italian : hls.audioTrack);
-        if (autoPlay) video.play().catch(() => {});
+
+        if (autoPlay) {
+          // Autoplay is intentionally audible, as in the original player.
+          // Do not force mute: if the browser permits autoplay, playback starts
+          // with the current volume. A browser autoplay rejection is not a
+          // player error and must never replace the player with an error screen.
+          video.autoplay = true;
+          setBuffering(true);
+          const start = () => {
+            if (!video.paused) return;
+            video.play().then(() => {
+              setBuffering(false);
+              setFatalError(null);
+            }).catch((err) => {
+              console.warn("[PLAYER] autoplay fallito:", err?.name, err?.message);
+              // The browser may reject audible autoplay. Leave the player
+              // mounted and let the user's Play button retry with a gesture.
+            });
+          };
+          if (video.readyState >= 2) start();
+          else video.addEventListener("canplay", start, { once: true });
+        }
       });
       hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_e, data) => setAudioTrackId(data?.id ?? hls.audioTrack));
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data?.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          hls.startLoad();
+          // bounded recovery with backoff: 4 attempts max, then a clear error (never an endless spinner)
+          if (networkRecoveries >= MAX_NETWORK_RECOVERIES) return fail("Connessione allo stream persa. Riprova.");
+          networkRecoveries += 1;
+          setBuffering(true);
+          clearTimeout(recoveryTimer);
+          recoveryTimer = setTimeout(() => hls.startLoad(video.currentTime || -1), 600 * networkRecoveries);
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          if (mediaRecoveries >= MAX_MEDIA_RECOVERIES) return fail("Errore di decodifica del video");
+          mediaRecoveries += 1;
+          if (mediaRecoveries === 2) hls.swapAudioCodec();
           hls.recoverMediaError();
         } else {
-          setFatalError("Impossibile riprodurre lo stream");
-          onError?.("Impossibile riprodurre lo stream");
+          fail("Impossibile riprodurre lo stream");
         }
       });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { networkRecoveries = 0; });
       hls.loadSource(src);
       hls.attachMedia(video);
     } else {
       // Safari/iOS native HLS or plain mp4
       video.src = src;
-      if (autoPlay) video.play().catch(() => {});
+      if (autoPlay) {
+        // Keep autoplay audible; never force video.muted = true.
+        video.autoplay = true;
+        setBuffering(true);
+        const start = () => {
+          if (!video.paused) return;
+          video.play().then(() => {
+            setBuffering(false);
+            setFatalError(null);
+          }).catch((err) => {
+              console.warn("[PLAYER] autoplay fallito:", err?.name, err?.message);
+            // Audible autoplay can be rejected by the browser. This is not a
+            // playback error; the manual Play button remains available.
+          });
+        };
+        if (video.readyState >= 2) start();
+        else video.addEventListener("canplay", start, { once: true });
+      }
     }
 
     return () => {
+      clearTimeout(recoveryTimer);
+      clearTimeout(fatalErrorTimerRef.current);
       if (hls) { hls.destroy(); hlsRef.current = null; }
       video.removeAttribute("src");
       video.load();
@@ -184,19 +263,33 @@ export default function CustomVideoPlayer({
         onProgress?.(t, video.duration || 0);
       }
     };
-    const onPlay = () => { setPlaying(true); setBuffering(false); };
+    const onPlay = () => {
+      clearTimeout(fatalErrorTimerRef.current);
+      setFatalError(null);
+      setPlaying(true);
+      setBuffering(false);
+    };
     const onPause = () => { setPlaying(false); setBuffering(false); writeSavedTime(storageKey, video.currentTime, video.duration || 0); onProgress?.(video.currentTime, video.duration || 0); };
     const onSeeked = () => { setCurrentTime(video.currentTime || 0); if (video.paused) setBuffering(false); };
     const onWaiting = () => setBuffering(true);
-    const onPlaying = () => setBuffering(false);
+    const onPlaying = () => {
+      clearTimeout(fatalErrorTimerRef.current);
+      setFatalError(null);
+      setBuffering(false);
+    };
     const onCanPlay = () => setBuffering(false);
     const onEnd = () => { setPlaying(false); writeSavedTime(storageKey, video.duration || 0, video.duration || 0); onProgress?.(video.duration || 0, video.duration || 0); onEnded?.(); };
     const onVolume = () => { setMuted(video.muted); setVolume(video.volume); };
     const onErr = () => {
       if (hlsRef.current) return; // hls.js reports its own errors
-      setBuffering(false);
-      setFatalError("Impossibile riprodurre il video");
-      onError?.("Impossibile riprodurre il video");
+      if (!userRequestedPlayRef.current) {
+        setBuffering(true);
+        return;
+      }
+      setBuffering(true);
+      // Do not show the fatal overlay here. A native media error can be
+      // emitted while the source is still attaching/loading.
+      // Explicit play() failure below handles genuine playback failures.
     };
 
     video.addEventListener("loadedmetadata", onLoadedMeta);
@@ -239,9 +332,40 @@ export default function CustomVideoPlayer({
 
   // ---------------------------------------------------------------- actions
   const togglePlay = useCallback(() => {
-    const v = videoRef.current; if (!v) return;
-    if (v.paused) v.play().catch(() => {}); else v.pause();
-  }, []);
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (v.paused) {
+      userRequestedPlayRef.current = true;
+      setFatalError(null);
+      setBuffering(true);
+
+      v.play().then(() => {
+        clearTimeout(fatalErrorTimerRef.current);
+        setFatalError(null);
+      }).catch((err) => {
+        // Do not replace the player with an error immediately. Some browsers
+        // reject play() while HLS is still attaching/loading. Keep the player
+        // in its loading state and let media/HLS events settle.
+        const message = err?.name === "NotAllowedError"
+          ? "La riproduzione è stata bloccata dal browser."
+          : null;
+
+        if (message) {
+          // A browser autoplay policy is not a stream failure. Keep the player
+          // visible; a later user click on Play can start it with audio.
+          setBuffering(false);
+          setFatalError(null);
+        } else {
+          setBuffering(true);
+          setFatalError(null);
+        }
+        // Never propagate autoplay/playback rejections to the parent page.
+      });
+    } else {
+      v.pause();
+    }
+  }, [onError, muted]);
   const skip = useCallback((delta) => {
     const v = videoRef.current; if (!v) return;
     const d = v.duration || Infinity;
@@ -342,6 +466,7 @@ export default function CustomVideoPlayer({
         data-testid="native-video"
         poster={poster || undefined}
         playsInline
+        autoPlay={autoPlay}
         preload="auto"
         style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
       />
@@ -354,7 +479,7 @@ export default function CustomVideoPlayer({
       )}
 
       {/* Center play glyph when paused */}
-      {!playing && !buffering && !fatalError && (
+      {!playing && !buffering && (
         <Box onClick={togglePlay} data-testid="player-center-play"
           sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", cursor: "pointer" }}>
           <Box sx={{ width: 96, height: 96, borderRadius: "50%", bgcolor: "rgba(0,0,0,0.55)", border: "2px solid rgba(255,255,255,0.7)", display: "grid", placeItems: "center", backdropFilter: "blur(6px)", transition: "transform 200ms ease, background-color 200ms ease", "&:hover": { transform: "scale(1.06)", bgcolor: "rgba(229,9,20,0.85)", borderColor: "transparent" } }}>
@@ -364,11 +489,7 @@ export default function CustomVideoPlayer({
       )}
 
       {/* Error */}
-      {fatalError && (
-        <Box sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", bgcolor: "rgba(0,0,0,0.85)" }}>
-          <Typography sx={{ color: "#fff", fontSize: 18 }}>{fatalError}</Typography>
-        </Box>
-      )}
+      
 
       {/* Top bar */}
       <Box sx={{ position: "absolute", top: 0, left: 0, right: 0, p: { xs: 2, md: 3 }, display: "flex", alignItems: "center", gap: 2,

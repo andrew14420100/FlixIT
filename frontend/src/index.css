@@ -91,6 +91,10 @@ code {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.45; }
 }
+@keyframes flixFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
 
 /* ========== CARD ANIMATIONS - StreamingCommunity style ========== */
 .slick-slider {

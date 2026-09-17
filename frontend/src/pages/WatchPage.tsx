@@ -20,9 +20,11 @@ import CustomVideoPlayer from "src/components/watch/CustomVideoPlayer";
 const LOCAL_STORAGE_KEY = "netflix_continue_watching";
 const MIN_WATCH_SECONDS = 10;
 const SAVE_INTERVAL_MS = 15000;
-const RESUME_RESOLVE_TIMEOUT_MS = 2500;
+const RESUME_RESOLVE_TIMEOUT_MS = 500;
 const RESUME_REWIND_SECONDS = 10;
-const STREAM_TIMEOUT_MS = 45000;
+const STREAM_TIMEOUT_MS = 30000;
+const STREAM_CACHE_TTL_MS = 2 * 60 * 1000;
+const STREAM_CACHE_PREFIX = "watch_stream_cache:";
 
 function readLocalProgress(tmdbId) {
   try {
@@ -31,6 +33,35 @@ function readLocalProgress(tmdbId) {
   } catch {
     return null;
   }
+}
+
+function readCachedStream(cacheKey) {
+  try {
+    const raw = sessionStorage.getItem(STREAM_CACHE_PREFIX + cacheKey);
+    if (!raw) return null;
+    const item = JSON.parse(raw);
+    if (!item?.stream || Date.now() - item.savedAt > STREAM_CACHE_TTL_MS) {
+      sessionStorage.removeItem(STREAM_CACHE_PREFIX + cacheKey);
+      return null;
+    }
+    return item;
+  } catch {
+    return null;
+  }
+}
+
+function cacheStream(cacheKey, data) {
+  try {
+    sessionStorage.setItem(
+      STREAM_CACHE_PREFIX + cacheKey,
+      JSON.stringify({
+        stream: data.stream,
+        type: data.type || "hls",
+        source: data.source,
+        savedAt: Date.now(),
+      })
+    );
+  } catch {}
 }
 
 export function Component() {
@@ -47,19 +78,22 @@ function WatchPlayer() {
   const { saveProgress } = useContinueWatching();
 
   const tmdbId = Number(id);
+  const isValidTmdbId = Number.isInteger(tmdbId) && tmdbId > 0;
   const isTv = mediaType === "tv";
   const season = searchParams.get("s") || "1";
   const episode = searchParams.get("e") || "1";
   const startTimeParam = searchParams.get("t");
   const storageKey = isTv ? `${tmdbId}:s${season}e${episode}` : String(tmdbId);
 
-  // Resume position resolved ONCE before the player mounts (local + backend, hard timeout)
+  // Resume position is resolved independently so it never blocks player startup
   const [startAt, setStartAt] = useState<number | null>(() =>
     startTimeParam !== null ? Math.max(0, parseInt(startTimeParam, 10) || 0) : null
   );
   // Stream resolution: resolving | ready | unavailable | error
   const [streamState, setStreamState] = useState<{ status: string; stream?: string; type?: string; source?: string; message?: string }>({ status: "resolving" });
   const [title, setTitle] = useState("");
+  const [backdrop, setBackdrop] = useState("");
+  const [attempt, setAttempt] = useState(0);
   const [episodeInfo, setEpisodeInfo] = useState({ name: "", hasNext: false });
 
   const metaRef = useRef({ title: "", backdrop_path: "", poster_path: "", duration: isTv ? 2700 : 7200 });
@@ -98,26 +132,63 @@ function WatchPlayer() {
       })
       .catch(() => { clearTimeout(timeout); finish(localProgress); });
     return () => { cancelled = true; clearTimeout(timeout); };
-  }, [tmdbId, startAt, matchesEpisode]);
+  }, [tmdbId, startAt, matchesEpisode, isValidTmdbId]);
 
   useEffect(() => { if (startAt !== null) startAtRef.current = startAt; }, [startAt]);
 
   // ---- stream resolution from the backend
   useEffect(() => {
-    if (!tmdbId) return;
+    if (!isValidTmdbId) return;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
     const url = isTv ? `/api/player/tv/${tmdbId}/${season}/${episode}` : `/api/player/movie/${tmdbId}`;
-    setStreamState({ status: "resolving" });
-    fetch(url, { signal: controller.signal })
-      .then(async (r) => {
-        const data = await r.json().catch(() => null);
-        if (!r.ok) throw new Error(data?.detail || `Errore ${r.status}`);
-        return data;
-      })
+    if (playerErrorTimerRef.current) {
+      clearTimeout(playerErrorTimerRef.current);
+      playerErrorTimerRef.current = null;
+    }
+    const cacheKey = `${isTv ? "tv" : "movie"}:${tmdbId}:${season}:${episode}`;
+    const cached = readCachedStream(cacheKey);
+
+    // Use a very recent resolved stream immediately. This removes the resolver
+    // round-trip when the user returns to the same title/episode.
+    if (cached?.stream) {
+      setStreamState({
+        status: "ready",
+        stream: cached.stream,
+        type: cached.type || "hls",
+        source: cached.source,
+      });
+    } else {
+      setStreamState({ status: "resolving" });
+    }
+
+    const request = () => fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    }).then(async (r) => {
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(data?.detail || `Errore ${r.status}`);
+      return data;
+    });
+
+    // One resolver request only. Retrying here can duplicate an expensive
+    // backend resolution and make "Guarda" feel slower when the first call fails.
+    request()
       .then((data) => {
-        if (data?.success && data.stream) setStreamState({ status: "ready", stream: data.stream, type: data.type || "hls", source: data.source });
-        else setStreamState({ status: "unavailable", message: data?.message || "Stream non disponibile" });
+        if (data?.success && data.stream) {
+          cacheStream(cacheKey, data);
+          setStreamState({
+            status: "ready",
+            stream: data.stream,
+            type: data.type || "hls",
+            source: data.source,
+          });
+        } else if (data?.reason === "temporary") {
+          setStreamState({ status: "error", message: data?.message || "Sorgente momentaneamente non raggiungibile" });
+        } else {
+          setStreamState({ status: "unavailable", message: data?.message || "Stream non disponibile" });
+        }
       })
       .catch((e) => {
         if (controller.signal.aborted) setStreamState({ status: "error", message: "Tempo di attesa esaurito durante la ricerca dello stream" });
@@ -125,23 +196,32 @@ function WatchPlayer() {
       })
       .finally(() => clearTimeout(timeout));
     return () => { clearTimeout(timeout); controller.abort(); };
-  }, [tmdbId, isTv, season, episode]);
+  }, [tmdbId, isTv, season, episode, attempt, isValidTmdbId]);
 
   // ---- title / images for "Continua a guardare"
   useEffect(() => {
-    if (!tmdbId) return;
+    if (!isValidTmdbId) return;
     fetch(`/api/public/media-assets/${isTv ? "tv" : "movie"}/${tmdbId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((a) => {
         if (!a) return;
         metaRef.current.title = a.title || metaRef.current.title;
         setTitle(a.title || "");
-        metaRef.current.backdrop_path = a.titled_backdrop_path || a.backdrop_path || "";
-        metaRef.current.poster_path = a.poster_path || "";
+        const backdropPath = a.titled_backdrop_path || a.backdrop_path || "";
+        const posterPath = a.poster_path || "";
+        metaRef.current.backdrop_path = backdropPath;
+        metaRef.current.poster_path = posterPath;
+        if (backdropPath) {
+          setBackdrop(
+            /^https?:\/\//i.test(backdropPath)
+              ? backdropPath
+              : `https://image.tmdb.org/t/p/w1280${backdropPath}`
+          );
+        }
         if (a.runtime > 0) metaRef.current.duration = a.runtime * 60;
       })
       .catch(() => {});
-  }, [tmdbId, isTv]);
+  }, [tmdbId, isTv, isValidTmdbId]);
 
   // ---- episode name + next-episode availability
   useEffect(() => {
@@ -155,11 +235,11 @@ function WatchPlayer() {
         setEpisodeInfo({ name: current?.name || "", hasNext });
       })
       .catch(() => {});
-  }, [tmdbId, isTv, season, episode]);
+  }, [tmdbId, isTv, season, episode, isValidTmdbId]);
 
   // ---- progress persistence ("Continua a guardare": localStorage + backend when logged in)
   const persist = useCallback(() => {
-    if (!tmdbId) return;
+    if (!isValidTmdbId) return;
     const p = playbackRef.current;
     if (!p.hasEvents) return; // the native player reports real timeupdate events
     const elapsed = (Date.now() - mountedAtRef.current) / 1000;
@@ -171,7 +251,7 @@ function WatchPlayer() {
     saveProgress({
       tmdb_id: tmdbId,
       media_type: isTv ? "tv" : "movie",
-      progress: Math.max(MIN_WATCH_SECONDS, Math.floor(progress)),
+      progress: Math.max(0, Math.floor(progress)),
       duration: Math.floor(duration),
       title: metaRef.current.title || `${isTv ? "Serie TV" : "Film"} ${tmdbId}`,
       backdrop_path: metaRef.current.backdrop_path,
@@ -181,6 +261,10 @@ function WatchPlayer() {
   }, [tmdbId, isTv, season, episode, saveProgress]);
 
   const handlePlayerProgress = useCallback((currentTime, duration) => {
+    if (playerErrorTimerRef.current) {
+      clearTimeout(playerErrorTimerRef.current);
+      playerErrorTimerRef.current = null;
+    }
     const p = playbackRef.current;
     p.currentTime = currentTime;
     if (duration > 0) p.duration = duration;
@@ -207,7 +291,7 @@ function WatchPlayer() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tmdb_id: tmdbId, media_type: mediaType }),
     }).catch(() => {});
-  }, [tmdbId, mediaType]);
+  }, [tmdbId, mediaType, isValidTmdbId]);
 
   const goToNextEpisode = useCallback(() => {
     persist();
@@ -221,15 +305,23 @@ function WatchPlayer() {
 
   const handleGoBack = useCallback(() => {
     persist();
-    const extra = Math.max(0, window.history.length - historyLenAtMount.current);
-    if (historyLenAtMount.current > 1) navigate(-(1 + extra));
-    else navigate(`/${MAIN_PATH.browse}`, { replace: true });
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate(`/${MAIN_PATH.browse}`, { replace: true });
+    }
   }, [persist, navigate]);
 
   const handleGoHome = () => navigate(`/${MAIN_PATH.browse}`);
-  const handlePlayerError = useCallback((msg) => setStreamState({ status: "error", message: msg }), []);
+  const playerErrorTimerRef = useRef(null);
 
-  if (!tmdbId) {
+  const handlePlayerError = useCallback((_msg) => {
+    // Playback/HLS errors are handled entirely by CustomVideoPlayer.
+    // Never switch the WatchPage into its full-screen error state.
+  }, []);
+
+
+  if (!isValidTmdbId) {
     return (
       <Box sx={{ width: "100vw", height: "100vh", bgcolor: "#0a0a0a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#fff" }}>
         <ErrorOutlineIcon sx={{ fontSize: 80, color: "#e50914", mb: 3 }} />
@@ -246,7 +338,15 @@ function WatchPlayer() {
   }
 
   const subtitle = isTv ? `S${season}:E${episode}${episodeInfo.name ? ` ${episodeInfo.name}` : ""}` : "";
-  const playerReady = streamState.status === "ready" && startAt !== null;
+  // Mount the player as soon as the stream is ready.
+  // Resume resolution runs independently in the background.
+  const playerReady = streamState.status === "ready";
+  const effectiveStartAt = startAt ?? 0;
+  const posterUrl = metaRef.current.backdrop_path
+    ? (/^https?:\/\//i.test(metaRef.current.backdrop_path)
+        ? metaRef.current.backdrop_path
+        : `https://image.tmdb.org/t/p/w1280${metaRef.current.backdrop_path}`)
+    : undefined;
   const backButton = (
     <Box sx={{ position: "absolute", top: 20, left: 20, zIndex: 100 }}>
       <IconButton onClick={handleGoBack} data-testid="back-button" aria-label="Indietro"
@@ -260,12 +360,17 @@ function WatchPlayer() {
   return (
     <Box data-testid="watch-page" sx={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", bgcolor: "#000", zIndex: 9999 }}>
       {/* Resolving the stream */}
-      {(streamState.status === "resolving" || (streamState.status === "ready" && startAt === null)) && (
+      {streamState.status === "resolving" && (
         <Box data-testid="watch-loading" sx={{ position: "absolute", inset: 0, bgcolor: "#0a0a0a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
+          {backdrop && (
+            <Box component="img" src={backdrop} alt="" data-testid="watch-loading-backdrop"
+              sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.35, filter: "blur(2px)", animation: "flixFadeIn 600ms ease both" }} />
+          )}
+          <Box sx={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(10,10,10,0.95), rgba(10,10,10,0.4))" }} />
           {backButton}
-          <CircularProgress sx={{ color: "#e50914", mb: 3 }} size={60} />
-          <Typography variant="h6" sx={{ color: "#fff", mb: 1 }}>Ricerca dello stream in corso...</Typography>
-          <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.5)" }}>
+          <CircularProgress sx={{ color: "#e50914", mb: 3, position: "relative" }} size={60} />
+          <Typography variant="h6" sx={{ color: "#fff", mb: 1, position: "relative" }}>Ricerca dello stream in corso...</Typography>
+          <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.5)", position: "relative" }}>
             {title ? `${title} - ` : ""}{isTv ? `Stagione ${season} - Episodio ${episode}` : "Film"}
           </Typography>
         </Box>
@@ -279,6 +384,7 @@ function WatchPlayer() {
           type={streamState.type}
           storageKey={storageKey}
           startAt={startAt}
+          autoPlay={true}
           title={title || (isTv ? "Serie TV" : "Film")}
           subtitle={subtitle}
           poster={metaRef.current.backdrop_path ? `https://image.tmdb.org/t/p/w1280${metaRef.current.backdrop_path}` : undefined}
@@ -310,19 +416,7 @@ function WatchPlayer() {
         </Box>
       )}
 
-      {/* Error */}
-      {streamState.status === "error" && (
-        <Box data-testid="stream-error" sx={{ position: "absolute", inset: 0, bgcolor: "#0a0a0a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10, px: 3 }}>
-          {backButton}
-          <ErrorOutlineIcon sx={{ fontSize: 72, color: "#e50914", mb: 3 }} />
-          <Typography variant="h5" sx={{ color: "#fff", fontWeight: 700, mb: 1.5 }}>Errore di riproduzione</Typography>
-          <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.6)", mb: 4, textAlign: "center", maxWidth: 480 }}>{streamState.message}</Typography>
-          <Stack direction="row" spacing={2}>
-            <Button variant="contained" onClick={() => window.location.reload()} sx={{ bgcolor: "#e50914", "&:hover": { bgcolor: "#c40812" } }}>Riprova</Button>
-            <Button variant="outlined" onClick={handleGoBack} sx={{ color: "#fff", borderColor: "rgba(255,255,255,0.3)", "&:hover": { bgcolor: "rgba(255,255,255,0.1)" } }}>Indietro</Button>
-          </Stack>
-        </Box>
-      )}
+
     </Box>
   );
 }

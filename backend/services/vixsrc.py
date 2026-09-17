@@ -7,6 +7,24 @@ from fastapi import HTTPException
 
 logger = logging.getLogger("uvicorn.error")
 
+# Reused HTTP client: avoids a new TCP/TLS handshake for every playback request.
+_HTTP_CLIENT: httpx.AsyncClient | None = None
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is None or _HTTP_CLIENT.is_closed:
+        _HTTP_CLIENT = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(connect=5.0, read=12.0, write=8.0, pool=3.0),
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30.0,
+            ),
+        )
+    return _HTTP_CLIENT
+
+
 VIXSRC_BASE = "https://vixsrc.to"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -95,7 +113,7 @@ async def resolve_vixsrc_stream(
     MediaFlow wrapping is handled separately by server.py.
     """
     try:
-        timeout = httpx.Timeout(20.0, connect=10.0)
+        client = _get_http_client()
 
         headers = {
             "User-Agent": USER_AGENT,
@@ -103,131 +121,103 @@ async def resolve_vixsrc_stream(
             "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
         }
 
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=timeout,
-        ) as client:
+        # 1. VixSrc API endpoint.
+        if season is not None and episode is not None:
+            api_url = (
+                f"{VIXSRC_BASE}/api/tv/"
+                f"{tmdb_id}/{season}/{episode}"
+            )
+        else:
+            api_url = f"{VIXSRC_BASE}/api/movie/{tmdb_id}"
 
-            # 1. VixSrc API endpoint.
-            if season is not None and episode is not None:
-                api_url = (
-                    f"{VIXSRC_BASE}/api/tv/"
-                    f"{tmdb_id}/{season}/{episode}"
-                )
-            else:
-                api_url = f"{VIXSRC_BASE}/api/movie/{tmdb_id}"
+        api_res = await client.get(api_url, headers=headers)
 
-            api_res = await client.get(api_url, headers=headers)
-
-            if api_res.status_code != 200:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Errore API VixSrc: HTTP {api_res.status_code}",
-                )
-
-            try:
-                data = api_res.json()
-            except ValueError:
-                raise HTTPException(
-                    status_code=502,
-                    detail="La API VixSrc non ha restituito JSON valido",
-                )
-
-            embed_url = data.get("src")
-
-            if not embed_url:
-                raise HTTPException(
-                    status_code=404,
-                    detail="URL embed non trovato nella risposta JSON VixSrc",
-                )
-
-            embed_url = _absolute_url(embed_url)
-
-            # Safety check: resolver must resolve VixSrc, not MediaFlow.
-            if "mediaflow" in embed_url.lower():
-                raise HTTPException(
-                    status_code=502,
-                    detail="VixSrc ha restituito un URL MediaFlow invece dell'embed VixSrc",
-                )
-
-            # 2. Download embed page.
-            embed_headers = {
-                **headers,
-                "Referer": f"{VIXSRC_BASE}/",
-            }
-
-            embed_res = await client.get(
-                embed_url,
-                headers=embed_headers,
+        if api_res.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Errore API VixSrc: HTTP {api_res.status_code}",
             )
 
-            if embed_res.status_code != 200:
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        "Impossibile raggiungere la pagina embed VixSrc: "
-                        f"HTTP {embed_res.status_code}"
-                    ),
-                )
-
-            html = embed_res.text
-
-            # Temporary diagnostic logging: do not print the full response.
-            print(
-                "[VIXSRC DEBUG] embed status=%s content_type=%s length=%s url=%s",
-                embed_res.status_code,
-                embed_res.headers.get("content-type"),
-                len(html),
-                str(embed_res.url),
-            )
-            print(
-                "[VIXSRC DEBUG] contains m3u8=%s token=%s expires=%s",
-                ".m3u8" in html.lower(),
-                "token" in html.lower(),
-                "expires" in html.lower(),
-            )
-            preview = html[:3000]
-            preview = re.sub(
-                r"((?:token|expires)\s*[=:]\s*[\"\'])([^\"\']+)",
-                r"\1[REDACTED]",
-                preview,
-                flags=re.IGNORECASE,
-            )
-            print("[VIXSRC DEBUG] embed preview=%s", preview)
-
-            # 3. Extract authorization data and playlist.
-            token = _extract_js_value(html, "token")
-            expires = _extract_js_value(html, "expires")
-            playlist_url = _extract_m3u8_url(html)
-
-            if not playlist_url:
-                # Some pages escape forward slashes inside JSON/JS.
-                normalized_html = html.replace("\\/", "/")
-                playlist_url = _extract_m3u8_url(normalized_html)
-
-            if not playlist_url:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "Impossibile estrarre l'URL .m3u8 dalla pagina embed VixSrc"
-                    ),
-                )
-
-            playlist_url = _append_auth_params(
-                playlist_url,
-                token,
-                expires,
+        try:
+            data = api_res.json()
+        except ValueError:
+            raise HTTPException(
+                status_code=502,
+                detail="La API VixSrc non ha restituito JSON valido",
             )
 
-            # The resolver returns the actual VixSrc URL.
-            # Do NOT generate /extractor/video.m3u8 here.
-            return {
-                "stream_url": playlist_url,
-                "headers": {
-                    "User-Agent": USER_AGENT,
-                    "Referer": embed_url,
-                },
-            }
+        embed_url = data.get("src")
+
+        if not embed_url:
+            raise HTTPException(
+                status_code=404,
+                detail="URL embed non trovato nella risposta JSON VixSrc",
+            )
+
+        embed_url = _absolute_url(embed_url)
+
+        # Safety check: resolver must resolve VixSrc, not MediaFlow.
+        if "mediaflow" in embed_url.lower():
+            raise HTTPException(
+                status_code=502,
+                detail="VixSrc ha restituito un URL MediaFlow invece dell'embed VixSrc",
+            )
+
+        # 2. Download embed page.
+        embed_headers = {
+            **headers,
+            "Referer": f"{VIXSRC_BASE}/",
+        }
+
+        embed_res = await client.get(
+            embed_url,
+            headers=embed_headers,
+        )
+
+        if embed_res.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Impossibile raggiungere la pagina embed VixSrc: "
+                    f"HTTP {embed_res.status_code}"
+                ),
+            )
+
+        html = embed_res.text
+
+        # 3. Extract authorization data and playlist.
+        token = _extract_js_value(html, "token")
+        expires = _extract_js_value(html, "expires")
+        playlist_url = _extract_m3u8_url(html)
+
+        if not playlist_url:
+            # Some pages escape forward slashes inside JSON/JS.
+            normalized_html = html.replace("\\/", "/")
+            playlist_url = _extract_m3u8_url(normalized_html)
+
+        if not playlist_url:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Impossibile estrarre l'URL .m3u8 dalla pagina embed VixSrc"
+                ),
+            )
+
+        playlist_url = _append_auth_params(
+            playlist_url,
+            token,
+            expires,
+        )
+
+        # The resolver returns the actual VixSrc URL.
+        # Do NOT generate /extractor/video.m3u8 here.
+        return {
+            "stream_url": playlist_url,
+            "headers": {
+                "User-Agent": USER_AGENT,
+                "Referer": embed_url,
+            },
+        }
 
     except HTTPException:
         raise

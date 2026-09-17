@@ -175,6 +175,7 @@ class ResolverRegistry:
             else:
                 return self._route(cached)
 
+        had_transient_error = False
         for provider in self._active_ordered():
             try:
                 result = await provider.resolve(
@@ -182,12 +183,16 @@ class ResolverRegistry:
                 )
             except Exception as e:
                 logger.warning(f"resolver '{provider.id}' raised: {e}")
+                had_transient_error = True
                 continue
             if result and result.get("success") and result.get("stream"):
                 result.setdefault("source", provider.id)
                 self._cache_set(key, result)
                 return self._route(result)
 
+        # A timeout on an upstream must not turn into a 15-minute "Stream non disponibile"
+        if had_transient_error:
+            return {**not_found, "reason": "temporary", "message": "Sorgente momentaneamente non raggiungibile, riprova"}
         self._cache_set(key, not_found)
         return not_found
 

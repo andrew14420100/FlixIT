@@ -197,6 +197,61 @@ export function Component() {
     }
   }, [mediaType, id, getVideoDetail, getMediaImages, getAllVideos]);
 
+  // Warm the stream resolution and keep the resolved payload in sessionStorage
+  // so WatchPage can reuse it instead of resolving the same title twice.
+  useEffect(() => {
+    if (!mediaType || !id) return;
+
+    const t = setTimeout(async () => {
+      const isTv = mediaType === MEDIA_TYPE.Tv;
+      const season = isTv ? 1 : 0;
+      const episode = isTv ? 1 : 0;
+      const url = isTv
+        ? `${API_URL}/api/player/tv/${id}/1/1`
+        : `${API_URL}/api/player/movie/${id}`;
+
+      try {
+        const res = await fetch(url, {
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (!data?.success || !data?.stream) return;
+
+        // Same logical identity used by WatchPage: media type + TMDB id + S/E.
+        // Store a couple of compatible key/shape variants so the existing
+        // WatchPage cache reader can consume the prefetched result without
+        // changing playback logic.
+        const payload = { data, ts: Date.now(), timestamp: Date.now() };
+        const keys = isTv
+          ? [
+              `stream:tv:${id}:${season}:${episode}`,
+              `stream_tv_${id}_${season}_${episode}`,
+              `stream-tv-${id}-${season}-${episode}`,
+            ]
+          : [
+              `stream:movie:${id}:0:0`,
+              `stream_movie_${id}_0_0`,
+              `stream-movie-${id}-0-0`,
+            ];
+
+        keys.forEach((key) => {
+          try {
+            sessionStorage.setItem(key, JSON.stringify(payload));
+          } catch {
+            // Ignore storage failures; WatchPage will resolve normally.
+          }
+        });
+      } catch {
+        // Prefetch is best-effort; WatchPage remains the fallback.
+      }
+    }, 800);
+
+    return () => clearTimeout(t);
+  }, [mediaType, id]);
+
   // Ottimizzazione: funzione per caricare gli episodi con caching
   const loadSeasonEpisodes = useCallback(async (seasonNum: number) => {
     setIsLoadingEpisodes(true);
@@ -428,28 +483,18 @@ export function Component() {
     }
   };
 
-  // No longer blocking content - just show warning if not available
+  // Structure first: hero skeleton while TMDB detail is in flight (no blank screen / spinner)
   if (!detail) {
     return (
-      <Box sx={{ 
-        minHeight: "100vh", 
-        display: "flex", 
-        alignItems: "center", 
-        justifyContent: "center",
-        bgcolor: "#0a0a0a"
-      }}>
-        <Box sx={{
-          width: 60,
-          height: 60,
-          borderRadius: '50%',
-          border: '3px solid transparent',
-          borderTopColor: '#e50914',
-          animation: 'spin 1s linear infinite',
-          '@keyframes spin': {
-            '0%': { transform: 'rotate(0deg)' },
-            '100%': { transform: 'rotate(360deg)' }
-          }
-        }} />
+      <Box data-testid="detail-skeleton" sx={{ minHeight: "100vh", bgcolor: "#0a0a0a" }}>
+        <Box sx={{ position: "relative", height: { xs: "60vh", md: "85vh" }, background: "linear-gradient(to top, #0a0a0a 0%, #141414 60%, #1a1a1a 100%)" }}>
+          <Box sx={{ position: "absolute", left: { xs: 16, md: 40 }, bottom: "22%", width: "min(48%, 640px)", display: "flex", flexDirection: "column", gap: 2 }}>
+            <Box sx={{ height: { xs: 48, md: 84 }, width: "70%", borderRadius: 1, bgcolor: "#1f1f1f", animation: "flixPulse 1.4s ease-in-out infinite" }} />
+            <Box sx={{ height: 14, width: "40%", borderRadius: 1, bgcolor: "#1f1f1f", animation: "flixPulse 1.4s ease-in-out infinite" }} />
+            <Box sx={{ height: 60, width: "100%", borderRadius: 1, bgcolor: "#1a1a1a", animation: "flixPulse 1.4s ease-in-out infinite" }} />
+            <Box sx={{ height: 44, width: 150, borderRadius: 1, bgcolor: "#2a2a2a", animation: "flixPulse 1.4s ease-in-out infinite" }} />
+          </Box>
+        </Box>
       </Box>
     );
   }
@@ -460,7 +505,7 @@ export function Component() {
     'detail_backdrop',
     detail.backdrop_path,
     configuration?.images.base_url,
-    'original'
+    'w1280'
   );
   const seasons = getSeasons();
 

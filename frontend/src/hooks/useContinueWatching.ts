@@ -44,6 +44,18 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
 }
 
+// One request shared by every mounted hook (hero, rows, detail, hover cards) and memoised for 30s.
+let progressMemo: { at: number; promise: Promise<any> } | null = null;
+const PROGRESS_MEMO_MS = 30 * 1000;
+function fetchProgressShared() {
+  const now = Date.now();
+  if (progressMemo && now - progressMemo.at < PROGRESS_MEMO_MS) return progressMemo.promise;
+  const promise = apiFetch('/api/auth/watch-progress');
+  progressMemo = { at: now, promise };
+  return promise;
+}
+export function invalidateProgressMemo() { progressMemo = null; }
+
 function readLocalStorage(): ContinueWatchingItem[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
@@ -65,8 +77,8 @@ export function useContinueWatching() {
 
     if (token) {
       setIsLoggedIn(true);
-      // Fetch from backend API
-      apiFetch('/api/auth/watch-progress').then((data) => {
+      // Fetch from backend API (shared/memoised across hooks)
+      fetchProgressShared().then((data) => {
         if (data?.items) {
           setItems(data.items);
           // Also sync to localStorage for faster next load
@@ -93,7 +105,8 @@ export function useContinueWatching() {
       if (token && !wasLoggedIn) {
         // User just logged in — fetch from backend
         setIsLoggedIn(true);
-        apiFetch('/api/auth/watch-progress').then((data) => {
+        invalidateProgressMemo();
+        fetchProgressShared().then((data) => {
           if (data?.items) {
             setItems(data.items);
             saveToLocalStorage(data.items);
@@ -143,6 +156,7 @@ export function useContinueWatching() {
       });
 
       if (getToken()) {
+        invalidateProgressMemo();
         await apiFetch('/api/auth/watch-progress', {
           method: 'POST',
           body: JSON.stringify(item),
