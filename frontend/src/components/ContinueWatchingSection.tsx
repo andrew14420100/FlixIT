@@ -1,13 +1,18 @@
 // @ts-nocheck
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import Box from "@mui/material/Box";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
+import { useHomeDedupe, itemKey } from "src/store/homeDedupe";
 import HomepageSlider from "./HomepageSlider";
 
 const formatMinutes = (s) => `${Math.max(1, Math.round((s || 0) / 60))}`;
+const DEDUPE_KEY = "continue-watching";
+const DEDUPE_INDEX = -50;
 
 export default function ContinueWatchingSection() {
   const { items, username, removeItem } = useContinueWatching();
+  const claim = useHomeDedupe((state) => state.claim);
+  const release = useHomeDedupe((state) => state.release);
 
   const sliderItems = useMemo(
     () =>
@@ -45,6 +50,17 @@ export default function ContinueWatchingSection() {
         })),
     [items, removeItem]
   );
+
+  const idsKey = useMemo(
+    () => sliderItems.map(itemKey).filter(Boolean).join("|"),
+    [sliderItems]
+  );
+
+  useEffect(() => {
+    if (idsKey) claim(DEDUPE_KEY, DEDUPE_INDEX, idsKey.split("|"));
+    else release(DEDUPE_KEY);
+    return () => release(DEDUPE_KEY);
+  }, [idsKey, claim, release]);
 
   if (sliderItems.length === 0) return null;
 
