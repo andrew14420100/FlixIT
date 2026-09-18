@@ -21,20 +21,28 @@ const StyledSlider = styled(Slider)(
     display: "flex !important",
     justifyContent: "flex-start",
     overflow: "visible !important",
-    transform: "translateZ(0)",
+    transform: "translate3d(0,0,0)",
 
     "& > .slick-list": {
       width: "100%",
       overflow: "visible !important",
+      transform: "translate3d(0,0,0)",
+      backfaceVisibility: "hidden",
+      WebkitBackfaceVisibility: "hidden",
     },
     "& .slick-track": {
       marginLeft: "0 !important",
       marginRight: "0 !important",
+      willChange: "transform",
+      backfaceVisibility: "hidden",
+      WebkitBackfaceVisibility: "hidden",
     },
     "& .slick-slide": {
       position: "relative",
       zIndex: 1,
       transition: "z-index 0s .28s",
+      backfaceVisibility: "hidden",
+      WebkitBackfaceVisibility: "hidden",
     },
     "& .slick-slide:hover": {
       zIndex: "2 !important",
@@ -89,6 +97,7 @@ export default function HomepageSlider({
   const visibleTiles = up1400 ? 6.38 : up1100 ? 5.35 : tiles;
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+  const [isSliding, setIsSliding] = useState(false);
   const [showExplore, setShowExplore] = useState(false);
 
   const visibleItems = useMemo(() => {
@@ -114,6 +123,7 @@ export default function HomepageSlider({
     activeSlideIndex >= Math.max(0, visibleItems.length - tiles);
 
   const settings: Settings = {
+    // Netflix rows travel as one deliberate page movement rather than snapping.
     speed: 750,
     cssEase: "cubic-bezier(.5,0,.1,1)",
     arrows: false,
@@ -121,9 +131,23 @@ export default function HomepageSlider({
     infinite: false,
     lazyLoad: "ondemand",
     swipeToSlide: true,
+    swipe: true,
+    draggable: true,
+    touchMove: true,
+    waitForAnimate: true,
+    useCSS: true,
+    useTransform: true,
+    adaptiveHeight: false,
     slidesToShow: visibleTiles,
     slidesToScroll: tiles,
-    beforeChange: (_current, next) => setActiveSlideIndex(next),
+    beforeChange: (_current, next) => {
+      setIsSliding(true);
+      setActiveSlideIndex(next);
+    },
+    afterChange: (current) => {
+      setActiveSlideIndex(current);
+      setIsSliding(false);
+    },
     responsive: [
       { breakpoint: 1400, settings: { slidesToShow: 5.35, slidesToScroll: 5 } },
       { breakpoint: 1100, settings: { slidesToShow: 4.25, slidesToScroll: 4 } },
@@ -139,6 +163,7 @@ export default function HomepageSlider({
       id={rowId}
       className={`slider-row${isTop10 ? " top10-row" : ""}${compactSpacing ? " compact-row" : ""}`}
       data-testid={`homepage-slider-${title.toLowerCase().replace(/\s+/g, "-")}`}
+      data-sliding={isSliding ? "true" : "false"}
       sx={{
         position: "relative",
         left: 0,
@@ -161,6 +186,7 @@ export default function HomepageSlider({
         fontSize: { md: "19.1002px" },
         lineHeight: { md: "28.6503px" },
         color: "#e8e8e8",
+        contain: "layout style",
         "&:hover": { zIndex: 100 },
       }}
     >
@@ -287,6 +313,12 @@ export default function HomepageSlider({
               <StyledSlider ref={sliderRef} {...settings} theme={theme}>
                 {visibleItems.map((item, index) => {
                   const key = sliderItemKey(item) || `item-${index}`;
+                  // Once a row has moved, Netflix reserves the first visible
+                  // left tile as the interaction zone for the previous handle.
+                  const suppressForLeftHandle =
+                    activeSlideIndex > 0 && index === activeSlideIndex;
+                  const suppressHover = isSliding || suppressForLeftHandle;
+
                   return (
                     <Box
                       className="slider-item"
@@ -311,6 +343,7 @@ export default function HomepageSlider({
                             item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
                           }
                           watch={item.watch}
+                          suppressHover={suppressHover}
                         />
                       ) : (
                         <VideoItemWithHover
@@ -325,6 +358,7 @@ export default function HomepageSlider({
                             item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
                           }
                           watch={item.watch}
+                          suppressHover={suppressHover}
                         />
                       )}
                     </Box>
