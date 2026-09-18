@@ -4,7 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
-import ExpandedCard, { TMDB_IMG, useMediaAssets } from "./ExpandedCard";
+import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
+import ExpandedCard, { TMDB_IMG } from "./ExpandedCard";
 import "./NetflixMiniModalExact.css";
 import NetflixTop10RankSvg from "./NetflixTop10RankSvg";
 
@@ -25,6 +26,7 @@ export default function NetflixRankedCardWithHover({
   rank,
   mediaType,
   watch,
+  suppressHover = false,
 }: any) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -37,13 +39,6 @@ export default function NetflixRankedCardWithHover({
       : MEDIA_TYPE.Movie);
 
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
-  const assets = useMediaAssets(
-    {
-      ...item,
-      id: normalizedId,
-    },
-    mType
-  );
 
   const {
     open,
@@ -53,6 +48,12 @@ export default function NetflixRankedCardWithHover({
     onLeave,
     onOverlayLeave,
   } = useHoverExpand(ref);
+
+  const assets = useDeferredMediaAssets(
+    { ...item, id: normalizedId },
+    mType,
+    open
+  );
 
   const posterUrl = useMemo(
     () =>
@@ -67,9 +68,7 @@ export default function NetflixRankedCardWithHover({
           item?.image?.url ||
           item?.poster_path ||
           item?.poster ||
-          assets?.poster_path ||
-          item?.backdrop_path ||
-          assets?.backdrop_path,
+          item?.backdrop_path,
         "w500"
       ),
     [
@@ -81,13 +80,10 @@ export default function NetflixRankedCardWithHover({
       item?.poster_path,
       item?.poster,
       item?.backdrop_path,
-      assets?.poster_path,
-      assets?.backdrop_path,
     ]
   );
 
   const title = item?.title || item?.name || "";
-
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${normalizedId}`;
 
   const goDetail = useCallback(
@@ -116,12 +112,20 @@ export default function NetflixRankedCardWithHover({
     [navigate, normalizedId, typeSlug, watch]
   );
 
+  const handleEnter = useCallback(
+    (event?: any) => {
+      if (suppressHover) return;
+      onEnter(event);
+    },
+    [suppressHover, onEnter]
+  );
+
   return (
     <>
       <div
         ref={ref}
         className="netflix-ranked-card-root"
-        onMouseEnter={onEnter}
+        onMouseEnter={handleEnter}
         onMouseLeave={onLeave}
         data-testid={`netflix-ranked-card-${normalizedId}`}
       >
@@ -147,6 +151,7 @@ export default function NetflixRankedCardWithHover({
                 alt=""
                 draggable={false}
                 loading="lazy"
+                decoding="async"
                 className="netflix-ranked-card-poster"
               />
             ) : (
@@ -156,7 +161,7 @@ export default function NetflixRankedCardWithHover({
         </a>
       </div>
 
-      {open ? (
+      {open && !suppressHover ? (
         <ExpandOverlay
           position={position}
           closing={closing}
