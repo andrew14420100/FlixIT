@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 from ..base import TrailerCandidate, normalize_title
@@ -7,15 +8,16 @@ from ..manifest import probe_direct_file
 from .common import client
 
 IMDB_GRAPHQL_URL = "https://graphql.imdb.com/"
+# Keep this query deliberately small. IMDb's GraphQL shape changes less often
+# when we only request fields needed for playback selection.
 IMDB_TRAILER_QUERY = r'''
 query Trailer($id: ID!) {
   title(id: $id) {
-    primaryVideos(first: 12) {
+    primaryVideos(first: 6) {
       edges {
         node {
           id
           name { value }
-          contentType { id displayName { value } }
           runtime { value }
           playbackURLs {
             url
@@ -35,8 +37,8 @@ def _height_from_label(value) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _trailer_type(title: str, content_type: str) -> str:
-    text = normalize_title(f"{content_type} {title}")
+def _trailer_type(title: str) -> str:
+    text = normalize_title(title)
     if "final trailer" in text:
         return "Final Trailer"
     if "official teaser" in text:
@@ -48,13 +50,43 @@ def _trailer_type(title: str, content_type: str) -> str:
     return "Official Trailer" if "trailer" in text else "Trailer"
 
 
-class IMDbTrailerProvider:
-    """Resolve IMDb-hosted trailers directly from IMDb's GraphQL response.
+def _best_probe_row(node: dict) -> dict | None:
+    """Select at most one MP4 rendition per IMDb video before ffprobe.
 
-    IMDb's normal HTML title/video pages are currently protected by a WAF and
-    can return an empty/challenge document to non-browser HTTP clients.  The
-    GraphQL path avoids parsing __NEXT_DATA__ and gives us the direct playback
-    URLs for a TMDB-derived IMDb id, so no search service is required.
+    Older code probed every quality rung of every video sequentially. With six
+    videos and several renditions each, one title could occupy a worker for
+    minutes. We still verify the actual native file, but only probe the highest
+    reported rung that could possibly satisfy the >=1080 rule.
+    """
+    rows = []
+    unknown = []
+    for raw in node.get("playbackURLs") or []:
+        row = raw or {}
+        url = str(row.get("url") or "").strip()
+        mime = str(row.get("videoMimeType") or "").upper()
+        if not url or "MP4" not in mime:
+            continue
+        label = ((row.get("displayName") or {}).get("value") if isinstance(row.get("displayName"), dict) else row.get("displayName")) or ""
+        height = _height_from_label(label)
+        item = {"url": url, "reported_height": height}
+        if height is None:
+            unknown.append(item)
+        elif height >= 1080:
+            rows.append(item)
+
+    if rows:
+        rows.sort(key=lambda x: int(x.get("reported_height") or 0), reverse=True)
+        return rows[0]
+    # If IMDb omitted the label, probe one candidate instead of dropping it.
+    return unknown[0] if unknown else None
+
+
+class IMDbTrailerProvider:
+    """Resolve IMDb-hosted trailers directly from IMDb GraphQL.
+
+    TMDB already supplies an IMDb id, so this provider needs no search service.
+    Only direct IMDb MP4 playback URLs are considered and every selected file is
+    verified with ffprobe before it can enter the >=1080 resolver pipeline.
     """
 
     name = "imdb"
@@ -65,88 +97,81 @@ class IMDbTrailerProvider:
             return []
 
         async with client() as http:
+            response = await http.post(
+                IMDB_GRAPHQL_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "Referer": "https://www.imdb.com/",
+                    "Origin": "https://www.imdb.com",
+                },
+                json={"query": IMDB_TRAILER_QUERY, "variables": {"id": imdb_id}},
+            )
+            if response.status_code != 200:
+                raise RuntimeError(f"IMDb GraphQL HTTP {response.status_code}")
             try:
-                response = await http.post(
-                    IMDB_GRAPHQL_URL,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Referer": "https://www.imdb.com/",
-                        "Origin": "https://www.imdb.com",
-                    },
-                    json={"query": IMDB_TRAILER_QUERY, "variables": {"id": imdb_id}},
-                )
-                if response.status_code != 200:
-                    return []
                 payload = response.json()
-            except Exception:
-                return []
+            except Exception as exc:
+                raise RuntimeError("IMDb GraphQL returned invalid JSON") from exc
+
+        if payload.get("errors"):
+            message = str((payload.get("errors") or [{}])[0].get("message") or "GraphQL error")
+            raise RuntimeError(f"IMDb GraphQL: {message[:180]}")
 
         title_data = ((payload.get("data") or {}).get("title") or {})
-        edges = ((title_data.get("primaryVideos") or {}).get("edges") or [])
-        candidates: list[TrailerCandidate] = []
+        edges = ((title_data.get("primaryVideos") or {}).get("edges") or [])[:6]
+        if not edges:
+            return []
 
-        for edge in edges:
+        probe_sem = asyncio.Semaphore(3)
+
+        async def build_candidate(edge) -> TrailerCandidate | None:
             node = (edge or {}).get("node") or {}
+            row = _best_probe_row(node)
+            if not row:
+                return None
+
+            async with probe_sem:
+                probed = await probe_direct_file(row["url"], timeout=12.0)
+            if not probed or int(probed.get("height") or 0) < 1080:
+                return None
+
             video_id = str(node.get("id") or "").strip()
             title = str(((node.get("name") or {}).get("value")) or "Trailer")
-            content_type = str(
-                ((node.get("contentType") or {}).get("id"))
-                or (((node.get("contentType") or {}).get("displayName") or {}).get("value"))
-                or ""
+            trailer_type = _trailer_type(title)
+
+            return TrailerCandidate(
+                source=self.name,
+                trailer_url=row["url"],
+                provider_id=video_id or imdb_id,
+                provider_page=f"https://www.imdb.com/video/{video_id}/" if video_id else f"https://www.imdb.com/title/{imdb_id}/",
+                matched_title=identity.get("title"),
+                matched_year=identity.get("year"),
+                media_type=identity.get("type"),
+                title=title,
+                trailer_type=trailer_type,
+                official=trailer_type in {"Official Trailer", "Final Trailer", "Official Teaser"},
+                width=probed.get("width"),
+                height=probed.get("height"),
+                bitrate=probed.get("bitrate"),
+                codec=probed.get("codec"),
+                fps=probed.get("fps"),
+                audio_language=probed.get("audio_language") or "en",
+                audio_codec=probed.get("audio_codec"),
+                audio_bitrate=probed.get("audio_bitrate"),
+                confidence=1.0,
+                verified=True,
+                browser_compatible=True,
+                compatibility="mp4",
+                metadata={
+                    "imdb_id": imdb_id,
+                    "reported_height": row.get("reported_height"),
+                    "discovery": "graphql",
+                },
             )
-            trailer_type = _trailer_type(title, content_type)
 
-            # Keep true trailer/teaser material first. Generic video entries are
-            # accepted only when their title itself identifies them as a trailer.
-            normalized_kind = normalize_title(f"{content_type} {title}")
-            if not any(token in normalized_kind for token in ("trailer", "teaser", "clip")):
-                continue
-
-            for row in node.get("playbackURLs") or []:
-                url = str((row or {}).get("url") or "").strip()
-                mime = str((row or {}).get("videoMimeType") or "").upper()
-                if not url or mime != "MP4":
-                    continue
-
-                label = ((row.get("displayName") or {}).get("value") if isinstance(row.get("displayName"), dict) else row.get("displayName")) or ""
-                reported_height = _height_from_label(label)
-
-                # Do not trust IMDb's display label alone. ffprobe verifies the
-                # actual native stream so the >=1080 rule and ranking stay real.
-                probed = await probe_direct_file(url)
-                if not probed:
-                    continue
-
-                candidates.append(
-                    TrailerCandidate(
-                        source=self.name,
-                        trailer_url=url,
-                        provider_id=video_id or imdb_id,
-                        provider_page=f"https://www.imdb.com/video/{video_id}/" if video_id else f"https://www.imdb.com/title/{imdb_id}/",
-                        matched_title=identity.get("title"),
-                        matched_year=identity.get("year"),
-                        media_type=identity.get("type"),
-                        title=title,
-                        trailer_type=trailer_type,
-                        official=trailer_type in {"Official Trailer", "Final Trailer", "Official Teaser"},
-                        width=probed.get("width"),
-                        height=probed.get("height"),
-                        bitrate=probed.get("bitrate"),
-                        codec=probed.get("codec"),
-                        fps=probed.get("fps"),
-                        audio_language=probed.get("audio_language") or "en",
-                        audio_codec=probed.get("audio_codec"),
-                        audio_bitrate=probed.get("audio_bitrate"),
-                        confidence=1.0,
-                        verified=True,
-                        browser_compatible=True,
-                        compatibility="mp4",
-                        metadata={
-                            "imdb_id": imdb_id,
-                            "reported_height": reported_height,
-                            "discovery": "graphql",
-                        },
-                    )
-                )
-
+        built = await asyncio.gather(*(build_candidate(edge) for edge in edges), return_exceptions=True)
+        candidates: list[TrailerCandidate] = []
+        for item in built:
+            if isinstance(item, TrailerCandidate):
+                candidates.append(item)
         return candidates
