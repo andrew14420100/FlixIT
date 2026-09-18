@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +11,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
 from .resolver import TrailerResolver
+from .queue_policy import install_queue_policy
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     if getattr(app.state, "flixit_trailer_resolver_registered", False):
         return getattr(app.state, "trailer_resolver", None)
 
-    resolver = TrailerResolver(db, fetch_tmdb_data, logger=logger)
+    resolver = install_queue_policy(TrailerResolver(db, fetch_tmdb_data, logger=logger))
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
