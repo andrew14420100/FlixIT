@@ -25,6 +25,44 @@ def install_queue_policy(resolver):
     resolved rows so an 18k catalogue cannot get stuck on its first page.
     """
 
+    base_enqueue = resolver.enqueue
+
+    def safe_enqueue(self, media_type: str, tmdb_id: int, *, priority: int = 5, reason: str = "catalog"):
+        """Do not let repeated public polling restart a job already in flight.
+
+        Hero/hover/detail can poll the public trailer endpoint while the first
+        extraction is running. The old enqueue implementation changed a
+        `running` job back to `pending`, allowing another worker to claim the
+        same title. Keep active/retrying work intact and only promote the
+        priority of a pending job when useful.
+        """
+        media_type = "tv" if media_type == "tv" else "movie"
+        tmdb_id = int(tmdb_id)
+        job = self.jobs.find_one(
+            {"type": media_type, "tmdbId": tmdb_id},
+            {"_id": 0, "status": 1, "priority": 1, "nextRunAt": 1},
+        ) or {}
+        status = job.get("status")
+
+        if status in {"running", "retry"}:
+            return
+
+        if status == "pending":
+            current_priority = int(job.get("priority") or 999)
+            if int(priority) < current_priority:
+                self.jobs.update_one(
+                    {"type": media_type, "tmdbId": tmdb_id, "status": "pending"},
+                    {"$set": {"priority": int(priority), "reason": reason, "updatedAt": datetime.now(timezone.utc).isoformat()}},
+                )
+            return
+
+        if status == "failed":
+            next_run = _dt(job.get("nextRunAt"))
+            if next_run and next_run > datetime.now(timezone.utc):
+                return
+
+        base_enqueue(media_type, tmdb_id, priority=priority, reason=reason)
+
     def enqueue_catalog(self, limit: int = 250):
         wanted = max(1, min(int(limit), 2000))
         queued = 0
@@ -130,6 +168,7 @@ def install_queue_policy(resolver):
             except asyncio.TimeoutError:
                 pass
 
+    resolver.enqueue = MethodType(safe_enqueue, resolver)
     resolver.enqueue_catalog = MethodType(enqueue_catalog, resolver)
     resolver._catalog_loop = MethodType(catalog_loop, resolver)
     return resolver
