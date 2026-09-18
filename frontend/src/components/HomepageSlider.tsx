@@ -56,11 +56,10 @@ const StyledSlider = styled(Slider)(
       height: "100%",
     },
 
-    [theme.breakpoints.up("sm")]: {
-      "& .slick-current > div > .NetflixBox-root > .NetflixPaper-root:hover": {
-        transformOrigin: "0% 50% !important",
-      },
-    },
+    // Do not override the first tile's transform origin. The portal mini-modal
+    // now computes a symmetric centre for every card and clamps only at the
+    // actual viewport edge.
+    [theme.breakpoints.up("sm")]: {},
   })
 );
 
@@ -112,6 +111,7 @@ export default function HomepageSlider({
   }, [items]);
 
   const isTop10 = /top\s*10/i.test(title);
+  const isContinueRow = rowId === "continua";
 
   const pageCount = Math.max(1, Math.ceil(visibleItems.length / tiles));
   const activePage = Math.min(
@@ -123,7 +123,6 @@ export default function HomepageSlider({
     activeSlideIndex >= Math.max(0, visibleItems.length - tiles);
 
   const settings: Settings = {
-    // Netflix rows travel as one deliberate page movement rather than snapping.
     speed: 750,
     cssEase: "cubic-bezier(.5,0,.1,1)",
     arrows: false,
@@ -172,10 +171,14 @@ export default function HomepageSlider({
         bottom: 0,
         width: "100%",
         height: { xs: "auto", md: "237.241px" },
-        mt: compactSpacing
+        mt: isContinueRow
+          ? { xs: "20px", md: "32px" }
+          : compactSpacing
           ? { xs: "8px", md: "14px" }
           : { xs: "32px", md: "57.3007px" },
-        mb: compactSpacing
+        mb: isContinueRow
+          ? { xs: "16px", md: "24px" }
+          : compactSpacing
           ? { xs: "12px", md: "18px" }
           : { xs: "32px", md: "57.3007px" },
         boxSizing: "border-box",
@@ -313,8 +316,6 @@ export default function HomepageSlider({
               <StyledSlider ref={sliderRef} {...settings} theme={theme}>
                 {visibleItems.map((item, index) => {
                   const key = sliderItemKey(item) || `item-${index}`;
-                  // Once a row has moved, Netflix reserves the first visible
-                  // left tile as the interaction zone for the previous handle.
                   const suppressForLeftHandle =
                     activeSlideIndex > 0 && index === activeSlideIndex;
                   const suppressHover = isSliding || suppressForLeftHandle;
