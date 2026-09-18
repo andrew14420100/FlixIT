@@ -37,6 +37,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import UpcomingIcon from '@mui/icons-material/Upcoming';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import ImageSearchIcon from '@mui/icons-material/ImageSearch';
+import OndemandVideoIcon from '@mui/icons-material/OndemandVideo';
 
 const DRAWER_WIDTH = 280;
 
@@ -60,6 +61,7 @@ const menuItems: NavItem[] = [
   { text: 'Menu Header', icon: <MenuOpenIcon />, path: '/admin/menu' },
   { text: 'Impostazioni', icon: <SettingsIcon />, path: '/admin/settings' },
   { text: 'Artwork Netflix', icon: <ImageSearchIcon />, path: '/admin/artwork' },
+  { text: 'Trailer', icon: <OndemandVideoIcon />, path: '/admin/trailers' },
   { text: 'Log Attività', icon: <HistoryIcon />, path: '/admin/logs' },
 ];
 
@@ -89,12 +91,8 @@ const AdminLayout: React.FC = () => {
   const drawerContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: '#0d0d0d' }}>
       <Box sx={{ p: 3 }}>
-        <Typography variant="h5" sx={{ fontWeight: 800, color: '#e50914', letterSpacing: '2px', textAlign: 'center' }}>
-          ADMIN
-        </Typography>
-        <Typography variant="caption" sx={{ color: 'grey.600', display: 'block', textAlign: 'center' }}>
-          Pannello di controllo
-        </Typography>
+        <Typography variant="h5" sx={{ fontWeight: 800, color: '#e50914', letterSpacing: '2px', textAlign: 'center' }}>ADMIN</Typography>
+        <Typography variant="caption" sx={{ color: 'grey.600', display: 'block', textAlign: 'center' }}>Pannello di controllo</Typography>
       </Box>
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.06)' }} />
       <List sx={{ flex: 1, px: 2, py: 3, overflowY: 'auto' }}>
@@ -105,21 +103,10 @@ const AdminLayout: React.FC = () => {
               <ListItemButton
                 onClick={() => handleNavigate(item.path)}
                 data-testid={`nav-${item.text.toLowerCase().replace(/\s/g, '-')}`}
-                sx={{
-                  borderRadius: 2,
-                  py: 1.5,
-                  bgcolor: isActive ? 'rgba(229, 9, 20, 0.12)' : 'transparent',
-                  borderLeft: isActive ? '3px solid #e50914' : '3px solid transparent',
-                  '&:hover': { bgcolor: isActive ? 'rgba(229, 9, 20, 0.18)' : 'rgba(255,255,255,0.04)' },
-                }}
+                sx={{ borderRadius: 2, py: 1.5, bgcolor: isActive ? 'rgba(229, 9, 20, 0.12)' : 'transparent', borderLeft: isActive ? '3px solid #e50914' : '3px solid transparent', '&:hover': { bgcolor: isActive ? 'rgba(229, 9, 20, 0.18)' : 'rgba(255,255,255,0.04)' } }}
               >
-                <ListItemIcon sx={{ color: isActive ? '#e50914' : 'grey.500', minWidth: 44 }}>
-                  {item.icon}
-                </ListItemIcon>
-                <ListItemText
-                  primary={item.text}
-                  primaryTypographyProps={{ fontSize: 14, fontWeight: isActive ? 600 : 400, color: isActive ? '#fff' : 'grey.400' }}
-                />
+                <ListItemIcon sx={{ color: isActive ? '#e50914' : 'grey.500', minWidth: 44 }}>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.text} primaryTypographyProps={{ fontSize: 14, fontWeight: isActive ? 600 : 400, color: isActive ? '#fff' : 'grey.400' }} />
               </ListItemButton>
             </ListItem>
           );
@@ -139,67 +126,27 @@ const AdminLayout: React.FC = () => {
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#0a0a0a' }}>
-      <AppBar
-        position="fixed"
-        elevation={0}
-        sx={{
-          width: { lg: `calc(100% - ${DRAWER_WIDTH}px)` },
-          ml: { lg: `${DRAWER_WIDTH}px` },
-          bgcolor: 'rgba(10, 10, 10, 0.95)',
-          backdropFilter: 'blur(20px)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-        }}
-      >
+      <AppBar position="fixed" elevation={0} sx={{ width: { lg: `calc(100% - ${DRAWER_WIDTH}px)` }, ml: { lg: `${DRAWER_WIDTH}px` }, bgcolor: 'rgba(10, 10, 10, 0.95)', backdropFilter: 'blur(20px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <Toolbar sx={{ justifyContent: 'space-between' }}>
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <IconButton color="inherit" edge="start" onClick={handleDrawerToggle} sx={{ mr: 2, display: { lg: 'none' } }} data-testid="mobile-menu-btn">
-              <MenuIcon />
-            </IconButton>
+            <IconButton color="inherit" edge="start" onClick={handleDrawerToggle} sx={{ mr: 2, display: { lg: 'none' } }} data-testid="mobile-menu-btn"><MenuIcon /></IconButton>
             <Typography variant="h6" sx={{ fontWeight: 600, color: '#fff' }}>{currentPage}</Typography>
           </Box>
-          <IconButton onClick={handleMenuOpen} data-testid="user-menu-btn">
-            <Avatar sx={{ width: 38, height: 38, bgcolor: '#e50914' }}><PersonIcon fontSize="small" /></Avatar>
-          </IconButton>
-          <Menu
-            anchorEl={anchorEl}
-            open={Boolean(anchorEl)}
-            onClose={handleMenuClose}
-            PaperProps={{ sx: { bgcolor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', minWidth: 200, mt: 1 } }}
-            transformOrigin={{ horizontal: 'right', vertical: 'top' }}
-            anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
-          >
+          <IconButton onClick={handleMenuOpen} data-testid="user-menu-btn"><Avatar sx={{ width: 38, height: 38, bgcolor: '#e50914' }}><PersonIcon fontSize="small" /></Avatar></IconButton>
+          <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose} PaperProps={{ sx: { bgcolor: '#1a1a1a', border: '1px solid rgba(255,255,255,0.1)', minWidth: 200, mt: 1 } }} transformOrigin={{ horizontal: 'right', vertical: 'top' }} anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}>
             <MenuItem disabled><Typography variant="body2" color="grey.500">{email}</Typography></MenuItem>
             <Divider sx={{ borderColor: 'rgba(255,255,255,0.1)' }} />
-            <MenuItem onClick={handleLogout} data-testid="logout-btn">
-              <ListItemIcon><LogoutIcon fontSize="small" sx={{ color: '#e50914' }} /></ListItemIcon>
-              <ListItemText primary="Logout" />
-            </MenuItem>
+            <MenuItem onClick={handleLogout} data-testid="logout-btn"><ListItemIcon><LogoutIcon fontSize="small" sx={{ color: '#e50914' }} /></ListItemIcon><ListItemText primary="Logout" /></MenuItem>
           </Menu>
         </Toolbar>
       </AppBar>
 
       <Box component="nav" sx={{ width: { lg: DRAWER_WIDTH }, flexShrink: { lg: 0 } }}>
-        <Drawer
-          variant="temporary"
-          open={mobileOpen}
-          onClose={handleDrawerToggle}
-          ModalProps={{ keepMounted: true }}
-          sx={{ display: { xs: 'block', lg: 'none' }, '& .MuiDrawer-paper': { boxSizing: 'border-box', width: DRAWER_WIDTH, bgcolor: '#0d0d0d', borderRight: '1px solid rgba(255,255,255,0.06)' } }}
-        >
-          {drawerContent}
-        </Drawer>
-        <Drawer
-          variant="permanent"
-          sx={{ display: { xs: 'none', lg: 'block' }, '& .MuiDrawer-paper': { boxSizing: 'border-box', width: DRAWER_WIDTH, bgcolor: '#0d0d0d', borderRight: '1px solid rgba(255,255,255,0.06)' } }}
-          open
-        >
-          {drawerContent}
-        </Drawer>
+        <Drawer variant="temporary" open={mobileOpen} onClose={handleDrawerToggle} ModalProps={{ keepMounted: true }} sx={{ display: { xs: 'block', lg: 'none' }, '& .MuiDrawer-paper': { boxSizing: 'border-box', width: DRAWER_WIDTH, bgcolor: '#0d0d0d', borderRight: '1px solid rgba(255,255,255,0.06)' } }}>{drawerContent}</Drawer>
+        <Drawer variant="permanent" sx={{ display: { xs: 'none', lg: 'block' }, '& .MuiDrawer-paper': { boxSizing: 'border-box', width: DRAWER_WIDTH, bgcolor: '#0d0d0d', borderRight: '1px solid rgba(255,255,255,0.06)' } }} open>{drawerContent}</Drawer>
       </Box>
 
-      <Box component="main" sx={{ flexGrow: 1, p: { xs: 2, md: 4 }, width: { lg: `calc(100% - ${DRAWER_WIDTH}px)` }, mt: '64px', minHeight: 'calc(100vh - 64px)' }}>
-        <Outlet />
-      </Box>
+      <Box component="main" sx={{ flexGrow: 1, p: { xs: 2, md: 4 }, width: { lg: `calc(100% - ${DRAWER_WIDTH}px)` }, mt: '64px', minHeight: 'calc(100vh - 64px)' }}><Outlet /></Box>
     </Box>
   );
 };
