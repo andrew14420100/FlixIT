@@ -170,6 +170,7 @@ export function ExpandOverlay({
   position,
   closing = false,
   onMouseLeave,
+  onClick,
   children,
   testId,
 }: any) {
@@ -328,6 +329,18 @@ export function ExpandOverlay({
     zIndex = 4;
   }
 
+  const handleOverlayClick = (event: any) => {
+    // Controls keep their own action. Any non-interactive part of the enlarged
+    // card behaves like the normal card and opens the title detail page.
+    const target = event?.target as HTMLElement | null;
+    if (
+      target?.closest?.("button, a, [role='button'], input, select, textarea")
+    ) {
+      return;
+    }
+    onClick?.(event);
+  };
+
   return createPortal(
     <div className="flix-netflix-preview-portal">
       <div
@@ -340,6 +353,7 @@ export function ExpandOverlay({
         data-phase={phase}
         className="previewModal--container has-smaller-buttons mini-modal"
         onMouseLeave={onMouseLeave}
+        onClick={handleOverlayClick}
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
           width: `${modalWidth}px`,
