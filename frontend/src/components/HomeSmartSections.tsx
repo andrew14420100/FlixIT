@@ -2,11 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import HomepageSlider from "./HomepageSlider";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
-import {
-  useLazyGetAppendedVideosQuery,
-  useLazyGetSimilarVideosQuery,
-  useLazyGetVideosByMediaTypeAndGenreIdQuery,
-} from "src/store/slices/discover";
+import { useLazyGetAppendedVideosQuery } from "src/store/slices/discover";
 import { MEDIA_TYPE } from "src/types/Common";
 import { useHomeDedupe, itemKey } from "src/store/homeDedupe";
 
@@ -21,20 +17,36 @@ const toMediaType = (type) =>
 
 const toSlug = (type) => (type === MEDIA_TYPE.Tv ? "tv" : "movie");
 
-const normalizeTmdbItems = (results, type) =>
+const normalizeItems = (results, type) =>
   (results || [])
     .filter((item) => item && (item.backdrop_path || item.poster_path))
     .map((item) => ({
       ...item,
       id: item.id || item.tmdbId,
-      tmdbId: item.id || item.tmdbId,
-      type: item.media_type || type,
-      media_type: item.media_type || type,
+      tmdbId: item.tmdbId || item.id,
+      type: item.type || item.media_type || type,
+      media_type: item.media_type || item.type || type,
       title: item.title || item.name,
       name: item.name || item.title,
       genre_ids: item.genre_ids || [],
     }))
     .slice(0, MAX_SMART_ITEMS);
+
+async function fetchAvailableGenre(genreId, mediaType) {
+  if (!genreId) return [];
+  const slug = toSlug(mediaType);
+  try {
+    const response = await fetch(
+      `/api/public/tmdb/genre/${genreId}/${slug}`,
+      { cache: "no-store" }
+    );
+    if (!response.ok) return [];
+    const data = await response.json();
+    return normalizeItems(data?.items || [], slug);
+  } catch {
+    return [];
+  }
+}
 
 function buildWatchAgainItems(items) {
   return (items || [])
@@ -59,7 +71,7 @@ function buildWatchAgainItems(items) {
     .slice(0, MAX_SMART_ITEMS);
 }
 
-function chooseWeightedGenre(details, preferredType) {
+function rankWeightedGenres(details, preferredType) {
   const scores = new Map();
 
   details.forEach(({ detail, index, mediaType }) => {
@@ -78,14 +90,12 @@ function chooseWeightedGenre(details, preferredType) {
     });
   });
 
-  return [...scores.values()].sort((a, b) => b.score - a.score)[0] || null;
+  return [...scores.values()].sort((a, b) => b.score - a.score);
 }
 
 export default function HomeSmartSections() {
   const { items: historyItems, refresh: refreshHistory } = useContinueWatching();
-  const [loadSimilar] = useLazyGetSimilarVideosQuery();
   const [loadDetails] = useLazyGetAppendedVideosQuery();
-  const [loadGenre] = useLazyGetVideosByMediaTypeAndGenreIdQuery();
 
   const [becauseItems, setBecauseItems] = useState([]);
   const [becauseTitle, setBecauseTitle] = useState("");
@@ -135,27 +145,6 @@ export default function HomeSmartSections() {
     const sourceSlug = toSlug(sourceMediaType);
 
     try {
-      const similar = await loadSimilar(
-        { mediaType: sourceMediaType, id: source.tmdb_id },
-        false
-      ).unwrap();
-
-      const normalized = normalizeTmdbItems(similar?.results, sourceSlug).filter(
-        (item) => Number(item.id) !== Number(source.tmdb_id)
-      );
-
-      setBecauseItems(normalized);
-      setBecauseTitle(
-        normalized.length && source.title
-          ? `Perché hai guardato ${source.title}`
-          : ""
-      );
-    } catch {
-      setBecauseItems([]);
-      setBecauseTitle("");
-    }
-
-    try {
       const detailResults = await Promise.all(
         usableHistory.slice(0, 5).map(async (entry, index) => {
           const mediaType = toMediaType(entry.media_type);
@@ -171,25 +160,39 @@ export default function HomeSmartSections() {
         })
       );
 
-      const weightedGenre = chooseWeightedGenre(detailResults, sourceMediaType);
+      const sourceDetail = detailResults[0]?.detail;
+      const sourceGenre = sourceDetail?.genres?.[0] || null;
+
+      if (sourceGenre?.id) {
+        const availableBecause = (
+          await fetchAvailableGenre(sourceGenre.id, sourceMediaType)
+        ).filter((item) => Number(item.id) !== Number(source.tmdb_id));
+
+        setBecauseItems(availableBecause);
+        setBecauseTitle(
+          availableBecause.length && source.title
+            ? `Perché hai guardato ${source.title}`
+            : ""
+        );
+      } else {
+        setBecauseItems([]);
+        setBecauseTitle("");
+      }
+
+      const rankedGenres = rankWeightedGenres(detailResults, sourceMediaType);
+      const weightedGenre =
+        rankedGenres.find((genre) => genre.id !== sourceGenre?.id) ||
+        rankedGenres[0] ||
+        null;
+
       if (!weightedGenre?.id) {
         setGenreItems([]);
         setGenreTitle("");
         return;
       }
 
-      const genreResult = await loadGenre(
-        {
-          mediaType: sourceMediaType,
-          genreId: weightedGenre.id,
-          page: 1,
-        },
-        false
-      ).unwrap();
-
-      const normalizedGenre = normalizeTmdbItems(
-        genreResult?.results,
-        sourceSlug
+      const availableGenre = (
+        await fetchAvailableGenre(weightedGenre.id, sourceMediaType)
       ).filter(
         (item) =>
           !usableHistory.some(
@@ -197,17 +200,19 @@ export default function HomeSmartSections() {
           )
       );
 
-      setGenreItems(normalizedGenre);
+      setGenreItems(availableGenre);
       setGenreTitle(
-        normalizedGenre.length
+        availableGenre.length
           ? `${sourceSlug === "tv" ? "Serie" : "Film"} ${weightedGenre.name}`
           : ""
       );
     } catch {
+      setBecauseItems([]);
+      setBecauseTitle("");
       setGenreItems([]);
       setGenreTitle("");
     }
-  }, [usableHistory, loadSimilar, loadDetails, loadGenre]);
+  }, [usableHistory, loadDetails]);
 
   useEffect(() => {
     refreshSmartRows();
