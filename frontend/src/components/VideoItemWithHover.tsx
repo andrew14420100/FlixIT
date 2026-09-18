@@ -130,6 +130,7 @@ export default function VideoItemWithHover({
           position={position}
           closing={closing}
           onMouseLeave={onOverlayLeave}
+          onClick={goDetail}
           testId={`hover-overlay-${id}`}
         >
           <ExpandedCard
