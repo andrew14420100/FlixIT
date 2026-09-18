@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, startTransition } from "react";
 import { useParams } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
@@ -20,12 +20,17 @@ import {
   claimedAbove,
   uniqueItems,
 } from "src/store/homeDedupe";
+import {
+  readHomePreferences,
+  preferenceBoost,
+  stableProfileBias,
+} from "src/store/homePersonalization";
 
 const INITIAL_ROWS = 4;
 const ROWS_PER_LOAD = 3;
 const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
 const ROW_ITEM_LIMIT = 60;
-const HOME_CACHE_PREFIX = "flix-home-v5";
+const HOME_CACHE_PREFIX = "flix-home-v6";
 
 function readPersistedCache(key) {
   if (typeof window === "undefined") return null;
@@ -218,7 +223,6 @@ function rankDailyItems(items, type) {
     (item) => item && (item.backdrop_path || item.poster_path)
   );
 
-  // Site-vote Top 10 already arrives from the backend in exact rank order.
   if (type === "top10") return valid;
 
   return valid
@@ -252,9 +256,6 @@ const PAGED_TYPES = new Set([
 async function fetchSectionPayload(section, url) {
   const type = section.section_type || section.apiString;
 
-  // "Aggiunti di recente" is intentionally broad: the old endpoint could
-  // shrink to ~5 cards after availability filtering. Merge several pages of
-  // fresh movies and series, then let the daily freshness/fame rank order them.
   if (type === "latest") {
     const urls = [
       "/api/public/homepage/latest",
@@ -270,12 +271,13 @@ async function fetchSectionPayload(section, url) {
     );
     return {
       items: uniqueItems(parts.flatMap((part) => part?.items || [])),
-      total: parts.reduce((sum, part) => sum + Number(part?.total || part?.items?.length || 0), 0),
+      total: parts.reduce(
+        (sum, part) => sum + Number(part?.total || part?.items?.length || 0),
+        0
+      ),
     };
   }
 
-  // Netflix-sized rows need more than one API page. Fetch three pages where
-  // the existing FLIX-IT endpoint already supports pagination.
   if (PAGED_TYPES.has(type)) {
     const pages = await Promise.all(
       [1, 2, 3].map((page) =>
@@ -291,7 +293,7 @@ async function fetchSectionPayload(section, url) {
   return freshFetchJson(url, { items: [] });
 }
 
-function buildExtraSections(templates, adminSections) {
+function buildExtraSections(templates, adminSections, preferences, userId) {
   const used = new Set(adminSections.map(sectionSignature));
   const usedNames = new Set(
     adminSections.map((s) => String(s.name || "").trim().toLowerCase())
@@ -316,7 +318,22 @@ function buildExtraSections(templates, adminSections) {
     });
   }
 
-  return result.sort((a, b) => sectionPriority(b) - sectionPriority(a));
+  // Automatic rows are ordered per profile. Taste signals dominate genre rows;
+  // a small deterministic profile bias prevents every account from seeing the
+  // exact same sequence while keeping it stable across refreshes for 24 hours.
+  return result.sort((a, b) => {
+    const aSignature = sectionSignature(a);
+    const bSignature = sectionSignature(b);
+    const aScore =
+      sectionPriority(a) +
+      preferenceBoost(a, preferences) +
+      stableProfileBias(userId, aSignature);
+    const bScore =
+      sectionPriority(b) +
+      preferenceBoost(b, preferences) +
+      stableProfileBias(userId, bSignature);
+    return bScore - aScore;
+  });
 }
 
 function RowSkeleton({ title }) {
@@ -356,7 +373,7 @@ function SectionRow({ section, index, onSettled }) {
   const initialCache = useMemo(() => readFreshPersistedCache(cacheKey), [cacheKey]);
 
   const { data, isPending } = useQuery({
-    queryKey: ["home-row-v5", sectionSignature(section), url],
+    queryKey: ["home-row-v6", sectionSignature(section), url],
     queryFn: async () => {
       const incoming = await fetchSectionPayload(section, url);
       const snapshot = buildDailySnapshot(incoming, type);
@@ -382,10 +399,6 @@ function SectionRow({ section, index, onSettled }) {
     if (isPending) return null;
 
     const ranked = rankDailyItems(data?.items || [], type);
-
-    // Top 10 must always show positions 1-10. It may contain a title already
-    // seen in an upper recommendation row; lower rows will still exclude the
-    // Top 10 titles after this row claims them.
     if (isTop10) return ranked.slice(0, 10);
 
     const taken = claimedAbove(rows, index, section.key);
@@ -421,14 +434,23 @@ export function Component() {
   const sentinelRef = useRef(null);
   const resetDedupe = useHomeDedupe((state) => state.reset);
 
-  const feedCacheKey = `${HOME_CACHE_PREFIX}:feed`;
+  const userId =
+    typeof window !== "undefined"
+      ? window.localStorage.getItem("netflix_user_id") || "guest"
+      : "guest";
+  const preferences = useMemo(() => readHomePreferences(userId), [userId]);
+  const preferenceSignature = `${(preferences?.favoriteGenres || []).join("-")}|${
+    preferences?.preferredMediaType || "mixed"
+  }`;
+
+  const feedCacheKey = `${HOME_CACHE_PREFIX}:feed:${userId}:${preferenceSignature}`;
   const initialFeedCache = useMemo(
     () => readFreshPersistedCache(feedCacheKey),
     [feedCacheKey]
   );
 
   const { data: feed = null } = useQuery({
-    queryKey: ["home-feed-v5"],
+    queryKey: ["home-feed-v6", userId, preferenceSignature],
     queryFn: async () => {
       const [secData, tplData] = await Promise.all([
         freshFetchJson("/api/public/sections", { sections: [] }),
@@ -439,7 +461,12 @@ export function Component() {
         .filter((s) => s.active !== false && s.visible !== false)
         .map((s) => ({ ...s, key: `admin-${s.name}-${sectionSignature(s)}` }));
 
-      const automatic = buildExtraSections(tplData.sections || [], admin);
+      const automatic = buildExtraSections(
+        tplData.sections || [],
+        admin,
+        preferences,
+        userId
+      );
       const nextFeed = [...admin, ...automatic];
       writePersistedCache(feedCacheKey, nextFeed);
       return nextFeed;
@@ -459,15 +486,19 @@ export function Component() {
     resetDedupe();
   }, [filterMediaType, resetDedupe]);
 
-  const onRowSettled = useCallback(() => setTick((t) => t + 1), []);
+  const onRowSettled = useCallback(() => {
+    startTransition(() => setTick((t) => t + 1));
+  }, []);
   const total = feed?.length || 0;
   const hasMore = visibleCount < total;
 
   useEffect(() => {
     if (feed) {
-      setVisibleCount((count) =>
-        Math.min(Math.max(INITIAL_ROWS, count), feed.length || INITIAL_ROWS)
-      );
+      startTransition(() => {
+        setVisibleCount((count) =>
+          Math.min(Math.max(INITIAL_ROWS, count), feed.length || INITIAL_ROWS)
+        );
+      });
     }
   }, [feed]);
 
@@ -477,7 +508,9 @@ export function Component() {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
-          setVisibleCount((count) => Math.min(count + ROWS_PER_LOAD, total));
+          startTransition(() => {
+            setVisibleCount((count) => Math.min(count + ROWS_PER_LOAD, total));
+          });
         }
       },
       { rootMargin: "900px 0px" }
