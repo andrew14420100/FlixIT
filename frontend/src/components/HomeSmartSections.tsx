@@ -4,15 +4,14 @@ import HomepageSlider from "./HomepageSlider";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { useLazyGetAppendedVideosQuery } from "src/store/slices/discover";
 import { MEDIA_TYPE } from "src/types/Common";
-import { useHomeDedupe, itemKey } from "src/store/homeDedupe";
+import { useHomeDedupe, itemKey, claimedAbove, uniqueItems } from "src/store/homeDedupe";
 
 // FLIX-IT adaptation of the behavioural ideas from
 // IAmParadox27/jellyfin-plugin-home-sections.
-// Recommendations are now stable during the day: no random rotation on reload.
-// A fresh catalogue snapshot is calculated once every 24 hours and persisted so
-// the rows are already available when the user reloads the site.
+// Recommendations are stable during the day: a fresh catalogue snapshot is
+// calculated once every 24 hours and persisted so reloads paint immediately.
 const SMART_REFRESH_MS = 24 * 60 * 60 * 1000;
-const SMART_CACHE_PREFIX = "flix-home-smart-v3";
+const SMART_CACHE_PREFIX = "flix-home-smart-v4";
 const MAX_SMART_ITEMS = 24;
 const RECENT_DAYS = 14;
 const WATCH_AGAIN_DAYS = 28;
@@ -48,8 +47,8 @@ const normalizeItems = (results, fallbackType) => {
     })
     .filter((item) => {
       if (!item.id || !(item.backdrop_path || item.poster_path)) return false;
-      const key = `${item.type}:${item.id}`;
-      if (seen.has(key)) return false;
+      const key = itemKey(item);
+      if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
     })
@@ -182,6 +181,12 @@ function buildGenreScores(detailRows, likedKeys) {
   });
 }
 
+function removeTaken(items, taken, limit = 16) {
+  return uniqueItems(items)
+    .filter((item) => !taken.has(itemKey(item)))
+    .slice(0, limit);
+}
+
 export default function HomeSmartSections() {
   const { items: historyItems } = useContinueWatching();
   const [loadDetails] = useLazyGetAppendedVideosQuery();
@@ -205,6 +210,7 @@ export default function HomeSmartSections() {
     () => initialCache?.data?.myListItems || []
   );
 
+  const rows = useHomeDedupe((state) => state.rows);
   const claim = useHomeDedupe((state) => state.claim);
   const release = useHomeDedupe((state) => state.release);
 
@@ -309,9 +315,6 @@ export default function HomeSmartSections() {
 
     if (currentRequest !== requestId.current) return;
 
-    // Deterministic recommendation source: always use the most recently watched
-    // title. The row therefore stays stable for the whole daily snapshot instead
-    // of choosing a different title whenever the page is reloaded.
     const source = usableHistory[0];
     const sourceRow = detailRows.find(
       (row) => Number(row.history.tmdb_id) === Number(source?.tmdb_id)
@@ -323,14 +326,14 @@ export default function HomeSmartSections() {
         sourceGenres.map((genre) => fetchAvailableGenre(genre.id, sourceRow.mediaType))
       );
       const watched = new Set(
-        usableHistory.map((item) => `${item.media_type}:${item.tmdb_id}`)
+        usableHistory.map((item) => `${item.media_type}-${item.tmdb_id}`)
       );
       const merged = newestFirst(
         normalizeItems(
           pools.flat().filter(
             (item) =>
               Number(item.id) !== Number(source.tmdb_id) &&
-              !watched.has(`${item.type}:${item.id}`)
+              !watched.has(itemKey(item))
           ),
           toSlug(sourceRow.mediaType)
         )
@@ -340,16 +343,13 @@ export default function HomeSmartSections() {
         merged.length && source.title ? `Perché hai guardato ${source.title}` : "";
     }
 
-    // Pick the strongest genre deterministically. No weighted-random selection:
-    // newly available titles for the user's strongest genre are added at the
-    // front on the next daily refresh.
     const rankedGenres = buildGenreScores(detailRows, likedKeys);
     const selectedGenre = rankedGenres[0];
     if (selectedGenre?.id) {
       const pool = await fetchAvailableGenre(selectedGenre.id, selectedGenre.mediaType);
-      const watchedIds = new Set(usableHistory.map((item) => Number(item.tmdb_id)));
+      const watchedKeys = new Set(usableHistory.map((item) => `${item.media_type}-${item.tmdb_id}`));
       const clean = pool
-        .filter((item) => !watchedIds.has(Number(item.id)))
+        .filter((item) => !watchedKeys.has(itemKey(item)))
         .slice(0, 16);
       next.genreItems = clean;
       next.genreTitle = clean.length
@@ -374,46 +374,79 @@ export default function HomeSmartSections() {
     return () => window.clearInterval(timer);
   }, [refreshSmartRows]);
 
+  // Build the personalized rows sequentially, exactly as they appear on screen.
+  // Each lower row removes every title already selected above it. There is no
+  // fallback that reintroduces duplicates just to fill a carousel.
+  const visibleBecause = useMemo(() => {
+    const taken = claimedAbove(rows, -40, "smart-because-watched");
+    return removeTaken(becauseItems, taken);
+  }, [becauseItems, rows]);
+
+  const visibleWatchAgain = useMemo(() => {
+    const taken = claimedAbove(rows, -30, "smart-watch-again");
+    visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    return removeTaken(watchAgainItems, taken);
+  }, [watchAgainItems, visibleBecause, rows]);
+
+  const visibleMyList = useMemo(() => {
+    const taken = claimedAbove(rows, -20, "smart-my-list");
+    visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    visibleWatchAgain.forEach((item) => taken.add(itemKey(item)));
+    return removeTaken(myListItems, taken);
+  }, [myListItems, visibleBecause, visibleWatchAgain, rows]);
+
+  const visibleGenre = useMemo(() => {
+    const taken = claimedAbove(rows, -10, "smart-genre");
+    visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    visibleWatchAgain.forEach((item) => taken.add(itemKey(item)));
+    visibleMyList.forEach((item) => taken.add(itemKey(item)));
+    return removeTaken(genreItems, taken);
+  }, [genreItems, visibleBecause, visibleWatchAgain, visibleMyList, rows]);
+
   useEffect(() => {
-    const ids = becauseItems.map(itemKey).filter(Boolean);
+    const ids = visibleBecause.map(itemKey).filter(Boolean);
     if (ids.length) claim("smart-because-watched", -40, ids);
+    else release("smart-because-watched");
     return () => release("smart-because-watched");
-  }, [becauseItems, claim, release]);
+  }, [visibleBecause, claim, release]);
 
   useEffect(() => {
-    const ids = watchAgainItems.map(itemKey).filter(Boolean);
+    const ids = visibleWatchAgain.map(itemKey).filter(Boolean);
     if (ids.length) claim("smart-watch-again", -30, ids);
+    else release("smart-watch-again");
     return () => release("smart-watch-again");
-  }, [watchAgainItems, claim, release]);
+  }, [visibleWatchAgain, claim, release]);
 
   useEffect(() => {
-    const ids = myListItems.map(itemKey).filter(Boolean);
+    const ids = visibleMyList.map(itemKey).filter(Boolean);
     if (ids.length) claim("smart-my-list", -20, ids);
+    else release("smart-my-list");
     return () => release("smart-my-list");
-  }, [myListItems, claim, release]);
+  }, [visibleMyList, claim, release]);
 
   useEffect(() => {
-    const ids = genreItems.map(itemKey).filter(Boolean);
+    const ids = visibleGenre.map(itemKey).filter(Boolean);
     if (ids.length) claim("smart-genre", -10, ids);
+    else release("smart-genre");
     return () => release("smart-genre");
-  }, [genreItems, claim, release]);
+  }, [visibleGenre, claim, release]);
 
   return (
     <>
-      {becauseTitle && becauseItems.length > 0 && (
-        <HomepageSlider title={becauseTitle} items={becauseItems} />
+      {becauseTitle && visibleBecause.length > 0 && (
+        <HomepageSlider title={becauseTitle} items={visibleBecause} />
       )}
 
-      {watchAgainItems.length > 0 && (
-        <HomepageSlider title="Guarda di nuovo" items={watchAgainItems} />
+      {visibleWatchAgain.length > 0 && (
+        <HomepageSlider title="Guarda di nuovo" items={visibleWatchAgain} />
       )}
 
-      {myListItems.length > 0 && (
-        <HomepageSlider title="La mia lista" items={myListItems} />
+      {visibleMyList.length > 0 && (
+        <HomepageSlider title="La mia lista" items={visibleMyList} />
       )}
 
-      {genreTitle && genreItems.length > 0 && (
-        <HomepageSlider title={genreTitle} items={genreItems} />
+      {genreTitle && visibleGenre.length > 0 && (
+        <HomepageSlider title={genreTitle} items={visibleGenre} />
       )}
     </>
   );
