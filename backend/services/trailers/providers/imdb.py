@@ -1,115 +1,152 @@
 from __future__ import annotations
 
-import json
 import re
-from typing import Any
 
 from ..base import TrailerCandidate, normalize_title
 from ..manifest import probe_direct_file
 from .common import client
 
-
-def _next_data(html: str) -> dict:
-    m = re.search(r'<script[^>]+id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>', html, re.I | re.S)
-    if not m:
-        return {}
-    try:
-        return json.loads(m.group(1))
-    except Exception:
-        return {}
-
-
-def _walk(node: Any):
-    if isinstance(node, dict):
-        yield node
-        for value in node.values():
-            yield from _walk(value)
-    elif isinstance(node, list):
-        for value in node:
-            yield from _walk(value)
-
-
-def _video_ids(data: dict) -> list[str]:
-    ids: list[str] = []
-    for row in _walk(data):
-        rid = row.get("id")
-        ctype = normalize_title(((row.get("contentType") or {}).get("id") if isinstance(row.get("contentType"), dict) else row.get("contentType")) or "")
-        if isinstance(rid, str) and rid.startswith("vi") and ("trailer" in ctype or "teaser" in ctype or not ctype):
-            if rid not in ids:
-                ids.append(rid)
-    return ids[:12]
+IMDB_GRAPHQL_URL = "https://graphql.imdb.com/"
+IMDB_TRAILER_QUERY = r'''
+query Trailer($id: ID!) {
+  title(id: $id) {
+    primaryVideos(first: 12) {
+      edges {
+        node {
+          id
+          name { value }
+          contentType { id displayName { value } }
+          runtime { value }
+          playbackURLs {
+            url
+            displayName { value }
+            videoMimeType
+          }
+        }
+      }
+    }
+  }
+}
+'''
 
 
-def _playback_rows(data: dict) -> tuple[str, list[dict]]:
-    video = (((data.get("props") or {}).get("pageProps") or {}).get("videoPlaybackData") or {}).get("video") or {}
-    title = str(((video.get("name") or {}).get("value") if isinstance(video.get("name"), dict) else video.get("name")) or "Trailer")
-    rows = []
-    for item in video.get("playbackURLs") or []:
-        url = item.get("url")
-        if not url or str(item.get("videoMimeType") or "").upper() == "M3U8":
-            continue
-        label = ((item.get("displayName") or {}).get("value") if isinstance(item.get("displayName"), dict) else item.get("displayName")) or ""
-        m = re.search(r"(\d{3,4})p", str(label), re.I)
-        rows.append({"url": url, "reported_height": int(m.group(1)) if m else None})
-    return title, rows
+def _height_from_label(value) -> int | None:
+    match = re.search(r"(\d{3,4})p", str(value or ""), re.I)
+    return int(match.group(1)) if match else None
+
+
+def _trailer_type(title: str, content_type: str) -> str:
+    text = normalize_title(f"{content_type} {title}")
+    if "final trailer" in text:
+        return "Final Trailer"
+    if "official teaser" in text:
+        return "Official Teaser"
+    if "teaser" in text:
+        return "Teaser"
+    if "clip" in text and "trailer" not in text:
+        return "Clip"
+    return "Official Trailer" if "trailer" in text else "Trailer"
 
 
 class IMDbTrailerProvider:
+    """Resolve IMDb-hosted trailers directly from IMDb's GraphQL response.
+
+    IMDb's normal HTML title/video pages are currently protected by a WAF and
+    can return an empty/challenge document to non-browser HTTP clients.  The
+    GraphQL path avoids parsing __NEXT_DATA__ and gives us the direct playback
+    URLs for a TMDB-derived IMDb id, so no search service is required.
+    """
+
     name = "imdb"
 
     async def discover(self, identity: dict) -> list[TrailerCandidate]:
         imdb_id = str((identity.get("external_ids") or {}).get("imdb_id") or "").strip()
         if not re.fullmatch(r"tt\d+", imdb_id):
             return []
-        title_page = f"https://www.imdb.com/title/{imdb_id}/"
-        candidates: list[TrailerCandidate] = []
+
         async with client() as http:
             try:
-                response = await http.get(title_page)
+                response = await http.post(
+                    IMDB_GRAPHQL_URL,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Referer": "https://www.imdb.com/",
+                        "Origin": "https://www.imdb.com",
+                    },
+                    json={"query": IMDB_TRAILER_QUERY, "variables": {"id": imdb_id}},
+                )
                 if response.status_code != 200:
                     return []
-                ids = _video_ids(_next_data(response.text))
+                payload = response.json()
             except Exception:
                 return []
-            for video_id in ids:
-                try:
-                    page = await http.get(f"https://www.imdb.com/video/{video_id}/")
-                    if page.status_code != 200:
-                        continue
-                    title, rows = _playback_rows(_next_data(page.text))
-                    trailer_type = "Official Trailer" if "trailer" in normalize_title(title) else ("Teaser" if "teaser" in normalize_title(title) else "Trailer")
-                    for row in rows:
-                        # Do not trust IMDb's visual quality label alone: probe the actual remote file.
-                        probed = await probe_direct_file(row["url"])
-                        if not probed:
-                            continue
-                        candidates.append(
-                            TrailerCandidate(
-                                source=self.name,
-                                trailer_url=row["url"],
-                                provider_id=video_id,
-                                provider_page=f"https://www.imdb.com/video/{video_id}/",
-                                matched_title=identity.get("title"),
-                                matched_year=identity.get("year"),
-                                media_type=identity.get("type"),
-                                title=title,
-                                trailer_type=trailer_type,
-                                official=True,
-                                width=probed.get("width"),
-                                height=probed.get("height"),
-                                bitrate=probed.get("bitrate"),
-                                codec=probed.get("codec"),
-                                fps=probed.get("fps"),
-                                audio_language=probed.get("audio_language") or "en",
-                                audio_codec=probed.get("audio_codec"),
-                                audio_bitrate=probed.get("audio_bitrate"),
-                                confidence=1.0,
-                                verified=True,
-                                browser_compatible=True,
-                                compatibility="mp4",
-                                metadata={"imdb_id": imdb_id, "reported_height": row.get("reported_height")},
-                            )
-                        )
-                except Exception:
+
+        title_data = ((payload.get("data") or {}).get("title") or {})
+        edges = ((title_data.get("primaryVideos") or {}).get("edges") or [])
+        candidates: list[TrailerCandidate] = []
+
+        for edge in edges:
+            node = (edge or {}).get("node") or {}
+            video_id = str(node.get("id") or "").strip()
+            title = str(((node.get("name") or {}).get("value")) or "Trailer")
+            content_type = str(
+                ((node.get("contentType") or {}).get("id"))
+                or (((node.get("contentType") or {}).get("displayName") or {}).get("value"))
+                or ""
+            )
+            trailer_type = _trailer_type(title, content_type)
+
+            # Keep true trailer/teaser material first. Generic video entries are
+            # accepted only when their title itself identifies them as a trailer.
+            normalized_kind = normalize_title(f"{content_type} {title}")
+            if not any(token in normalized_kind for token in ("trailer", "teaser", "clip")):
+                continue
+
+            for row in node.get("playbackURLs") or []:
+                url = str((row or {}).get("url") or "").strip()
+                mime = str((row or {}).get("videoMimeType") or "").upper()
+                if not url or mime != "MP4":
                     continue
+
+                label = ((row.get("displayName") or {}).get("value") if isinstance(row.get("displayName"), dict) else row.get("displayName")) or ""
+                reported_height = _height_from_label(label)
+
+                # Do not trust IMDb's display label alone. ffprobe verifies the
+                # actual native stream so the >=1080 rule and ranking stay real.
+                probed = await probe_direct_file(url)
+                if not probed:
+                    continue
+
+                candidates.append(
+                    TrailerCandidate(
+                        source=self.name,
+                        trailer_url=url,
+                        provider_id=video_id or imdb_id,
+                        provider_page=f"https://www.imdb.com/video/{video_id}/" if video_id else f"https://www.imdb.com/title/{imdb_id}/",
+                        matched_title=identity.get("title"),
+                        matched_year=identity.get("year"),
+                        media_type=identity.get("type"),
+                        title=title,
+                        trailer_type=trailer_type,
+                        official=trailer_type in {"Official Trailer", "Final Trailer", "Official Teaser"},
+                        width=probed.get("width"),
+                        height=probed.get("height"),
+                        bitrate=probed.get("bitrate"),
+                        codec=probed.get("codec"),
+                        fps=probed.get("fps"),
+                        audio_language=probed.get("audio_language") or "en",
+                        audio_codec=probed.get("audio_codec"),
+                        audio_bitrate=probed.get("audio_bitrate"),
+                        confidence=1.0,
+                        verified=True,
+                        browser_compatible=True,
+                        compatibility="mp4",
+                        metadata={
+                            "imdb_id": imdb_id,
+                            "reported_height": reported_height,
+                            "discovery": "graphql",
+                        },
+                    )
+                )
+
         return candidates
