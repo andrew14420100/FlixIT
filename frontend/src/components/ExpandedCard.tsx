@@ -1,164 +1,202 @@
 // @ts-nocheck
-import React, { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { MEDIA_TYPE } from "src/types/Common";
+import "./NetflixMiniModalExact.css";
 
 export const TMDB_IMG = "https://image.tmdb.org/t/p/";
 
-const GENRE_NAMES: Record<number, string> = {
-  12: "Avventura",
-  14: "Fantasy",
-  16: "Animazione",
-  18: "Dramma",
-  27: "Horror",
-  28: "Azione",
-  35: "Commedia",
-  36: "Storia",
-  37: "Western",
-  53: "Thriller",
-  80: "Crime",
-  99: "Documentario",
-  878: "Sci-Fi",
-  9648: "Mistero",
-  10402: "Musica",
-  10749: "Romance",
-  10751: "Famiglia",
-  10752: "Guerra",
-  10759: "Azione & Avventura",
-  10762: "Kids",
-  10763: "News",
-  10764: "Reality",
-  10765: "Sci-Fi & Fantasy",
-  10766: "Soap",
-  10767: "Talk",
-  10768: "War & Politics",
-};
+export function useMediaAssets(video: any, mediaType: any) {
+  const typeSlug = mediaType === MEDIA_TYPE.Tv ? "tv" : "movie";
+  const id = video?.id || video?.tmdbId || video?.tmdb_id;
 
-function imageUrl(value: any, size = "w780") {
+  const { data } = useQuery({
+    queryKey: ["media-assets", typeSlug, id],
+    queryFn: async () => {
+      if (!id) return {};
+      const response = await fetch(`/api/public/media-assets/${typeSlug}/${id}`);
+      return response.ok ? response.json() : {};
+    },
+    enabled: !!id,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  return data || {};
+}
+
+export function formatReleaseLabel(value?: string) {
+  if (!value) return "Prossimamente";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "Prossimamente";
+  return new Intl.DateTimeFormat("it-IT", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(d);
+}
+
+function mediaUrl(value: any, size = "w780") {
   if (!value) return "";
   if (
     typeof value === "string" &&
-    (/^https?:\/\//i.test(value) || value.startsWith("data:"))
+    (/^https?:\/\//i.test(value) ||
+      value.startsWith("data:") ||
+      value.startsWith("blob:"))
   ) {
     return value;
   }
-
   const path = String(value);
   return `${TMDB_IMG}${size}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
-function getPreviewCover(item: any) {
-  return imageUrl(
-    item?.titled_backdrop_path ||
-      item?.cover_path ||
-      item?.cover ||
-      item?.backdrop_path ||
-      item?.backdrop ||
-      item?.poster_path ||
-      item?.poster,
-    "w780"
+function firstValue(...values: any[]) {
+  return values.find(
+    (value) =>
+      value !== undefined &&
+      value !== null &&
+      value !== "" &&
+      !(Array.isArray(value) && value.length === 0)
   );
 }
 
-function getLogo(item: any) {
-  return imageUrl(
-    item?.logo_path ||
-      item?.logo ||
-      item?.assets?.logo_path ||
-      item?.assets?.logo ||
-      item?.images?.logos?.[0]?.file_path,
-    "w500"
-  );
-}
+function normalizeTextList(...values: any[]) {
+  for (const value of values) {
+    if (!value) continue;
 
-function getGenres(item: any) {
-  const values = item?.genres?.length
-    ? item.genres
-        .map((g: any) => (typeof g === "string" ? g : g?.name))
-        .filter(Boolean)
-    : (item?.genre_ids || [])
-        .map((id: number) => GENRE_NAMES[id])
+    if (Array.isArray(value)) {
+      const normalized = value
+        .map((entry: any) => {
+          if (typeof entry === "string") return entry;
+          return (
+            entry?.name ||
+            entry?.label ||
+            entry?.text ||
+            entry?.value ||
+            ""
+          );
+        })
         .filter(Boolean);
 
-  return values.slice(0, 3);
-}
+      if (normalized.length) return normalized;
+    }
 
-function getType(item: any, mediaType: any) {
-  if (item?.type === "tv" || item?.media_type === "tv") return "tv";
-  if (item?.type === "movie" || item?.media_type === "movie") return "movie";
-  return String(mediaType).toLowerCase().includes("tv") ? "tv" : "movie";
-}
-
-function getUpcomingDate(item: any) {
-  const raw =
-    item?.last_air_date ||
-    item?.release_date ||
-    item?.first_air_date ||
-    "";
-
-  if (!raw) return null;
-
-  const parts = String(raw).split("-");
-  if (parts.length !== 3) return null;
-
-  const date = new Date(
-    Number(parts[0]),
-    Number(parts[1]) - 1,
-    Number(parts[2])
-  );
-
-  if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
-    return null;
+    if (typeof value === "string") {
+      const split = value
+        .split(/[|,•]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (split.length) return split;
+    }
   }
 
-  return date.toLocaleDateString("it-IT", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  return [];
 }
 
-function TitleButton({
-  children,
-  className = "",
+function IconPlay() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M5 2.7a1 1 0 0 1 1.48-.88l16.93 9.3a1 1 0 0 1 0 1.76l-16.93 9.3A1 1 0 0 1 5 21.31z"
+      />
+    </svg>
+  );
+}
+
+function IconPlus() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M11 11V2h2v9h9v2h-9v9h-2v-9H2v-2z"
+      />
+    </svg>
+  );
+}
+
+function IconCheck() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="m9.55 17.48-5.4-5.4 1.41-1.42 3.99 3.99 8.89-8.9 1.42 1.42z"
+      />
+    </svg>
+  );
+}
+
+function IconThumb() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="M10.696 8.773A2 2 0 0 0 11 7.713V4h.838c.877 0 1.59.553 1.77 1.311C13.822 6.228 14 7.227 14 8a7 7 0 0 1-.246 1.75L13.432 11H17.5a1.5 1.5 0 0 1 1.476 1.77l-.08.445.28.354c.203.256.324.578.324.931s-.12.675-.324.93l-.28.355.08.445q.024.13.024.27c0 .49-.234.925-.6 1.2l-.4.3v.5a1.5 1.5 0 0 1-1.5 1.5h-3.877a9 9 0 0 1-2.846-.462l-1.493-.497A10.5 10.5 0 0 0 5 18.5v-4.747l2.036-.581a3 3 0 0 0 1.72-1.295zM10.5 2A1.5 1.5 0 0 0 9 3.5v4.213l-1.94 3.105a1 1 0 0 1-.574.432l-2.035.581A2 2 0 0 0 3 13.754v4.793c0 1.078.874 1.953 1.953 1.953.917 0 1.828.148 2.698.438l1.493.498a11 11 0 0 0 3.479.564H16.5a3.5 3.5 0 0 0 3.467-3.017 3.5 3.5 0 0 0 1.028-2.671c.32-.529.505-1.15.505-1.812s-.185-1.283-.505-1.812Q21 12.595 21 12.5A3.5 3.5 0 0 0 17.5 9h-1.566c.041-.325.066-.66.066-1 0-1.011-.221-2.194-.446-3.148C15.14 3.097 13.543 2 11.838 2z"
+      />
+    </svg>
+  );
+}
+
+function IconChevron() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        clipRule="evenodd"
+        d="m12 15.586 7.293-7.293 1.414 1.414-8 8a1 1 0 0 1-1.414 0l-8-8 1.414-1.414z"
+      />
+    </svg>
+  );
+}
+
+function SpatialAudioMark() {
+  return (
+    <div className="spatial-audio spatial-audio-icon-it" aria-label="Audio spaziale">
+      <svg viewBox="0 0 72 18" aria-hidden="true">
+        <path
+          d="M10 9c0-3.6 2.4-6.3 5.8-6.3S22 5.4 22 9s-2.7 6.3-6.2 6.3S10 12.6 10 9Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        <path d="M6.8 4.3a7.4 7.4 0 0 0 0 9.4M3.7 1.7a11.3 11.3 0 0 0 0 14.6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        <text x="29" y="12.5" fill="currentColor" fontSize="9.5" fontFamily="inherit">SPATIAL</text>
+      </svg>
+    </div>
+  );
+}
+
+function MiniButton({
+  primary = false,
+  label,
   onClick,
-  pushRight = false,
+  selected = false,
+  children,
 }: any) {
   return (
-    <div
-      className={`title-btn ${className}`.trim()}
+    <button
+      aria-label={label}
+      title={label}
+      className={`nflx-mini-control ${
+        primary ? "color-primary" : "color-supplementary"
+      } hasIcon round${selected ? " is-selected" : ""}`}
+      type="button"
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
         onClick?.(event);
       }}
-      style={{
-        color: "#fff",
-        textDecoration: "none",
-        width: "3em",
-        height: "3em",
-        border: "2px solid #8c8c8c",
-        backgroundColor: "#212121",
-        borderRadius: "50%",
-        textAlign: "center",
-        marginRight: pushRight ? 0 : ".8em",
-        marginLeft: pushRight ? "auto" : 0,
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        position: "relative",
-        fontSize: ".85em",
-      }}
-      onMouseEnter={(event) => {
-        event.currentTarget.style.borderColor = "#fff";
-        event.currentTarget.style.backgroundColor = "#363636";
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.borderColor = "#8c8c8c";
-        event.currentTarget.style.backgroundColor = "#212121";
-      }}
     >
-      {children}
-    </div>
+      <span className="small" role="presentation">
+        {children}
+      </span>
+    </button>
   );
 }
 
@@ -167,606 +205,394 @@ export default function ExpandedCard({
   mediaType,
   onPlay,
   onDetail,
-  display = true,
   watch,
 }: any) {
-  const cover = getPreviewCover(item);
-  const logo = getLogo(item);
-  const genres = useMemo(() => getGenres(item), [item]);
-  const type = getType(item, mediaType);
+  const [inList, setInList] = useState(
+    !!firstValue(
+      item?.isInPlaylist,
+      item?.in_playlist,
+      item?.inList,
+      item?.in_list,
+      false
+    )
+  );
+  const [liked, setLiked] = useState(
+    !!firstValue(item?.liked, item?.thumb_up, false)
+  );
 
-  const userWatch = watch || item?.user_watchlist || item?.watch || null;
+  const type =
+    item?.type ||
+    item?.media_type ||
+    (mediaType === MEDIA_TYPE.Tv ? "tv" : "movie");
 
-  const releaseDate =
-    item?.release_date ||
-    item?.first_air_date ||
-    "";
+  const title = item?.title || item?.name || "";
 
-  const score =
-    item?.score ??
-    item?.vote_average ??
-    item?.rating ??
-    item?.voteAverage ??
-    "";
+  const cover = mediaUrl(
+    firstValue(
+      item?.titled_backdrop_path,
+      item?.backdrop_path,
+      item?.cover_path,
+      item?.poster_path
+    ),
+    "w780"
+  );
 
-  const runtime =
-    item?.runtime ||
-    item?.duration ||
-    item?.details?.runtime ||
-    "";
+  const logo = mediaUrl(
+    firstValue(item?.logo_path, item?.logo, item?.title_logo_path),
+    "w500"
+  );
 
-  const seasons =
-    item?.seasons_count ||
-    item?.number_of_seasons ||
-    item?.seasonsCount ||
-    "";
+  const previewVideo = firstValue(
+    item?.preview_video_url,
+    item?.previewVideoUrl,
+    item?.preview?.video_url,
+    item?.preview?.url,
+    ""
+  );
 
-  const age =
-    item?.age ||
-    item?.content_rating ||
-    item?.certification ||
-    "";
+  const age = firstValue(
+    item?.certificationValue,
+    item?.age,
+    item?.content_rating,
+    item?.certification,
+    item?.maturity_rating,
+    item?.maturity
+  );
 
-  const isUpcoming =
-    !!item?.upcoming ||
-    !!item?.isUpcoming;
+  const seasons = firstValue(
+    item?.numSeasonsLabel,
+    item?.num_seasons_label,
+    item?.seasons_label,
+    item?.seasons_count,
+    item?.number_of_seasons,
+    item?.seasonsCount
+  );
 
-  const upcomingDate = getUpcomingDate(item);
+  const runtime = firstValue(
+    item?.displayRuntimeSec
+      ? Math.max(1, Math.round(Number(item.displayRuntimeSec) / 60))
+      : undefined,
+    item?.runtime,
+    item?.duration
+  );
 
-  const preview =
-    item?.preview ||
-    {};
+  const quality = firstValue(
+    item?.playback_badge,
+    item?.playbackBadge,
+    item?.hdr || item?.is_hdr ? "HDR" : undefined,
+    item?.quality,
+    "HD"
+  );
 
-  const previewUrl =
-    preview?.embed_url ||
-    preview?.embedUrl ||
-    item?.preview_embed_url ||
-    "";
+  const hasSpatialAudio = !!firstValue(
+    item?.hasAudioSpatial,
+    item?.spatial_audio,
+    item?.spatialAudio,
+    item?.delivery?.hasAudioSpatial,
+    false
+  );
 
-  const canShowPreview =
-    !!previewUrl &&
-    !!preview?.is_viewable;
+  const evidence = useMemo(
+    () =>
+      normalizeTextList(
+        item?.evidence,
+        item?.evidence_tags,
+        item?.tags,
+        item?.genre_names,
+        item?.genreNames,
+        item?.genres
+      ).slice(0, 4),
+    [item]
+  );
 
-  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const supplementalMessage = firstValue(
+    item?.supplemental_message,
+    item?.supplementalMessage,
+    item?.availability_message,
+    item?.availabilityMessage
+  );
 
-  useEffect(() => {
-    setPreviewPlaying(false);
-  }, [previewUrl]);
+  const contentWarning = firstValue(
+    item?.content_warning,
+    item?.contentWarning?.message,
+    item?.contentWarning
+  );
 
-  const progress =
-    userWatch?.progressPercent ??
-    userWatch?.percentage ??
-    userWatch?.percent ??
-    (userWatch?.duration > 0
-      ? (
-          Number(userWatch?.progress || userWatch?.currentTime || 0) /
-          Number(userWatch.duration)
-        ) * 100
-      : 0);
+  const mostLiked = firstValue(
+    item?.most_liked_message,
+    item?.mostLikedMessage,
+    item?.most_liked
+  );
 
-  const episode = userWatch?.episode;
+  const watchPercent = Math.max(
+    0,
+    Math.min(100, Number(watch?.percent || item?.progress_percent || 0))
+  );
+
+  const toggleList = (event: any) => {
+    const next = !inList;
+    setInList(next);
+    item?.onToggleMyList?.(next, event);
+  };
+
+  const toggleLike = (event: any) => {
+    const next = !liked;
+    setLiked(next);
+    item?.onRate?.(next ? "like" : null, event);
+  };
+
+  const detailHref = "#";
 
   return (
     <>
       <div
-        className="player"
-        style={{
-          borderRadius: ".4em .4em 0 0",
-          backgroundColor: "#000",
-          cursor: "pointer",
-          position: "relative",
-        }}
+        className="previewModal--player_container has-smaller-buttons mini-modal"
+        data-uia="previewModal--player_container"
       >
-        <div
-          className="preview-box-16x9"
-          style={{
-            height: "100%",
-            paddingTop: "56.3925%",
-            width: "100%",
-          }}
-        >
-          <a
-            href="#"
-            onClick={(event) => {
-              event.preventDefault();
-              onDetail?.(event);
-            }}
-          >
-            {cover && (
+        <div className="previewModal--video-shell">
+          <div className="previewModal--video-shell-inner">
+            {previewVideo ? (
+              <video
+                disablePictureInPicture
+                src={previewVideo}
+                className="previewModal--video"
+                autoPlay
+                muted
+                playsInline
+              />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="videoMerchPlayer--boxart-wrapper">
+          {cover ? (
+            <>
               <img
+                alt={title}
                 src={cover}
-                className="preview-image"
-                alt={item?.title || item?.name || ""}
-                draggable={false}
-                style={{
-                  borderRadius: ".4em .4em 0 0",
-                  height: "100%",
-                  left: 0,
-                  position: "absolute",
-                  top: 0,
-                  bottom: 0,
-                  right: 0,
-                  width: "100%",
-                }}
+                className="previewModal--boxart"
+                aria-hidden="true"
+                style={{ opacity: previewVideo ? 0 : 1 }}
               />
-            )}
-          </a>
-
-          {item?.sub_ita && (
-            <div
-              className="sub-ita"
-              style={{
-                position: "absolute",
-                bottom: 0,
-                right: 0,
-                borderBottom: "1.5em solid white",
-                color: "#000",
-                fontSize: ".7em",
-                borderRadius: "0 0 3px",
-                fontWeight: 700,
-                padding: "0 .4em 0 .2em",
-                borderLeft: ".75em solid transparent",
-                height: 0,
-              }}
-            >
-              SUB
-            </div>
-          )}
+              <img
+                alt=""
+                src={cover}
+                aria-hidden="true"
+                className="previewModal--auxiliary-boxart"
+              />
+            </>
+          ) : null}
         </div>
 
-        <div
-          className="trailer-container"
-          style={{
-            display: "flex",
-            position: "absolute",
-            top: 0,
-            bottom: 0,
-            left: 0,
-            right: 0,
-          }}
-        >
-          {canShowPreview && (
-            <div
-              className="trailer-preview"
-              style={{
-                position: "absolute",
-                overflow: "hidden",
-                top: 0,
-                left: 0,
-                bottom: 0,
-                right: 0,
-                width: "100%",
-                height: "100%",
-                background: "#070707",
-                transition: "opacity .5s",
-                opacity: 1,
-              }}
-            >
-              <iframe
-                frameBorder="0"
-                height="100%"
-                width="100%"
-                src={previewUrl}
-                allow="autoplay; fullscreen"
-                title="Anteprima"
-                onLoad={() => {
-                  setTimeout(() => setPreviewPlaying(true), 25);
-                }}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  border: 0,
-                }}
-              />
-
-              <div
-                className="label"
-                style={{
-                  display: "none",
-                }}
-              >
-                <span>Anteprima</span>
-              </div>
-
-              <div
-                className="mute-button"
-                style={{
-                  position: "absolute",
-                  right: "1.2em",
-                  bottom: "1.2em",
-                  zIndex: 2,
-                  color: "#fff",
-                  textDecoration: "none",
-                  width: "3em",
-                  height: "3em",
-                  border: "2px solid #8c8c8c",
-                  backgroundColor: "#212121",
-                  borderRadius: "50%",
-                  textAlign: "center",
-                  cursor: "pointer",
-                  opacity: 0.4,
-                  transition: "opacity .2s linear",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: ".9em",
-                }}
-                onMouseEnter={(event) => {
-                  event.currentTarget.style.borderColor = "#fff";
-                  event.currentTarget.style.backgroundColor = "#363636";
-                  event.currentTarget.style.opacity = "1";
-                }}
-                onMouseLeave={(event) => {
-                  event.currentTarget.style.borderColor = "#8c8c8c";
-                  event.currentTarget.style.backgroundColor = "#212121";
-                  event.currentTarget.style.opacity = ".4";
-                }}
-              >
-                <svg
-                  viewBox="0 0 576 512"
-                  width="1.36em"
-                  height="1.2em"
-                  style={{ color: "#fff", lineHeight: "2.4em" }}
-                >
-                  <path
-                    fill="currentColor"
-                    d="M301.1 34.8C312.6 40 320 51.4 320 64v384c0 12.6-7.4 24-18.9 29.2s-25 3.1-34.4-5.3L131.8 352H64c-35.3 0-64-28.7-64-64v-64c0-35.3 28.7-64 64-64h67.8L266.7 40.1c9.4-8.4 22.9-10.4 34.4-5.3M425 167l55 55l55-55c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9l-55 55l55 55c9.4 9.4 9.4 24.6 0 33.9s-24.6 9.4-33.9 0l-55-55l-55 55c-9.4 9.4-24.6 9.4-33.9 0s-9.4-24.6 0-33.9l55-55l-55-55c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0"
-                  />
-                </svg>
-              </div>
-            </div>
-          )}
-
+        {logo ? (
           <div
-            className="trailer-click"
-            onClick={onDetail}
+            aria-hidden="true"
+            className="previewModal--player-titleTreatmentWrapper"
             style={{
-              display: "flex",
-              position: "absolute",
-              top: 0,
-              bottom: 0,
-              left: 0,
-              right: 0,
-            }}
-          />
-        </div>
-
-        {logo && previewPlaying && (
-          <a
-            href="#"
-            onClick={(event) => {
-              event.preventDefault();
-              onDetail?.(event);
+              pointerEvents: "none",
+              opacity: previewVideo ? 0 : 1,
             }}
           >
-            <img
-              className="logo"
-              src={logo}
-              alt={item?.title || item?.name || ""}
-              style={{
-                position: "absolute",
-                bottom: "1em",
-                left: "1em",
-                maxHeight: "20%",
-                maxWidth: "40%",
-              }}
-            />
-          </a>
-        )}
+            <div className="previewModal--player-titleTreatment previewModal--player-titleTreatment-left has-smaller-buttons mini-modal">
+              <img
+                className="previewModal--player-titleTreatment-logo"
+                src={logo}
+                alt=""
+                style={{ opacity: previewVideo ? 0 : 1 }}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        <div
+          className="previewModal-audioToggle has-smaller-buttons mini-modal"
+          style={{ display: "none" }}
+        />
       </div>
 
-      <div
-        className="info"
-        style={{
-          opacity: display ? 1 : 0,
-          backgroundColor: "#151515",
-          position: "relative",
-          transition: "opacity .2s",
-          borderRadius: "0 0 .4em .4em",
-        }}
-      >
-        <div
-          className="info-container"
-          style={{
-            padding: "1.35em 1.2em",
-            height: "10em",
+      <div className="previewModal-close">
+        <span role="button" aria-label="close" tabIndex={0} title="close" />
+      </div>
+
+      <div className="previewModal--info">
+        <a
+          href={detailHref}
+          className="previewModal--info-link"
+          onClick={(event) => {
+            event.preventDefault();
+            onDetail?.(event);
           }}
         >
-          <div
-            className="buttons"
-            style={{
-              alignItems: "center",
-              display: "flex",
-              minHeight: "2em",
-            }}
-          >
-            <a
-              href="#"
-              className="play"
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onPlay?.(event);
-              }}
-              style={{
-                fontSize: ".85em",
-                width: "3em",
-                height: "3em",
-                borderRadius: "50%",
-                backgroundColor: "#fff",
-                textAlign: "center",
-                marginRight: ".8em",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
+          <div className="mini-modal-container">
+            <div
+              className="previewModal--info-container"
+              data-uia="previewModal--info-container"
             >
-              <svg
-                viewBox="0 0 384 512"
-                width=".9em"
-                height="1.2em"
-                style={{
-                  fontSize: "1.4em",
-                  paddingLeft: ".1em",
-                  color: "#000",
-                }}
+              <div
+                className="previewModal--metadatAndControls has-smaller-buttons mini-modal"
+                data-uia="previewModal--metadatAndControls"
               >
-                <path
-                  fill="currentColor"
-                  d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80v352c0 17.4 9.4 33.4 24.5 41.9S58.2 482 73 473l288-176c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41z"
-                />
-              </svg>
-            </a>
+                <div className="previewModal--metadatAndControls-container">
+                  <div
+                    className="buttonControls--container has-smaller-buttons mini-modal"
+                    data-uia="mini-modal-controls"
+                  >
+                    <div className="nflx-control-wrap">
+                      <MiniButton
+                        primary
+                        label="Riproduci"
+                        onClick={onPlay}
+                      >
+                        <IconPlay />
+                      </MiniButton>
+                    </div>
 
-            <TitleButton>
-              <svg
-                viewBox="0 0 448 512"
-                width="1.06em"
-                height="1.2em"
-                className="plus-icon"
-                style={{ fontSize: "1.35em" }}
-              >
-                <path
-                  fill="currentColor"
-                  d="M256 80c0-17.7-14.3-32-32-32s-32 14.3-32 32v144H48c-17.7 0-32 14.3-32 32s14.3 32 32 32h144v144c0 17.7 14.3 32 32 32s32-14.3 32-32V288h144c17.7 0 32-14.3 32-32s-14.3-32-32-32H256z"
-                />
-              </svg>
-            </TitleButton>
+                    <div className="nflx-control-wrap">
+                      <MiniButton
+                        label={inList ? "Rimuovi dalla mia lista" : "La mia lista"}
+                        onClick={toggleList}
+                        selected={inList}
+                      >
+                        {inList ? <IconCheck /> : <IconPlus />}
+                      </MiniButton>
+                    </div>
 
-            <TitleButton>
-              <svg
-                viewBox="0 0 576 512"
-                width="1.36em"
-                height="1.2em"
-                className="star-icon"
-              >
-                <path
-                  fill="currentColor"
-                  d="M316.9 18c-5.3-11-16.5-18-28.8-18s-23.4 7-28.8 18L195 150.3L51.4 171.5c-12 1.8-22 10.2-25.7 21.7s-.7 24.2 7.9 32.7L137.8 329l-24.6 145.7c-2 12 3 24.2 12.9 31.3s23 8 33.8 2.3l128.3-68.5l128.3 68.5c10.8 5.7 23.9 4.9 33.8-2.3s14.9-19.3 12.9-31.3L438.5 329l104.2-103.1c8.6-8.5 11.7-21.2 7.9-32.7s-13.7-19.9-25.7-21.7l-143.7-21.2z"
-                />
-              </svg>
-            </TitleButton>
+                    <div className="nflx-control-wrap">
+                      <MiniButton
+                        label={liked ? "Mi piace" : "Valuta"}
+                        onClick={toggleLike}
+                        selected={liked}
+                      >
+                        <IconThumb />
+                      </MiniButton>
+                    </div>
 
-            <TitleButton
-              className="more-info"
-              pushRight
-              onClick={onDetail}
-            >
-              <svg
-                viewBox="0 0 448 512"
-                width="1.06em"
-                height="1.2em"
-                style={{
-                  color: "#fff",
-                  fontSize: "1.3em",
-                }}
-              >
-                <path
-                  fill="currentColor"
-                  d="M201.4 374.6c12.5 12.5 32.8 12.5 45.3 0l160-160c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0L224 306.7L86.6 169.4c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3l160 160z"
-                />
-              </svg>
-            </TitleButton>
+                    <div className="buttonControls--expand-button">
+                      <MiniButton label="Altre info" onClick={onDetail}>
+                        <IconChevron />
+                      </MiniButton>
+                    </div>
+                  </div>
+
+                  {watchPercent > 0 ? (
+                    <div className="previewModal-progress">
+                      <div className="previewModal-progress-track">
+                        <div
+                          className="previewModal-progress-value"
+                          style={{ width: `${watchPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {supplementalMessage ? (
+                    <div className="previewModal-supplemental-message">
+                      {String(supplementalMessage)}
+                    </div>
+                  ) : null}
+
+                  <div className="previewModal--metadatAndControls-info">
+                    <div>
+                      <div>
+                        <div
+                          data-uia="videoMetadata--container"
+                          className="videoMetadata--container"
+                        >
+                          <div className="videoMetadata--line">
+                            <span className="content-type">
+                              {type === "tv" ? "Serie" : "Film"}
+                            </span>
+
+                            {age ? (
+                              <div
+                                className="maturity-rating"
+                                data-uia="maturity-rating"
+                              >
+                                <span className="maturity-number">
+                                  {String(age)}
+                                </span>
+                              </div>
+                            ) : null}
+
+                            {type === "tv" && seasons ? (
+                              <span className="duration">
+                                {typeof seasons === "string" &&
+                                /stagion/i.test(seasons)
+                                  ? seasons
+                                  : `${seasons} ${
+                                      Number(seasons) === 1
+                                        ? "stagione"
+                                        : "stagioni"
+                                    }`}
+                              </span>
+                            ) : runtime ? (
+                              <span className="duration">
+                                {String(runtime).match(/min|h|ora/i)
+                                  ? String(runtime)
+                                  : `${runtime} min`}
+                              </span>
+                            ) : null}
+
+                            {quality ? (
+                              <span
+                                className="player-feature-badge"
+                                data-uia={`player-feature-badge-${String(
+                                  quality
+                                ).toLowerCase()}`}
+                              >
+                                {String(quality)}
+                              </span>
+                            ) : null}
+
+                            {hasSpatialAudio ? <SpatialAudioMark /> : null}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {evidence.length > 0 ? (
+                    <div className="previewModal--metadatAndControls-tags-container">
+                      <div className="evidence-tags">
+                        <div className="evidence-list">
+                          {evidence.map((value: string, index: number) => (
+                            <div
+                              className="evidence-item"
+                              key={`${value}-${index}`}
+                            >
+                              {index === 0 ? null : (
+                                <span className="evidence-separator" />
+                              )}
+                              <span className="evidence-text">{value}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {contentWarning ? (
+                    <div
+                      data-uia="preview-modal-content-warning"
+                      className="previewModal-contentWarning"
+                    >
+                      <span className="content-warning-icon">!</span>
+                      <span>{String(contentWarning)}</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {mostLiked ? (
+                <div className="previewModal-most-liked">
+                  {typeof mostLiked === "string"
+                    ? mostLiked
+                    : "Tra i più apprezzati"}
+                </div>
+              ) : null}
+            </div>
           </div>
-
-          {userWatch ? (
-            <>
-              <div
-                className="watchlist-title"
-                style={{
-                  margin: ".735em 0 .5em",
-                  fontSize: "1.1em",
-                  display: "-webkit-box",
-                  WebkitLineClamp: 1,
-                  WebkitBoxOrient: "vertical",
-                  overflow: "hidden",
-                }}
-              >
-                {type === "tv" && (
-                  <b>
-                    S{episode?.season?.number ?? userWatch?.season ?? 1}:E
-                    {episode?.number ?? userWatch?.episode ?? 1}
-                  </b>
-                )}
-                {" "}
-                "
-                {type === "tv"
-                  ? episode?.name || item?.name || item?.title || ""
-                  : item?.name || item?.title || ""}
-                "
-              </div>
-
-              <div
-                className="progress"
-                style={{
-                  padding: "0 1.2em",
-                  justifyContent: "left",
-                  display: "flex",
-                }}
-              >
-                <span
-                  className="progress-bar"
-                  style={{
-                    flexGrow: 1,
-                    backgroundColor: "#ffffff4d",
-                    display: "block",
-                    height: "3px",
-                    position: "relative",
-                  }}
-                >
-                  <span
-                    role="presentation"
-                    className="progress-completed"
-                    style={{
-                      width: `${Math.max(
-                        0,
-                        Math.min(100, Number(progress) || 0)
-                      )}%`,
-                      backgroundColor: "#018850",
-                      height: "3px",
-                      left: 0,
-                      position: "absolute",
-                      top: 0,
-                    }}
-                  />
-                </span>
-              </div>
-            </>
-          ) : (
-            <>
-              <div
-                className="metadata"
-                style={{
-                  margin: ".735em 0 .5em",
-                  display: "flex",
-                  alignItems: "center",
-                }}
-              >
-                {isUpcoming ? (
-                  <span
-                    className="upcoming"
-                    style={{
-                      fontWeight: 700,
-                      color: "#fff",
-                      fontSize: "1.1em",
-                    }}
-                  >
-                    {upcomingDate
-                      ? `In arrivo il ${upcomingDate}`
-                      : "In arrivo prossimamente"}
-                  </span>
-                ) : (
-                  <>
-                    <span
-                      className="rating"
-                      style={{
-                        color: "#1cc88c",
-                        fontWeight: 700,
-                        fontSize: "1.1em",
-                      }}
-                    >
-                      Score {score}
-                    </span>
-
-                    <span
-                      className="separator"
-                      style={{
-                        lineHeight: "1.2em",
-                        margin: "0 .2em",
-                        color: "gray",
-                      }}
-                    >
-                      -
-                    </span>
-
-                    <span
-                      className="metadata-item"
-                      style={{ lineHeight: "1.2em" }}
-                    >
-                      {releaseDate?.substring?.(0, 4) || ""}
-                    </span>
-
-                    <span
-                      className="separator"
-                      style={{
-                        lineHeight: "1.2em",
-                        margin: "0 .2em",
-                        color: "gray",
-                      }}
-                    >
-                      -
-                    </span>
-
-                    {type === "movie" ? (
-                      <span
-                        className="metadata-item"
-                        style={{ lineHeight: "1.2em" }}
-                      >
-                        {runtime} min
-                      </span>
-                    ) : (
-                      <span
-                        className="metadata-item"
-                        style={{ lineHeight: "1.2em" }}
-                      >
-                        {seasons}
-                        {Number(seasons) !== 1
-                          ? " stagioni"
-                          : " stagione"}
-                      </span>
-                    )}
-
-                    {age ? (
-                      <span
-                        className="badge"
-                        style={{
-                          fontSize: ".7em",
-                          padding: "0 .25em",
-                          borderRadius: ".25em",
-                          border: "1px solid #8c8c8c",
-                          color: "#e0e0e0",
-                          marginLeft: ".9em",
-                        }}
-                      >
-                        {String(age).replace("+", "")}+
-                      </span>
-                    ) : null}
-                  </>
-                )}
-              </div>
-
-              <div
-                className="genres"
-                style={{
-                  overflow: "hidden",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {genres.map((genre: string, index: number) => (
-                  <span
-                    className="genre"
-                    key={`${genre}-${index}`}
-                    style={{ fontSize: "1em" }}
-                  >
-                    {genre}{" "}
-                    {index + 1 < 3 &&
-                    genres.length > index + 1 ? (
-                      <span
-                        className="separator"
-                        style={{ color: "gray" }}
-                      >
-                        •{" "}
-                      </span>
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        </a>
       </div>
     </>
   );

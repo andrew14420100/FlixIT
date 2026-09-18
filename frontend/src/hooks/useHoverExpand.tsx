@@ -1,266 +1,331 @@
 // @ts-nocheck
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import "src/components/NetflixMiniModalExact.css";
 
-const OPEN_DELAY_MS = 300;
-const ENTER_DELAY_MS = 25;
-const REMOVE_DELAY_MS = 200;
-const DESKTOP_MIN_WIDTH = 800;
+/**
+ * Netflix mini-modal motion reconstructed from the akiraClient bundle supplied by the user.
+ *
+ * Netflix source values:
+ * - scaleFactor: 1.5
+ * - miniModalMinWidth: 320
+ * - open duration: 300ms
+ * - close duration: 250ms
+ * - easing: cubic-bezier(.21, 0, .07, 1)
+ * - open opacity: 50ms
+ * - close opacity ratio: .6
+ * - viewport edge guard: 60px
+ * - player aspect-height ratio: .563925
+ *
+ * User-requested deviation:
+ * - hover open delay is 500ms instead of Netflix's default 400ms because the previous
+ *   implementation felt too fast.
+ */
+const SCALE_FACTOR = 1.5;
+const MIN_MODAL_WIDTH = 320;
+const OPEN_DELAY_MS = 500;
+const OPEN_DURATION_MS = 300;
+const CLOSE_DURATION_MS = 250;
+const OPACITY_OPEN_MS = 50;
+const OPACITY_CLOSE_MS = CLOSE_DURATION_MS * 0.6;
+const EDGE_GUARD = 60;
+const EASE = "cubic-bezier(.21,0,.07,1)";
+const MODAL_BOX_SHADOW = "0 3px 10px rgba(0, 0, 0, 0.75)";
 
-function initialTranslateY(viewportWidth: number) {
-  let value = (3 / 130) * viewportWidth - 69 / 13;
+type AnchorData = {
+  titleCardRect: DOMRect;
+  titleCardDocTop: number;
+  modalWidth: number;
+};
 
-  if (viewportWidth < 1400) {
-    value = (9 / 299) * viewportWidth - 2126 / 299;
-  }
-
-  if (viewportWidth < 1100) {
-    value = (9 / 299) * viewportWidth + 574 / 299;
-  }
-
-  return value;
-}
-
-export function useHoverExpand(
-  targetRef: React.RefObject<HTMLElement>,
-  _getExpandedWidth?: (rect: DOMRect) => number,
-  options: {
-    top10?: boolean;
-    watchlist?: boolean;
-    upcoming?: boolean;
-  } = {}
-) {
-  const openTimer = useRef<any>(null);
-  const enterTimer = useRef<any>(null);
-  const removeTimer = useRef<any>(null);
+export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
+  const openTimerRef = useRef<any>(null);
+  const closeTimerRef = useRef<any>(null);
 
   const [open, setOpen] = useState(false);
-  const [entered, setEntered] = useState(false);
-  const [display, setDisplay] = useState(true);
-  const [position, setPosition] = useState<any>(null);
+  const [closing, setClosing] = useState(false);
+  const [position, setPosition] = useState<AnchorData | null>(null);
+
+  const clearOpenTimer = useCallback(() => {
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+  }, []);
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
 
   const clearTimers = useCallback(() => {
-    clearTimeout(openTimer.current);
-    clearTimeout(enterTimer.current);
-    clearTimeout(removeTimer.current);
+    clearOpenTimer();
+    clearCloseTimer();
+  }, [clearOpenTimer, clearCloseTimer]);
+
+  const finishClose = useCallback(() => {
+    setOpen(false);
+    setClosing(false);
+    setPosition(null);
   }, []);
 
-  const closePreview = useCallback(() => {
-    clearTimeout(openTimer.current);
+  const requestClose = useCallback(() => {
+    clearOpenTimer();
 
-    setDisplay(false);
+    if (!open) return;
 
-    clearTimeout(removeTimer.current);
-    removeTimer.current = setTimeout(() => {
-      setOpen(false);
-      setEntered(false);
-      setPosition(null);
-    }, REMOVE_DELAY_MS);
-  }, []);
+    setClosing(true);
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(
+      finishClose,
+      CLOSE_DURATION_MS + 40
+    );
+  }, [open, clearOpenTimer, clearCloseTimer, finishClose]);
 
-  const onEnter = useCallback(
-    (event?: any) => {
-      if (typeof window === "undefined" || window.innerWidth < DESKTOP_MIN_WIDTH) return;
+  const openFrom = useCallback(
+    (element: HTMLElement | null) => {
+      if (!element || typeof window === "undefined") return;
 
-      clearTimeout(removeTimer.current);
-      clearTimeout(openTimer.current);
+      clearTimers();
+      setClosing(false);
 
-      // StreamingUnity usa event.target, non currentTarget.
-      const element = (event?.target || targetRef.current) as HTMLElement | null;
-      if (!element) return;
-
-      openTimer.current = setTimeout(() => {
-        if (document.querySelector(".preview-wrap")) return;
+      openTimerRef.current = setTimeout(() => {
         if (!element.isConnected) return;
 
         const rect = element.getBoundingClientRect();
-
-        let offsetY = rect.top + window.scrollY;
-
-        if (options.top10) {
-          offsetY += rect.top / 16;
-        }
+        const modalWidth = Math.max(
+          Math.round(rect.width * SCALE_FACTOR),
+          MIN_MODAL_WIDTH
+        );
 
         setPosition({
-          offsetX: rect.left,
-          offsetY,
-          width: element.clientWidth,
-          height: element.clientHeight,
-          fadeImageOut: !!options.top10,
-          isWatchlist: !!options.watchlist,
-          isUpcoming: !!options.upcoming,
+          titleCardRect: rect,
+          titleCardDocTop: rect.top + window.pageYOffset,
+          modalWidth,
         });
-
-        setDisplay(true);
-        setEntered(false);
         setOpen(true);
-
-        enterTimer.current = setTimeout(() => {
-          setEntered(true);
-        }, ENTER_DELAY_MS);
       }, OPEN_DELAY_MS);
     },
-    [options.top10, options.watchlist, options.upcoming, targetRef]
+    [clearTimers]
+  );
+
+  const onEnter = useCallback(
+    (event?: any) => {
+      openFrom((event?.currentTarget || ref.current) as HTMLElement | null);
+    },
+    [openFrom, ref]
   );
 
   const onLeave = useCallback(
     (event?: any) => {
+      clearOpenTimer();
+
+      const related = event?.relatedTarget as Element | null;
       if (
-        event?.relatedTarget &&
-        typeof event.relatedTarget.closest === "function" &&
-        event.relatedTarget.closest(".preview-wrap")
+        related &&
+        typeof related.closest === "function" &&
+        related.closest(".previewModal--container")
       ) {
         return;
       }
 
-      clearTimeout(openTimer.current);
-
-      if (open) {
-        closePreview();
-      }
+      requestClose();
     },
-    [closePreview, open]
+    [clearOpenTimer, requestClose]
   );
 
-  const onOverlayLeave = useCallback(() => {
-    closePreview();
-  }, [closePreview]);
+  const onOverlayLeave = useCallback(
+    (event?: any) => {
+      const related = event?.relatedTarget as Node | null;
+      if (related && ref.current?.contains?.(related)) return;
+      requestClose();
+    },
+    [requestClose, ref]
+  );
 
-  useEffect(() => {
-    if (!open) return;
-
-    let cleanup: null | (() => void) = null;
-
-    const timer = setTimeout(() => {
-      if (!display) {
-        closePreview();
-        return;
-      }
-
-      const onMouseMove = (event: MouseEvent) => {
-        const target = event.target as Element | null;
-        if (!target || typeof target.closest !== "function") return;
-
-        if (!target.closest(".preview-wrap")) {
-          closePreview();
-        }
-      };
-
-      window.addEventListener("mousemove", onMouseMove);
-      cleanup = () => window.removeEventListener("mousemove", onMouseMove);
-    }, 200);
-
-    return () => {
-      clearTimeout(timer);
-      cleanup?.();
-    };
-  }, [open, display, closePreview]);
-
-  useEffect(() => {
-    return () => {
-      clearTimers();
-    };
-  }, [clearTimers]);
-
-  const expandedWidth = position ? position.width * 1.5 : 0;
+  useEffect(() => clearTimers, [clearTimers]);
 
   return {
     open,
-    entered,
-    display,
-    closing: open && !display,
-    align: "left",
-    width: expandedWidth,
+    entered: open && !closing,
+    display: open,
+    closing,
     position,
+    width: position?.modalWidth,
+    align: "center",
     onEnter,
     onLeave,
     onOverlayLeave,
-    closePreview,
+    closePreview: requestClose,
   };
 }
 
 export function ExpandOverlay({
   position,
-  entered,
-  display = true,
-  fadeImageOut,
+  closing = false,
   onMouseLeave,
   children,
   testId,
 }: any) {
-  if (typeof document === "undefined" || !position) return null;
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const [geometry, setGeometry] = useState<any>(null);
+  const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
-  const viewportWidth = window.innerWidth;
-  const expandedWidth = position.width * 1.5;
+  useLayoutEffect(() => {
+    if (!position || !modalRef.current || typeof window === "undefined") return;
 
-  let top = position.offsetY - (position.height / 3) * 2;
-  let left = position.offsetX;
+    setGeometry(null);
+    setPhase("measure");
 
-  let scale = 0.666667;
+    let f1 = 0;
+    let f2 = 0;
+    let f3 = 0;
+
+    f1 = requestAnimationFrame(() => {
+      const node = modalRef.current;
+      if (!node) return;
+
+      // Final, unscaled mini-modal rect (Netflix stores the modal rect and derives
+      // the reset/open variants from it).
+      const modalRect = node.getBoundingClientRect();
+      const card = position.titleCardRect as DOMRect;
+
+      const xOffset = window.pageXOffset || 0;
+      const yOffset = window.pageYOffset || 0;
+      const cardDocLeft = card.left + xOffset;
+      const cardDocTop = card.top + yOffset;
+
+      const horizontalOverflow = (modalRect.width - card.width) / 2;
+      const verticalOverflow = (modalRect.height - card.height) / 2;
+
+      // getMiniModalTopLeft() — normal video row branch.
+      const top = Math.round(cardDocTop - verticalOverflow);
+      const left = Math.round(cardDocLeft - horizontalOverflow);
+
+      // getMiniModalOriginalY() — normal video row branch.
+      const originalY = Math.round(
+        (modalRect.height / SCALE_FACTOR - card.height) / 2
+      );
+
+      // getOpenMiniModalVariant(): keep a 60px viewport safety margin.
+      const tooCloseRight =
+        window.innerWidth -
+          (card.left + card.width + horizontalOverflow) <
+        EDGE_GUARD;
+
+      let openX = 0;
+      if (card.left - horizontalOverflow < EDGE_GUARD) {
+        openX = Math.round(horizontalOverflow);
+      } else if (tooCloseRight) {
+        openX = Math.round(-horizontalOverflow);
+      }
+
+      let openY = 0;
+      if (card.top - verticalOverflow < EDGE_GUARD) {
+        openY = Math.round(verticalOverflow);
+      }
+
+      setGeometry({
+        top,
+        left,
+        modalWidth: modalRect.width,
+        modalHeight: modalRect.height,
+        originalY,
+        openX,
+        openY,
+        transformOrigin: "50% 50%",
+      });
+
+      // RESET_MINI_MODAL first; then OPEN_MINI_MODAL on the following frame.
+      setPhase("reset");
+
+      f2 = requestAnimationFrame(() => {
+        f3 = requestAnimationFrame(() => {
+          setPhase("open");
+        });
+      });
+    });
+
+    return () => {
+      if (f1) cancelAnimationFrame(f1);
+      if (f2) cancelAnimationFrame(f2);
+      if (f3) cancelAnimationFrame(f3);
+    };
+  }, [position]);
+
+  useEffect(() => {
+    if (closing && geometry) setPhase("close");
+  }, [closing, geometry]);
+
+  if (!position || typeof document === "undefined") return null;
+
+  const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
+
+  let transform = "translate3d(0,0,0) scale(1)";
   let opacity = 0;
-  let origin = "left";
-  let shadow = "none";
-  let transition = "transform 200ms";
-  let translateY = initialTranslateY(viewportWidth);
+  let transition = "none";
+  let top = geometry?.top ?? position.titleCardDocTop;
+  let left =
+    geometry?.left ??
+    position.titleCardRect.left +
+      (window.pageXOffset || 0) -
+      (modalWidth - position.titleCardRect.width) / 2;
+  let boxShadow = "none";
+  let zIndex = 4;
 
-  if (left > (viewportWidth / 100) * 70) {
-    left -= position.width / 2;
-    origin = "right";
-  } else if (left > (viewportWidth / 100) * 5) {
-    left -= position.width / 4;
-    origin = "center";
-  }
-
-  if (entered) {
-    opacity = 1;
-  }
-
-  if (entered && display) {
-    scale = 1;
-    translateY = 0;
-    shadow = "rgb(0 0 0 / 75%) 0px 3px 10px";
-  }
-
-  const shouldFadeImageOut =
-    fadeImageOut ?? position.fadeImageOut ?? false;
-
-  if (shouldFadeImageOut && !display) {
+  if (phase === "reset" && geometry) {
+    transform = `translate3d(0px, ${geometry.originalY}px, 0) scale(${1 / SCALE_FACTOR})`;
     opacity = 0;
-    transition += ", opacity 200ms";
+  }
+
+  if (phase === "open" && geometry) {
+    transform = `translate3d(${geometry.openX}px, ${geometry.openY}px, 0) scale(1)`;
+    opacity = 1;
+    boxShadow = MODAL_BOX_SHADOW;
+    transition =
+      `transform ${OPEN_DURATION_MS}ms ${EASE}, ` +
+      `opacity ${OPACITY_OPEN_MS}ms linear`;
+    zIndex = 3;
+  }
+
+  if (phase === "close" && geometry) {
+    // Netflix close: scale back to 1 / scaleFactor and return to anchor.
+    top = geometry.top + geometry.originalY;
+    transform = `translate3d(0px, 0px, 0) scale(${1 / SCALE_FACTOR})`;
+    opacity = 0;
+    boxShadow = MODAL_BOX_SHADOW;
+    transition =
+      `transform ${CLOSE_DURATION_MS}ms ${EASE}, ` +
+      `opacity ${OPACITY_CLOSE_MS}ms linear`;
+    zIndex = 4;
   }
 
   return createPortal(
-    <div
-      className="preview-wrap font-vw"
-      data-testid={testId}
-      style={{
-        display: "flex",
-        justifyContent: "center",
-        left: 0,
-        top: 0,
-        position: "absolute",
-        fontSize: "1vw",
-        fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
-        lineHeight: "inherit",
-        color: "#e8e8e8",
-        userSelect: "none",
-      }}
-    >
+    <div className="flix-netflix-preview-portal">
       <div
-        className="preview-dialog"
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
+        data-uia="modal-motion-container-MINI_MODAL"
+        data-testid={testId}
+        data-phase={phase}
+        className="previewModal--container has-smaller-buttons mini-modal"
         onMouseLeave={onMouseLeave}
         style={{
+          ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
+          width: `${modalWidth}px`,
+          transformOrigin: geometry?.transformOrigin || "50% 50%",
           top: `${Math.round(top)}px`,
           left: `${Math.round(left)}px`,
-          width: `${Math.round(expandedWidth)}px`,
-          transform: `translateY(${translateY}px) scale(${scale})`,
-          transformOrigin: `${origin} center`,
-          transition,
+          transform,
+          boxShadow,
+          zIndex,
           opacity,
-          boxShadow: shadow,
-          position: "absolute",
-          zIndex: 150,
-          borderRadius: ".4em",
+          transition,
+          pointerEvents: phase === "measure" ? "none" : "auto",
         }}
       >
         {children}

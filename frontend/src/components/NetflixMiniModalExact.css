@@ -1,0 +1,669 @@
+/* ==========================================================
+   Netflix card + mini-modal replica
+   Reconstructed locally from the Netflix DOM/CSS/akiraClient
+   bundle supplied by the user. Uses FLIX-IT content/artwork.
+   ========================================================== */
+
+:root {
+  --flix-netflix-ease: cubic-bezier(.21, 0, .07, 1);
+}
+
+/* ---------- Standard card ---------- */
+
+.netflix-standard-card-root {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 342 / 192;
+  min-width: 0;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.netflix-standard-card-link {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 8px;
+  overflow: hidden;
+  outline: none;
+}
+
+.netflix-standard-card-link:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 0;
+}
+
+.netflix-standard-card-frame,
+.netflix-standard-card-image-wrap {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  border-radius: inherit;
+  overflow: hidden;
+  background: #222;
+}
+
+.netflix-standard-card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+  user-select: none;
+}
+
+.netflix-standard-card-placeholder,
+.netflix-ranked-card-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #222;
+  background-image: linear-gradient(transparent, #000);
+  font-family: "Netflix Sans", "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px;
+  text-align: center;
+}
+
+.netflix-standard-card-progress-track {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 5px;
+  height: 3px;
+  background: rgba(255, 255, 255, .35);
+  z-index: 2;
+}
+
+.netflix-standard-card-progress-value {
+  height: 100%;
+  background: #e50914;
+}
+
+@media (min-width: 1200px) {
+  .netflix-standard-card-link {
+    border-radius: 12px;
+  }
+}
+
+/* ---------- Ranked / Top 10 card ---------- */
+/* Netflix bundle:
+   width:100%;height:0;position:relative;padding:35.714285714% 0
+   left rank = 50%; right poster = 50%.
+*/
+
+.netflix-ranked-card-root {
+  width: 100%;
+  height: 0;
+  position: relative;
+  padding: 35.714285714% 0;
+  cursor: pointer;
+}
+
+.netflix-ranked-card-link {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  text-decoration: none;
+  display: block;
+  overflow: hidden;
+  border-radius: 8px;
+  outline: none;
+}
+
+.netflix-ranked-card-link:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 0;
+}
+
+.netflix-ranked-card-rank {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.netflix-ranked-card-rank-svg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: .5;
+  overflow: visible;
+}
+
+.netflix-ranked-card-rank-path {
+  fill: #000;
+  stroke: #595959;
+  stroke-width: 4;
+  stroke-linejoin: square;
+  vector-effect: non-scaling-stroke;
+}
+
+.netflix-ranked-card-poster-wrap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 50%;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #222;
+}
+
+.netflix-ranked-card-poster {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
+
+@media (min-width: 1200px) {
+  .netflix-ranked-card-link,
+  .netflix-ranked-card-poster-wrap {
+    border-radius: 12px;
+  }
+}
+
+/* ---------- Mini modal outer ---------- */
+
+.previewModal--container {
+  -webkit-text-size-adjust: 100%;
+
+  --nflx-header-height: 80px;
+  --nflx-sub-header-height: 70px;
+
+  --ism-color-primary: #b4183d;
+  --ism-color-primary-dark: #901330;
+  --ism-color-primary-darker: #6c0e24;
+  --ism-color-primary-darkest: #480918;
+  --ism-color-secondary: #e0e1e2;
+  --ism-color-secondary-dark: #b3b4b4;
+  --ism-color-secondary-darker: #868787;
+  --ism-color-secondary-darkest: #595a5a;
+  --ism-color-white: #fff;
+  --ism-color-black: #000;
+  --ism-color-gray-90: #e5e5e5;
+  --ism-color-gray-80: #ccc;
+  --ism-color-gray-70: #b3b3b3;
+  --ism-color-gray-60: #999;
+  --ism-color-gray-40: #666;
+  --ism-color-gray-20: #333;
+  --ism-color-philippine-silver: #b4b4b8;
+  --ism-color-warning: #ff3b30;
+  --ism-color-divider: #efefef;
+
+  --ism-space-xxs: 4px;
+  --ism-space-xs: 8px;
+  --ism-space-s: 12px;
+  --ism-space-m: 16px;
+  --ism-space-l: 20px;
+  --ism-space-xl: 24px;
+  --ism-space-xxl: 28px;
+  --ism-space-xxxl: 32px;
+  --ism-space-xxxxl: 36px;
+  --ism-space-xxxxxl: 40px;
+
+  --ism-text-size-xxxxs: 10px;
+  --ism-text-size-xxxs: 12px;
+  --ism-text-size-xxs: 14px;
+  --ism-text-size-xs: 16px;
+  --ism-text-size-s: 18px;
+  --ism-text-size-m: 20px;
+  --ism-text-size-l: 22px;
+  --ism-text-size-xl: 24px;
+  --ism-text-size-xxl: 26px;
+  --ism-text-size-xxxl: 28px;
+  --ism-text-size-xxxxl: 30px;
+
+  --base-font-size: initial;
+  --base-line-height: initial;
+
+  line-height: var(--base-line-height);
+  -webkit-font-smoothing: antialiased;
+  cursor: default;
+  user-select: none;
+
+  font-family:
+    "Netflix Sans",
+    "Helvetica Neue",
+    "Segoe UI",
+    Roboto,
+    Ubuntu,
+    sans-serif;
+
+  box-sizing: inherit;
+  background-color: transparent;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 16px;
+  overflow: hidden;
+  position: absolute;
+  will-change: transform;
+  width: var(--flix-mini-modal-width, 366px);
+  transform-origin: 50% 50%;
+}
+
+.previewModal--container,
+.previewModal--container *,
+.previewModal--container *::before,
+.previewModal--container *::after {
+  box-sizing: border-box;
+}
+
+.previewModal--container a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ---------- Player ---------- */
+
+.previewModal--player_container {
+  position: relative;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / .563925;
+  background-color: #000;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  overflow: visible;
+  cursor: pointer;
+  color: #fff;
+  font-size: 16px;
+  line-height: normal;
+}
+
+.previewModal--video-shell,
+.previewModal--video-shell-inner {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.previewModal--video-shell-inner {
+  position: relative;
+}
+
+.previewModal--video,
+.previewModal--boxart {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  display: block;
+}
+
+.previewModal--video {
+  z-index: 1;
+}
+
+.videoMerchPlayer--boxart-wrapper {
+  position: static;
+}
+
+.previewModal--boxart {
+  z-index: 0;
+  transition: opacity .3s linear;
+}
+
+.previewModal--auxiliary-boxart {
+  display: none;
+}
+
+.previewModal--player-titleTreatmentWrapper {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  transition: opacity .3s linear;
+}
+
+.previewModal--player-titleTreatment {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: 46%;
+}
+
+.previewModal--player-titleTreatment-logo {
+  display: block;
+  max-width: 100%;
+  max-height: 54px;
+  object-fit: contain;
+  object-position: left bottom;
+  transition: opacity .3s linear;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.45));
+}
+
+.previewModal-audioToggle {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 3;
+}
+
+.previewModal-close {
+  display: none;
+}
+
+/* ---------- Lower info panel ---------- */
+
+.previewModal--info {
+  background: #181818;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(0);
+  will-change: opacity, transform;
+}
+
+.previewModal--container[data-phase="measure"] .previewModal--info,
+.previewModal--container[data-phase="reset"] .previewModal--info {
+  opacity: 0;
+}
+
+.previewModal--container[data-phase="open"] .previewModal--info {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 117ms linear,
+    transform 117ms linear;
+}
+
+.previewModal--container[data-phase="close"] .previewModal--info {
+  opacity: 0;
+  transition:
+    opacity 117ms linear 67ms;
+}
+
+.previewModal--info-link {
+  display: block;
+  width: 100%;
+}
+
+.mini-modal-container {
+  width: 100%;
+}
+
+.previewModal--info-container {
+  width: 100%;
+  min-height: 168.161px;
+  height: auto;
+  padding: 16px;
+  margin: 0;
+  position: static;
+  font-family:
+    "Netflix Sans",
+    "Helvetica Neue",
+    "Segoe UI",
+    Roboto,
+    Ubuntu,
+    sans-serif;
+  font-size: 16px;
+  line-height: normal;
+  color: #fff;
+}
+
+/* ---------- Buttons ---------- */
+
+.buttonControls--container {
+  width: 100%;
+  height: 45.4286px;
+  min-height: 32px;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  position: relative;
+  z-index: 2;
+}
+
+.nflx-control-wrap {
+  margin-right: 8px;
+}
+
+.buttonControls--expand-button {
+  margin-left: auto;
+}
+
+.nflx-mini-control {
+  appearance: none;
+  padding: .5rem;
+  margin: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  outline: none;
+  line-height: 1;
+  transition:
+    background-color 120ms linear,
+    border-color 120ms linear,
+    transform 120ms ease;
+}
+
+.nflx-mini-control .small {
+  width: 1.125rem;
+  height: 1.125rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nflx-mini-control:not(.hasLabel) .small svg {
+  width: 1.25rem;
+  height: 100%;
+}
+
+.nflx-mini-control.color-primary {
+  color: #000;
+  background: #fff;
+  border: 0;
+}
+
+.nflx-mini-control.color-primary:hover {
+  background: rgba(255,255,255,.78);
+}
+
+.nflx-mini-control.color-supplementary {
+  color: #fff;
+  background: rgba(42, 42, 42, .72);
+  border: 2px solid rgba(255, 255, 255, .5);
+}
+
+.nflx-mini-control.color-supplementary:hover,
+.nflx-mini-control.color-supplementary.is-selected {
+  border-color: #fff;
+  background: rgba(42, 42, 42, .94);
+}
+
+.nflx-mini-control svg {
+  display: block;
+}
+
+/* ---------- Progress / supplemental blocks ---------- */
+
+.previewModal-progress {
+  margin: 1px 0 9px;
+}
+
+.previewModal-progress-track {
+  width: 100%;
+  height: 3px;
+  background: rgba(255,255,255,.28);
+}
+
+.previewModal-progress-value {
+  height: 100%;
+  background: #e50914;
+}
+
+.previewModal-supplemental-message {
+  color: #d2d2d2;
+  font-size: 13px;
+  line-height: 18px;
+  margin: 1px 0 8px;
+}
+
+/* ---------- Metadata ---------- */
+
+.previewModal--metadatAndControls-info {
+  opacity: 1;
+}
+
+.videoMetadata--container {
+  width: 100%;
+}
+
+.videoMetadata--line {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  color: #fff;
+  font-size: 14px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.content-type {
+  font-weight: 500;
+}
+
+.maturity-rating {
+  border: 1px solid rgba(255,255,255,.4);
+  line-height: 16px;
+  padding: 0 4px;
+}
+
+.maturity-number {
+  line-height: 16px;
+}
+
+.player-feature-badge {
+  border: 1px solid rgba(255,255,255,.4);
+  border-radius: 2px;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 3px;
+  text-transform: uppercase;
+}
+
+.spatial-audio {
+  height: 16px;
+  display: flex;
+  align-items: center;
+  color: #fff;
+}
+
+.spatial-audio svg {
+  width: 64px;
+  height: 16px;
+  display: block;
+}
+
+/* ---------- Evidence / genre tags ---------- */
+
+.previewModal--metadatAndControls-tags-container {
+  opacity: 1;
+  margin-top: 10px;
+}
+
+.evidence-tags {
+  width: 100%;
+}
+
+.evidence-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+  line-height: 18px;
+  color: #d2d2d2;
+}
+
+.evidence-item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.evidence-separator {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #646464;
+  margin: 0 8px;
+  flex: 0 0 auto;
+}
+
+.evidence-text {
+  color: #d2d2d2;
+}
+
+/* ---------- Optional lower blocks used by Netflix MiniModal ---------- */
+
+.previewModal-contentWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  color: #d2d2d2;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.content-warning-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 1px solid rgba(255,255,255,.55);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.previewModal-most-liked {
+  margin-top: 8px;
+  color: #46d369;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* ---------- Portal ---------- */
+
+.flix-netflix-preview-portal {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 99999;
+  isolation: isolate;
+}
+
+.flix-netflix-preview-portal > .previewModal--container {
+  pointer-events: auto;
+}

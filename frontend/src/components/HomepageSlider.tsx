@@ -6,6 +6,7 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
 import CustomNavigation from "./slick-slider/CustomNavigation";
 import VideoItemWithHover from "src/components/VideoItemWithHover";
+import NetflixRankedCardWithHover from "src/components/NetflixRankedCardWithHover";
 import { ARROW_MAX_WIDTH } from "src/constant";
 import NetflixNavigationLink from "src/components/NetflixNavigationLink";
 import { MEDIA_TYPE } from "src/types/Common";
@@ -87,6 +88,8 @@ export default function HomepageSlider({
     [items]
   );
 
+  const isTop10 = /top\s*10/i.test(title);
+
   const pageCount = Math.max(1, Math.ceil(visibleItems.length / tiles));
   const activePage = Math.min(
     pageCount - 1,
@@ -119,7 +122,7 @@ export default function HomepageSlider({
 
   return (
     <Box
-      className="slider-row"
+      className={`slider-row${isTop10 ? " top10-row" : ""}`}
       data-testid={`homepage-slider-${title.toLowerCase().replace(/\s+/g, "-")}`}
       sx={{
         // Misure reali rilevate dal computed style di StreamingUnity
@@ -177,7 +180,7 @@ export default function HomepageSlider({
               sx={{
                 fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
                 fontWeight: 700,
-                fontSize: { xs: "18px", sm: "22px", md: "23.3856px" },
+                fontSize: { xs: "18px", sm: "22px", md: "27px" },
                 lineHeight: 1.18,
                 letterSpacing: "-0.018em",
                 textShadow: "0 1px 2px rgba(0,0,0,.35)",
@@ -278,19 +281,35 @@ export default function HomepageSlider({
                       position: "relative",
                     }}
                   >
-                    <VideoItemWithHover
-                      video={{
-                        ...item,
-                        id: item.id || item.tmdbId,
-                        title: item.title || item.name,
-                        name: item.title || item.name,
-                        genre_ids: item.genre_ids || [],
-                      }}
-                      mediaType={
-                        item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
-                      }
-                      watch={item.watch}
-                    />
+                    {isTop10 ? (
+                      <NetflixRankedCardWithHover
+                        item={{
+                          ...item,
+                          id: item.id || item.tmdbId,
+                          title: item.title || item.name,
+                          name: item.title || item.name,
+                        }}
+                        rank={(visibleItems.indexOf(item) % 10) + 1}
+                        mediaType={
+                          item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
+                        }
+                        watch={item.watch}
+                      />
+                    ) : (
+                      <VideoItemWithHover
+                        video={{
+                          ...item,
+                          id: item.id || item.tmdbId,
+                          title: item.title || item.name,
+                          name: item.title || item.name,
+                          genre_ids: item.genre_ids || [],
+                        }}
+                        mediaType={
+                          item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
+                        }
+                        watch={item.watch}
+                      />
+                    )}
                   </Box>
                 ))}
               </StyledSlider>
