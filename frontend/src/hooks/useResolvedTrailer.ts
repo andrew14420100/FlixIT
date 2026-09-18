@@ -36,15 +36,20 @@ export default function useResolvedTrailer(
       return response.ok ? response.json() : {};
     },
     enabled: !!id && !!enabled,
-    staleTime: 12 * 60 * 1000,
-    gcTime: 3 * 60 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
     refetchInterval: (query: any) => {
       const data = query?.state?.data;
       if (!enabled || !data?.enabled || data?.available) return false;
-      return 1000;
+      // A cold title may need a few seconds for the backend worker, but a title
+      // with no trailer must never leave the Hero polling once per second all
+      // day. Eight cache checks are enough for the foreground; the backend queue
+      // continues independently and a later page visit can pick up the result.
+      const updates = Number(query?.state?.dataUpdateCount || 0);
+      return updates < 8 ? 1000 : false;
     },
   });
 
