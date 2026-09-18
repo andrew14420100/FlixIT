@@ -76,6 +76,27 @@ function sliderItemKey(item: any) {
   return id ? `${type}-${id}` : "";
 }
 
+function hasArtwork(item: any) {
+  return !!(
+    item?.backdrop_path ||
+    item?.poster_path ||
+    item?.titled_backdrop_path ||
+    item?.titledBackdropPath ||
+    item?.netflix_artwork_url ||
+    item?.netflixArtworkUrl ||
+    item?.netflix_ranked_artwork_url ||
+    item?.netflixRankedArtworkUrl ||
+    item?.netflix_cover_url ||
+    item?.contextualArtwork?.artwork?.url ||
+    item?.artwork?.url ||
+    item?.image?.url ||
+    item?.cover_path ||
+    item?.cover ||
+    item?.image_url ||
+    item?.thumbnail_url
+  );
+}
+
 export default function HomepageSlider({
   title,
   items,
@@ -101,7 +122,7 @@ export default function HomepageSlider({
   const visibleItems = useMemo(() => {
     const seen = new Set();
     return (items || []).filter((item) => {
-      if (!item || (!item.backdrop_path && !item.poster_path)) return false;
+      if (!item || !hasArtwork(item)) return false;
       const key = sliderItemKey(item);
       if (!key || seen.has(key)) return false;
       seen.add(key);
