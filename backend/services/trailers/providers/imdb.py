@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 
 from ..base import TrailerCandidate, normalize_title
-from ..manifest import probe_direct_file
-from .common import client
+from ..manifest import _find_media_binary
+from .common import USER_AGENT, client
 
 IMDB_GRAPHQL_URL = "https://graphql.imdb.com/"
 # Keep this query deliberately small. IMDb's GraphQL shape changes less often
@@ -38,12 +39,7 @@ def _height_from_label(value) -> int | None:
 
 
 def _trailer_type(title: str, content_type: str = "") -> str:
-    """Normalize IMDb video labels into the resolver's trailer priority types.
-
-    ``content_type`` is optional because the current compact GraphQL query only
-    needs the title, while tests/older call sites may still provide IMDb's
-    content type as a second argument.
-    """
+    """Normalize IMDb video labels into the resolver's trailer priority types."""
     text = normalize_title(f"{content_type} {title}")
     if "final trailer" in text:
         return "Final Trailer"
@@ -57,13 +53,7 @@ def _trailer_type(title: str, content_type: str = "") -> str:
 
 
 def _best_probe_row(node: dict) -> dict | None:
-    """Select at most one MP4 rendition per IMDb video before ffprobe.
-
-    Older code probed every quality rung of every video sequentially. With six
-    videos and several renditions each, one title could occupy a worker for
-    minutes. We still verify the actual native file, but only probe the highest
-    reported rung that could possibly satisfy the >=1080 rule.
-    """
+    """Select one native MP4 rendition per IMDb video before probing."""
     rows = []
     unknown = []
     for raw in node.get("playbackURLs") or []:
@@ -83,8 +73,109 @@ def _best_probe_row(node: dict) -> dict | None:
     if rows:
         rows.sort(key=lambda x: int(x.get("reported_height") or 0), reverse=True)
         return rows[0]
-    # If IMDb omitted the label, probe one candidate instead of dropping it.
     return unknown[0] if unknown else None
+
+
+def _parse_probe_json(stdout: bytes) -> dict | None:
+    try:
+        data = json.loads(stdout.decode("utf-8", "replace"))
+    except Exception:
+        return None
+    streams = data.get("streams") or []
+    video = max(
+        (s for s in streams if s.get("codec_type") == "video"),
+        key=lambda s: int(s.get("width") or 0) * int(s.get("height") or 0),
+        default=None,
+    )
+    if not video:
+        return None
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    fps = None
+    try:
+        raw = str(video.get("r_frame_rate") or "")
+        if "/" in raw:
+            a, b = raw.split("/", 1)
+            fps = float(a) / float(b) if float(b) else None
+        elif raw:
+            fps = float(raw)
+    except Exception:
+        fps = None
+    return {
+        "width": int(video.get("width") or 0),
+        "height": int(video.get("height") or 0),
+        "bitrate": int(video.get("bit_rate") or (data.get("format") or {}).get("bit_rate") or 0) or None,
+        "codec": video.get("codec_name"),
+        "fps": fps,
+        "audio_codec": (audio or {}).get("codec_name"),
+        "audio_bitrate": int((audio or {}).get("bit_rate") or 0) or None,
+        "audio_language": ((audio or {}).get("tags") or {}).get("language"),
+    }
+
+
+async def _probe_imdb_mp4(url: str, timeout: float = 12.0) -> dict | None:
+    """Probe IMDb's signed MP4 directly.
+
+    The generic probe previously passed two separate ``-show_entries`` options;
+    older ffprobe builds may keep only the last one, leaving no stream metadata.
+    IMDb's CDN can also be stricter with bare media-tool requests.  Use one
+    combined show_entries expression plus browser-like HTTP headers, then retry
+    once without the HTTP-specific options for compatibility with local/static
+    ffprobe builds.
+    """
+    ffprobe = _find_media_binary("ffprobe")
+    if not ffprobe:
+        return None
+
+    entries = (
+        "stream=index,codec_type,codec_name,profile,width,height,bit_rate,r_frame_rate:"
+        "stream_tags=language:format=bit_rate,duration"
+    )
+    header_blob = "Referer: https://www.imdb.com/\r\nOrigin: https://www.imdb.com\r\nAccept: */*\r\n"
+
+    attempts = [
+        [
+            ffprobe,
+            "-v", "error",
+            "-user_agent", USER_AGENT,
+            "-headers", header_blob,
+            "-show_entries", entries,
+            "-of", "json",
+            url,
+        ],
+        [
+            ffprobe,
+            "-v", "error",
+            "-show_entries", entries,
+            "-of", "json",
+            url,
+        ],
+    ]
+
+    for args in attempts:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.communicate()
+            except Exception:
+                pass
+            continue
+        except Exception:
+            continue
+
+        if proc.returncode != 0:
+            continue
+        parsed = _parse_probe_json(stdout)
+        if parsed:
+            return parsed
+
+    return None
 
 
 class IMDbTrailerProvider:
@@ -92,7 +183,7 @@ class IMDbTrailerProvider:
 
     TMDB already supplies an IMDb id, so this provider needs no search service.
     Only direct IMDb MP4 playback URLs are considered and every selected file is
-    verified with ffprobe before it can enter the >=1080 resolver pipeline.
+    verified before it can enter the >=1080 resolver pipeline.
     """
 
     name = "imdb"
@@ -137,7 +228,7 @@ class IMDbTrailerProvider:
                 return None
 
             async with probe_sem:
-                probed = await probe_direct_file(row["url"], timeout=12.0)
+                probed = await _probe_imdb_mp4(row["url"], timeout=12.0)
             if not probed or int(probed.get("height") or 0) < 1080:
                 return None
 
