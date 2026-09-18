@@ -16,6 +16,19 @@
   transform-style: preserve-3d;
 }
 
+/* The complete row stack starts slightly lower under the billboard. Moving the
+   stack itself (rather than only Continue Watching) keeps every following row
+   in natural document flow with the same spacing. */
+.sliders {
+  margin-top: -5vh !important;
+}
+
+@media (max-width: 599px) {
+  .sliders {
+    margin-top: -5.5vh !important;
+  }
+}
+
 /* Keep compositor ownership during the most animation-heavy interactions. */
 .slider-row .slick-track,
 .slider-row .slick-list,
