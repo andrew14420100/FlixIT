@@ -5,7 +5,7 @@ import json
 import re
 
 from ..base import TrailerCandidate, normalize_title
-from ..manifest import _find_media_binary
+from ..manifest import _find_media_binary, inspect_hls
 from .common import USER_AGENT, client
 
 IMDB_GRAPHQL_URL = "https://graphql.imdb.com/"
@@ -76,6 +76,23 @@ def _best_probe_row(node: dict) -> dict | None:
     return unknown[0] if unknown else None
 
 
+def _hls_row(node: dict) -> dict | None:
+    """Return IMDb's AUTO HLS master playlist when present.
+
+    IMDb exposes the same trailer as progressive MP4 rungs and as an AUTO
+    master playlist.  The manifest is a better quality oracle than old ffprobe
+    builds because it explicitly declares native RESOLUTION/BANDWIDTH/CODECS.
+    """
+    for raw in node.get("playbackURLs") or []:
+        row = raw or {}
+        url = str(row.get("url") or "").strip()
+        mime = str(row.get("videoMimeType") or "").upper()
+        label = ((row.get("displayName") or {}).get("value") if isinstance(row.get("displayName"), dict) else row.get("displayName")) or ""
+        if url and ("M3U8" in mime or ".m3u8" in url.lower() or str(label).upper() == "AUTO"):
+            return {"url": url, "label": label}
+    return None
+
+
 def _parse_probe_json(stdout: bytes) -> dict | None:
     try:
         data = json.loads(stdout.decode("utf-8", "replace"))
@@ -113,15 +130,7 @@ def _parse_probe_json(stdout: bytes) -> dict | None:
 
 
 async def _probe_imdb_mp4(url: str, timeout: float = 12.0) -> dict | None:
-    """Probe IMDb's signed MP4 directly.
-
-    The generic probe previously passed two separate ``-show_entries`` options;
-    older ffprobe builds may keep only the last one, leaving no stream metadata.
-    IMDb's CDN can also be stricter with bare media-tool requests.  Use one
-    combined show_entries expression plus browser-like HTTP headers, then retry
-    once without the HTTP-specific options for compatibility with local/static
-    ffprobe builds.
-    """
+    """Fallback probe for titles where IMDb exposes no usable HLS master."""
     ffprobe = _find_media_binary("ffprobe")
     if not ffprobe:
         return None
@@ -152,6 +161,7 @@ async def _probe_imdb_mp4(url: str, timeout: float = 12.0) -> dict | None:
     ]
 
     for args in attempts:
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
@@ -160,11 +170,12 @@ async def _probe_imdb_mp4(url: str, timeout: float = 12.0) -> dict | None:
             )
             stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:
-            try:
-                proc.kill()
-                await proc.communicate()
-            except Exception:
-                pass
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.communicate()
+                except Exception:
+                    pass
             continue
         except Exception:
             continue
@@ -182,8 +193,10 @@ class IMDbTrailerProvider:
     """Resolve IMDb-hosted trailers directly from IMDb GraphQL.
 
     TMDB already supplies an IMDb id, so this provider needs no search service.
-    Only direct IMDb MP4 playback URLs are considered and every selected file is
-    verified before it can enter the >=1080 resolver pipeline.
+    IMDb's AUTO HLS master is used to verify the native resolution/bitrate/codec;
+    when a matching 1080p progressive MP4 exists, that MP4 is preferred for
+    browser playback.  ffprobe remains only as a fallback for titles without a
+    usable HLS master.
     """
 
     name = "imdb"
@@ -210,65 +223,115 @@ class IMDbTrailerProvider:
             except Exception as exc:
                 raise RuntimeError("IMDb GraphQL returned invalid JSON") from exc
 
-        if payload.get("errors"):
-            message = str((payload.get("errors") or [{}])[0].get("message") or "GraphQL error")
-            raise RuntimeError(f"IMDb GraphQL: {message[:180]}")
+            if payload.get("errors"):
+                message = str((payload.get("errors") or [{}])[0].get("message") or "GraphQL error")
+                raise RuntimeError(f"IMDb GraphQL: {message[:180]}")
 
-        title_data = ((payload.get("data") or {}).get("title") or {})
-        edges = ((title_data.get("primaryVideos") or {}).get("edges") or [])[:6]
-        if not edges:
-            return []
+            title_data = ((payload.get("data") or {}).get("title") or {})
+            edges = ((title_data.get("primaryVideos") or {}).get("edges") or [])[:6]
+            if not edges:
+                return []
 
-        probe_sem = asyncio.Semaphore(3)
+            probe_sem = asyncio.Semaphore(3)
 
-        async def build_candidate(edge) -> TrailerCandidate | None:
-            node = (edge or {}).get("node") or {}
-            row = _best_probe_row(node)
-            if not row:
-                return None
+            async def build_candidates(edge) -> list[TrailerCandidate]:
+                node = (edge or {}).get("node") or {}
+                video_id = str(node.get("id") or "").strip()
+                title = str(((node.get("name") or {}).get("value")) or "Trailer")
+                trailer_type = _trailer_type(title)
+                provider_page = f"https://www.imdb.com/video/{video_id}/" if video_id else f"https://www.imdb.com/title/{imdb_id}/"
+                mp4_row = _best_probe_row(node)
+                hls = _hls_row(node)
 
-            async with probe_sem:
-                probed = await _probe_imdb_mp4(row["url"], timeout=12.0)
-            if not probed or int(probed.get("height") or 0) < 1080:
-                return None
+                # Preferred verification path: inspect the signed HLS master via
+                # httpx. This avoids old ffprobe TLS/CDN limitations while still
+                # proving native resolution from the provider's own manifest.
+                if hls:
+                    try:
+                        hls_candidates = await inspect_hls(
+                            http,
+                            hls["url"],
+                            source=self.name,
+                            confidence=1.0,
+                            provider_id=video_id or imdb_id,
+                            provider_page=provider_page,
+                            matched_title=identity.get("title"),
+                            matched_year=identity.get("year"),
+                            trailer_type=trailer_type,
+                            official=trailer_type in {"Official Trailer", "Final Trailer", "Official Teaser"},
+                            default_language="en",
+                        )
+                    except Exception:
+                        hls_candidates = []
 
-            video_id = str(node.get("id") or "").strip()
-            title = str(((node.get("name") or {}).get("value")) or "Trailer")
-            trailer_type = _trailer_type(title)
+                    verified = [c for c in hls_candidates if int(c.height or 0) >= 1080]
+                    if verified:
+                        best = max(verified, key=lambda c: (int(c.height or 0), int(c.bitrate or 0)))
+                        best.media_type = identity.get("type")
+                        best.title = title
+                        best.audio_language = best.audio_language or "en"
+                        best.metadata = {
+                            **(best.metadata or {}),
+                            "imdb_id": imdb_id,
+                            "discovery": "graphql+hls",
+                            "hls_manifest": hls["url"],
+                        }
 
-            return TrailerCandidate(
-                source=self.name,
-                trailer_url=row["url"],
-                provider_id=video_id or imdb_id,
-                provider_page=f"https://www.imdb.com/video/{video_id}/" if video_id else f"https://www.imdb.com/title/{imdb_id}/",
-                matched_title=identity.get("title"),
-                matched_year=identity.get("year"),
-                media_type=identity.get("type"),
-                title=title,
-                trailer_type=trailer_type,
-                official=trailer_type in {"Official Trailer", "Final Trailer", "Official Teaser"},
-                width=probed.get("width"),
-                height=probed.get("height"),
-                bitrate=probed.get("bitrate"),
-                codec=probed.get("codec"),
-                fps=probed.get("fps"),
-                audio_language=probed.get("audio_language") or "en",
-                audio_codec=probed.get("audio_codec"),
-                audio_bitrate=probed.get("audio_bitrate"),
-                confidence=1.0,
-                verified=True,
-                browser_compatible=True,
-                compatibility="mp4",
-                metadata={
-                    "imdb_id": imdb_id,
-                    "reported_height": row.get("reported_height"),
-                    "discovery": "graphql",
-                },
-            )
+                        # Prefer the progressive MP4 for playback when its IMDb
+                        # label matches the manifest-verified native height.
+                        if mp4_row and int(mp4_row.get("reported_height") or 0) == int(best.height or 0):
+                            best.trailer_url = mp4_row["url"]
+                            best.manifest_url = None
+                            best.browser_compatible = True
+                            best.compatibility = "mp4-verified-via-hls"
+                            best.metadata["reported_height"] = mp4_row.get("reported_height")
+                        return [best]
 
-        built = await asyncio.gather(*(build_candidate(edge) for edge in edges), return_exceptions=True)
+                # Fallback for uncommon IMDb entries without a usable AUTO HLS
+                # master. Only a real ffprobe result can promote the MP4.
+                if not mp4_row:
+                    return []
+                async with probe_sem:
+                    probed = await _probe_imdb_mp4(mp4_row["url"], timeout=12.0)
+                if not probed or int(probed.get("height") or 0) < 1080:
+                    return []
+
+                return [
+                    TrailerCandidate(
+                        source=self.name,
+                        trailer_url=mp4_row["url"],
+                        provider_id=video_id or imdb_id,
+                        provider_page=provider_page,
+                        matched_title=identity.get("title"),
+                        matched_year=identity.get("year"),
+                        media_type=identity.get("type"),
+                        title=title,
+                        trailer_type=trailer_type,
+                        official=trailer_type in {"Official Trailer", "Final Trailer", "Official Teaser"},
+                        width=probed.get("width"),
+                        height=probed.get("height"),
+                        bitrate=probed.get("bitrate"),
+                        codec=probed.get("codec"),
+                        fps=probed.get("fps"),
+                        audio_language=probed.get("audio_language") or "en",
+                        audio_codec=probed.get("audio_codec"),
+                        audio_bitrate=probed.get("audio_bitrate"),
+                        confidence=1.0,
+                        verified=True,
+                        browser_compatible=True,
+                        compatibility="mp4",
+                        metadata={
+                            "imdb_id": imdb_id,
+                            "reported_height": mp4_row.get("reported_height"),
+                            "discovery": "graphql+ffprobe",
+                        },
+                    )
+                ]
+
+            built = await asyncio.gather(*(build_candidates(edge) for edge in edges), return_exceptions=True)
+
         candidates: list[TrailerCandidate] = []
-        for item in built:
-            if isinstance(item, TrailerCandidate):
-                candidates.append(item)
+        for group in built:
+            if isinstance(group, list):
+                candidates.extend(x for x in group if isinstance(x, TrailerCandidate))
         return candidates
