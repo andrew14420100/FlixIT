@@ -15,22 +15,22 @@ from ..manifest import probe_direct_file
 
 
 class TherystonTrailerProvider:
-    """Adapter for a local Theryston/trailers-api service.
+    """Adapter for the local Theryston/trailers-api service.
 
-    FLIX-IT does not need Google Custom Search for the common IMDb path: TMDB
-    already gives us an IMDb id, so we submit that exact IMDb title page to
-    /process/by-trailer-page. Provider pages already known for Apple/Prime/
-    Netflix can be submitted the same way.
+    IMDb is intentionally NOT submitted here anymore: current IMDb HTML pages
+    can be returned as WAF challenge/empty documents, which breaks Theryston's
+    upstream __NEXT_DATA__ parser. FLIX-IT now resolves IMDb-hosted trailers
+    directly through its dedicated GraphQL provider.
 
-    The Theryston service stores its finished media under DATA_FOLDER/files.
-    FLIX-IT re-serves those files from its own backend, so browsers never need
-    to contact the internal Theryston port directly.
+    Theryston remains the extraction engine for reliable provider pages already
+    known for Apple TV, Prime Video or Netflix. Finished media is persisted in
+    DATA_FOLDER/files and re-served by FastAPI, so normal page refreshes never
+    trigger a new provider extraction.
     """
 
     name = "theryston"
 
     def __init__(self):
-        # 3011 deliberately avoids the common CRA frontend port 3000.
         self.api_url = (os.environ.get("THERYSTON_TRAILERS_API_URL") or "http://127.0.0.1:3011").rstrip("/")
         self.data_dir = Path(os.environ.get("THERYSTON_TRAILERS_DATA_DIR") or "/app/trailers-data").resolve()
         try:
@@ -39,13 +39,8 @@ class TherystonTrailerProvider:
             self.max_wait_seconds = 150
 
     def _pages(self, identity: dict) -> list[tuple[str, str, float]]:
-        pages: list[tuple[str, str, float]] = []
-        external = identity.get("external_ids") or {}
-        imdb_id = str(external.get("imdb_id") or "").strip()
-        if re.fullmatch(r"tt\d+", imdb_id):
-            pages.append(("imdb", f"https://www.imdb.com/title/{imdb_id}/", 1.0))
-
         provider_pages = identity.get("provider_pages") or {}
+        pages: list[tuple[str, str, float]] = []
         for key in ("apple_tv", "prime_video", "netflix"):
             value = str(provider_pages.get(key) or "").strip()
             if value.startswith("https://"):
@@ -142,8 +137,6 @@ class TherystonTrailerProvider:
             else:
                 trailer_type = "Official Trailer"
 
-            # Finished local media is persistent. Metadata is still refreshed by
-            # the resolver every 14 days, but page refreshes never re-extract it.
             persistent_expiry = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
             candidates.append(
                 TrailerCandidate(
@@ -162,7 +155,7 @@ class TherystonTrailerProvider:
                     bitrate=probed.get("bitrate"),
                     codec=probed.get("codec"),
                     fps=probed.get("fps"),
-                    audio_language=probed.get("audio_language") or ("en" if source == "imdb" else None),
+                    audio_language=probed.get("audio_language"),
                     audio_codec=probed.get("audio_codec"),
                     audio_bitrate=probed.get("audio_bitrate"),
                     subtitles=trailer.get("subtitles") or [],
@@ -190,7 +183,7 @@ class TherystonTrailerProvider:
         timeout = httpx.Timeout(10.0, connect=2.5)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as http:
             try:
-                probe = await http.get(f"{self.api_url}/docs")
+                probe = await http.get(f"{self.api_url}/docs/")
                 if probe.status_code >= 500:
                     return []
             except Exception:
