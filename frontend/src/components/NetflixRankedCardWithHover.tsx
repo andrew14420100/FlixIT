@@ -161,6 +161,7 @@ export default function NetflixRankedCardWithHover({
           position={position}
           closing={closing}
           onMouseLeave={onOverlayLeave}
+          onClick={goDetail}
           testId={`hover-overlay-top10-${normalizedId}`}
         >
           <ExpandedCard
