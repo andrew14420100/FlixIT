@@ -5,6 +5,7 @@ import "./NetflixMiniModalExact.css";
 interface Props {
   imageUrl?: string | null;
   fallbackImageUrl?: string | null;
+  imageCandidates?: Array<string | null | undefined>;
   title?: string;
   href?: string;
   onClick?: any;
@@ -27,10 +28,20 @@ function tmdbResponsiveSet(url?: string | null) {
   ].join(", ");
 }
 
+function uniqueCandidates(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  return values.filter((value): value is string => {
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
 const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixStandardCard(
   {
     imageUrl,
     fallbackImageUrl,
+    imageCandidates = [],
     title = "",
     href = "#",
     onClick,
@@ -41,12 +52,17 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   },
   ref
 ) {
-  const [src, setSrc] = useState(imageUrl || fallbackImageUrl || null);
+  const candidates = useMemo(
+    () => uniqueCandidates([imageUrl, ...imageCandidates, fallbackImageUrl]),
+    [imageUrl, imageCandidates, fallbackImageUrl]
+  );
+  const [candidateIndex, setCandidateIndex] = useState(0);
 
   useEffect(() => {
-    setSrc(imageUrl || fallbackImageUrl || null);
-  }, [imageUrl, fallbackImageUrl]);
+    setCandidateIndex(0);
+  }, [candidates.join("|")]);
 
+  const src = candidates[candidateIndex] || null;
   const srcSet = useMemo(() => tmdbResponsiveSet(src), [src]);
 
   return (
@@ -77,13 +93,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
                 loading="lazy"
                 decoding="async"
                 draggable={false}
-                onError={() => {
-                  if (fallbackImageUrl && src !== fallbackImageUrl) {
-                    setSrc(fallbackImageUrl);
-                  } else {
-                    setSrc(null);
-                  }
-                }}
+                onError={() => setCandidateIndex((index) => index + 1)}
                 className="standard-card tracked-card netflix-standard-card-image"
               />
             ) : (
