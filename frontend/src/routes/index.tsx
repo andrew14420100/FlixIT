@@ -12,41 +12,10 @@ const adminPage = (name) => () => adminChunk().then((m) => ({ Component: m[name]
 
 function ErrorPage() {
   return (
-    <Box
-      sx={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        bgcolor: "#050505",
-        color: "#fff",
-        textAlign: "center",
-        p: 4,
-      }}
-    >
-      <Typography variant="h2" sx={{ fontWeight: 700, mb: 2, color: "#E50914" }}>
-        404
-      </Typography>
-      <Typography variant="h5" sx={{ mb: 3, color: "rgba(255,255,255,0.7)" }}>
-        Pagina non trovata
-      </Typography>
-      <Typography
-        component="a"
-        href="/"
-        sx={{
-          color: "#fff",
-          bgcolor: "#E50914",
-          px: 4,
-          py: 1.5,
-          borderRadius: "6px",
-          textDecoration: "none",
-          fontWeight: 600,
-          "&:hover": { bgcolor: "#B20710" },
-        }}
-      >
-        Torna alla Home
-      </Typography>
+    <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", bgcolor: "#050505", color: "#fff", textAlign: "center", p: 4 }}>
+      <Typography variant="h2" sx={{ fontWeight: 700, mb: 2, color: "#E50914" }}>404</Typography>
+      <Typography variant="h5" sx={{ mb: 3, color: "rgba(255,255,255,0.7)" }}>Pagina non trovata</Typography>
+      <Typography component="a" href="/" sx={{ color: "#fff", bgcolor: "#E50914", px: 4, py: 1.5, borderRadius: "6px", textDecoration: "none", fontWeight: 600, "&:hover": { bgcolor: "#B20710" } }}>Torna alla Home</Typography>
     </Box>
   );
 }
@@ -74,25 +43,15 @@ const router = createBrowserRouter([
       { path: "premium/success", lazy: () => import("src/pages/PaymentResultPage") },
       { path: "premium/paypal-return", lazy: () => import("src/pages/PaymentResultPage") },
       { path: "premium/cancel", lazy: () => import("src/pages/PaymentResultPage") },
-      ...Object.keys(PLACEHOLDER_SECTIONS).map((p) => ({
-        path: p.slice(1),
-        element: <ComingSoonPage />,
-      })),
+      ...Object.keys(PLACEHOLDER_SECTIONS).map((p) => ({ path: p.slice(1), element: <ComingSoonPage /> })),
       { path: `${MAIN_PATH.browse}/:mediaType/:id`, lazy: () => import("src/pages/DetailPage") },
-      {
-        path: MAIN_PATH.genreExplore,
-        children: [{ path: ":genreId", lazy: () => import("src/pages/GenreExplore") }],
-      },
+      { path: MAIN_PATH.genreExplore, children: [{ path: ":genreId", lazy: () => import("src/pages/GenreExplore") }] },
       { path: `${MAIN_PATH.watch}/:mediaType/:id`, lazy: () => import("src/pages/WatchPage") },
       { path: MAIN_PATH.watch, lazy: () => import("src/pages/WatchPage") },
       { path: "account", lazy: () => import("src/pages/AccountPage") },
     ],
   },
-  {
-    path: "/admin/login",
-    lazy: adminPage("AdminLoginShell"),
-    errorElement: <ErrorPage />,
-  },
+  { path: "/admin/login", lazy: adminPage("AdminLoginShell"), errorElement: <ErrorPage /> },
   {
     path: "/admin",
     lazy: adminPage("AdminShell"),
@@ -106,6 +65,7 @@ const router = createBrowserRouter([
       { path: "menu", lazy: adminPage("MenuPage") },
       { path: "settings", lazy: adminPage("SettingsPage") },
       { path: "artwork", lazy: adminPage("ArtworkPage") },
+      { path: "trailers", lazy: adminPage("TrailersPage") },
       { path: "logs", lazy: adminPage("LogsPage") },
       { path: "users", lazy: adminPage("UsersPage") },
       { path: "tickets", lazy: adminPage("TicketsPage") },
