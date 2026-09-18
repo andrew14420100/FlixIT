@@ -4,22 +4,9 @@ import { createPortal } from "react-dom";
 import "src/components/NetflixMiniModalExact.css";
 
 /**
- * Netflix mini-modal motion reconstructed from the akiraClient bundle supplied by the user.
- *
- * Netflix source values:
- * - scaleFactor: 1.5
- * - miniModalMinWidth: 320
- * - open duration: 300ms
- * - close duration: 250ms
- * - easing: cubic-bezier(.21, 0, .07, 1)
- * - open opacity: 50ms
- * - close opacity ratio: .6
- * - viewport edge guard: 60px
- * - player aspect-height ratio: .563925
- *
- * User-requested deviation:
- * - hover open delay is 500ms instead of Netflix's default 400ms because the previous
- *   implementation felt too fast.
+ * Netflix-style mini-modal motion.
+ * The preview portal is viewport-fixed so opening a card never changes the
+ * document height or creates a second vertical scrolling surface.
  */
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
@@ -30,8 +17,6 @@ const OPACITY_OPEN_MS = 180;
 const OPACITY_CLOSE_MS = CLOSE_DURATION_MS * 0.6;
 const EDGE_GUARD = 60;
 const EASE = "cubic-bezier(.21,0,.07,1)";
-// FLIX-IT has different row padding than Netflix; these two tiny offsets
-// reproduce the same visual overlap with the row title/left side.
 const FLIX_LEFT_BIAS_PX = 42;
 const FLIX_TITLE_OVERLAP_PX = 34;
 const MODAL_BOX_SHADOW = "none";
@@ -104,9 +89,10 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
           MIN_MODAL_WIDTH
         );
 
+        // Coordinates stay viewport-relative because the portal itself is fixed.
         setPosition({
           titleCardRect: rect,
-          titleCardDocTop: rect.top + window.pageYOffset,
+          titleCardDocTop: rect.top,
           modalWidth,
         });
         setOpen(true);
@@ -151,6 +137,19 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   useEffect(() => clearTimers, [clearTimers]);
 
+  // Scrolling should always belong to the page. Close an expanded hover card
+  // immediately as soon as a wheel/touch scroll moves the document, preventing
+  // the preview from feeling like it captures or blocks the scroll gesture.
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = () => {
+      clearTimers();
+      finishClose();
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [open, clearTimers, finishClose]);
+
   return {
     open,
     entered: open && !closing,
@@ -192,33 +191,23 @@ export function ExpandOverlay({
       const node = modalRef.current;
       if (!node) return;
 
-      // Final, unscaled mini-modal rect (Netflix stores the modal rect and derives
-      // the reset/open variants from it).
       const modalRect = node.getBoundingClientRect();
       const card = position.titleCardRect as DOMRect;
-
-      const xOffset = window.pageXOffset || 0;
-      const yOffset = window.pageYOffset || 0;
-      const cardDocLeft = card.left + xOffset;
-      const cardDocTop = card.top + yOffset;
 
       const horizontalOverflow = (modalRect.width - card.width) / 2;
       const verticalOverflow = (modalRect.height - card.height) / 2;
 
-      // getMiniModalTopLeft() — normal video row branch.
       const top = Math.round(
-        cardDocTop - verticalOverflow - FLIX_TITLE_OVERLAP_PX
+        card.top - verticalOverflow - FLIX_TITLE_OVERLAP_PX
       );
       const left = Math.round(
-        cardDocLeft - horizontalOverflow - FLIX_LEFT_BIAS_PX
+        card.left - horizontalOverflow - FLIX_LEFT_BIAS_PX
       );
 
-      // getMiniModalOriginalY() — normal video row branch.
       const originalY = Math.round(
         (modalRect.height / SCALE_FACTOR - card.height) / 2
       );
 
-      // getOpenMiniModalVariant(): keep a 60px viewport safety margin.
       const tooCloseRight =
         window.innerWidth -
           (card.left + card.width + horizontalOverflow - FLIX_LEFT_BIAS_PX) <
@@ -231,14 +220,9 @@ export function ExpandOverlay({
           FLIX_LEFT_BIAS_PX <
         EDGE_GUARD
       ) {
-        // Same Netflix edge behavior: first card expands to the right.
-        openX = Math.round(
-          horizontalOverflow + FLIX_LEFT_BIAS_PX
-        );
+        openX = Math.round(horizontalOverflow + FLIX_LEFT_BIAS_PX);
       } else if (tooCloseRight) {
-        openX = Math.round(
-          -horizontalOverflow + FLIX_LEFT_BIAS_PX
-        );
+        openX = Math.round(-horizontalOverflow + FLIX_LEFT_BIAS_PX);
       }
 
       let openY = 0;
@@ -248,9 +232,7 @@ export function ExpandOverlay({
           FLIX_TITLE_OVERLAP_PX <
         EDGE_GUARD
       ) {
-        openY = Math.round(
-          verticalOverflow + FLIX_TITLE_OVERLAP_PX
-        );
+        openY = Math.round(verticalOverflow + FLIX_TITLE_OVERLAP_PX);
       }
 
       setGeometry({
@@ -264,7 +246,6 @@ export function ExpandOverlay({
         transformOrigin: "50% 50%",
       });
 
-      // RESET_MINI_MODAL first; then OPEN_MINI_MODAL on the following frame.
       setPhase("reset");
 
       f2 = requestAnimationFrame(() => {
@@ -295,8 +276,7 @@ export function ExpandOverlay({
   let top = geometry?.top ?? position.titleCardDocTop;
   let left =
     geometry?.left ??
-    position.titleCardRect.left +
-      (window.pageXOffset || 0) -
+    position.titleCardRect.left -
       (modalWidth - position.titleCardRect.width) / 2 -
       FLIX_LEFT_BIAS_PX;
   let boxShadow = "none";
@@ -318,7 +298,6 @@ export function ExpandOverlay({
   }
 
   if (phase === "close" && geometry) {
-    // Netflix close: scale back to 1 / scaleFactor and return to anchor.
     top = geometry.top + geometry.originalY;
     transform = `translate3d(0px, 0px, 0) scale(${1 / SCALE_FACTOR})`;
     opacity = 0;
@@ -330,8 +309,6 @@ export function ExpandOverlay({
   }
 
   const handleOverlayClick = (event: any) => {
-    // Controls keep their own action. Any non-interactive part of the enlarged
-    // card behaves like the normal card and opens the title detail page.
     const target = event?.target as HTMLElement | null;
     if (
       target?.closest?.("button, a, [role='button'], input, select, textarea")
