@@ -18,6 +18,18 @@ function imageSrc(path: any, size = "w780") {
   return `${TMDB_IMG}${size}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
 
+function tmdbPosterSet(url?: string | null) {
+  if (!url) return undefined;
+  const match = String(url).match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)(\/.*)$/i);
+  if (!match) return undefined;
+  const [, base, path] = match;
+  return [
+    `${base}w342${path} 342w`,
+    `${base}w500${path} 500w`,
+    `${base}w780${path} 780w`,
+  ].join(", ");
+}
+
 export default function NetflixRankedCardWithHover({ item, rank, mediaType, watch, suppressHover = false }: any) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -35,6 +47,7 @@ export default function NetflixRankedCardWithHover({ item, rank, mediaType, watc
 
   const [posterUrl, setPosterUrl] = useState(resolved?.artwork?.url || fallbackPosterUrl);
   useEffect(() => { setPosterUrl(resolved?.artwork?.url || fallbackPosterUrl); }, [resolved?.artwork?.url, fallbackPosterUrl]);
+  const posterSrcSet = useMemo(() => tmdbPosterSet(posterUrl), [posterUrl]);
 
   const title = item?.title || item?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${normalizedId}`;
@@ -62,9 +75,19 @@ export default function NetflixRankedCardWithHover({ item, rank, mediaType, watc
           <div className="netflix-ranked-card-rank"><NetflixTop10RankSvg rank={rank} className="netflix-ranked-card-rank-svg" opacity={0.5} /></div>
           <div className="netflix-ranked-card-poster-wrap">
             {posterUrl ? (
-              <img src={posterUrl} alt="" draggable={false} loading="lazy" decoding="async" onError={() => {
-                if (fallbackPosterUrl && posterUrl !== fallbackPosterUrl) setPosterUrl(fallbackPosterUrl); else setPosterUrl("");
-              }} className="netflix-ranked-card-poster" />
+              <img
+                src={posterUrl}
+                srcSet={posterSrcSet}
+                sizes="(max-width: 800px) 33vw, 16vw"
+                alt=""
+                draggable={false}
+                loading="lazy"
+                decoding="async"
+                onError={() => {
+                  if (fallbackPosterUrl && posterUrl !== fallbackPosterUrl) setPosterUrl(fallbackPosterUrl); else setPosterUrl("");
+                }}
+                className="netflix-ranked-card-poster"
+              />
             ) : <div className="netflix-ranked-card-placeholder">{title}</div>}
           </div>
         </a>
