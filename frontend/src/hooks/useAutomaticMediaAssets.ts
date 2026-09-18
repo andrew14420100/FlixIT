@@ -20,13 +20,23 @@ export function tmdbImageUrl(value: any, size = "original") {
   return `${TMDB_IMAGE_BASE}${size}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
 
+function firstArtworkValue(...values: any[]) {
+  for (const value of values) {
+    if (!value) continue;
+    if (typeof value === "string") return value;
+    if (typeof value?.url === "string") return value.url;
+  }
+  return null;
+}
+
 /**
  * Single automatic source for artwork used by the public UI.
  *
- * /api/public/media-assets is authoritative and requires no admin artwork
- * configuration.  The list item itself is kept only as an instant visual
- * fallback while the shared media-assets request is in flight or temporarily
- * unavailable, so cards never become blank during the hand-off.
+ * /api/public/media-assets is the authoritative source and requires no admin
+ * artwork configuration. Existing artwork carried by a row item is preserved
+ * only as an instant visual fallback while the automatic endpoint loads (or if
+ * that endpoint is temporarily unavailable). This prevents blank cards during
+ * migration without making normal artwork depend on the admin panel.
  */
 export default function useAutomaticMediaAssets(
   item: any,
@@ -36,14 +46,52 @@ export default function useAutomaticMediaAssets(
   const typeSlug = mediaTypeSlug(mediaType, item);
   const id = item?.id || item?.tmdbId || item?.tmdb_id;
 
+  const legacyLandscape = firstArtworkValue(
+    item?.backdrop_path,
+    item?.backdrop,
+    item?.titled_backdrop_path,
+    item?.titledBackdropPath,
+    item?.netflix_artwork_url,
+    item?.netflixArtworkUrl,
+    item?.netflix_cover_url,
+    item?.contextualArtwork?.artwork,
+    item?.artwork,
+    item?.image,
+    item?.cover_path,
+    item?.cover,
+    item?.image_url,
+    item?.thumbnail_url
+  );
+
+  const legacyPoster = firstArtworkValue(
+    item?.poster_path,
+    item?.poster,
+    item?.netflix_ranked_artwork_url,
+    item?.netflixRankedArtworkUrl,
+    item?.netflix_cover_url,
+    item?.cover_path,
+    item?.cover,
+    item?.image,
+    item?.artwork
+  );
+
+  const legacyLogo = firstArtworkValue(
+    item?.logo_path,
+    item?.logo,
+    item?.title_logo_path,
+    item?.titleLogoPath,
+    item?.contextualArtwork?.logo
+  );
+
   const fallback = useMemo(() => ({
     tmdbId: id,
     type: typeSlug,
     title: item?.title || item?.name || "",
-    backdrop_path: item?.backdrop_path || item?.backdrop || null,
-    poster_path: item?.poster_path || item?.poster || null,
-    titled_backdrop_path: item?.titled_backdrop_path || item?.titledBackdropPath || null,
-    logo_path: item?.logo_path || item?.logo || item?.title_logo_path || null,
+    backdrop_path: legacyLandscape || legacyPoster || null,
+    poster_path: legacyPoster || legacyLandscape || null,
+    titled_backdrop_path:
+      item?.titled_backdrop_path || item?.titledBackdropPath || null,
+    logo_path: legacyLogo || null,
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
@@ -52,15 +100,11 @@ export default function useAutomaticMediaAssets(
     typeSlug,
     item?.title,
     item?.name,
-    item?.backdrop_path,
-    item?.backdrop,
-    item?.poster_path,
-    item?.poster,
+    legacyLandscape,
+    legacyPoster,
+    legacyLogo,
     item?.titled_backdrop_path,
     item?.titledBackdropPath,
-    item?.logo_path,
-    item?.logo,
-    item?.title_logo_path,
     item?.runtime,
     item?.number_of_seasons,
     item?.certification,
@@ -76,7 +120,19 @@ export default function useAutomaticMediaAssets(
       });
       if (!response.ok) return fallback;
       const data = await response.json();
-      return { ...fallback, ...(data || {}) };
+
+      // Never let null/empty values returned by the automatic endpoint erase a
+      // cover that the row already has. Valid automatic values still win.
+      return {
+        ...fallback,
+        ...(data || {}),
+        backdrop_path:
+          data?.backdrop_path || data?.titled_backdrop_path || fallback.backdrop_path,
+        poster_path: data?.poster_path || fallback.poster_path,
+        titled_backdrop_path:
+          data?.titled_backdrop_path || fallback.titled_backdrop_path,
+        logo_path: data?.logo_path || fallback.logo_path,
+      };
     },
     enabled: !!id && !!enabled,
     placeholderData: fallback,
