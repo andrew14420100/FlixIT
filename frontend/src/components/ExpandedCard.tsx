@@ -1,27 +1,13 @@
 // @ts-nocheck
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
+import useAutomaticMediaAssets, { TMDB_IMAGE_BASE } from "src/hooks/useAutomaticMediaAssets";
 import "./NetflixMiniModalExact.css";
 
-export const TMDB_IMG = "https://image.tmdb.org/t/p/";
+export const TMDB_IMG = TMDB_IMAGE_BASE;
 
 export function useMediaAssets(video: any, mediaType: any) {
-  const typeSlug = mediaType === MEDIA_TYPE.Tv ? "tv" : "movie";
-  const id = video?.id || video?.tmdbId || video?.tmdb_id;
-
-  const { data } = useQuery({
-    queryKey: ["media-assets", typeSlug, id],
-    queryFn: async () => {
-      if (!id) return {};
-      const response = await fetch(`/api/public/media-assets/${typeSlug}/${id}`);
-      return response.ok ? response.json() : {};
-    },
-    enabled: !!id,
-    staleTime: 10 * 60 * 1000,
-  });
-
-  return data || {};
+  return useAutomaticMediaAssets(video, mediaType, true);
 }
 
 export function formatReleaseLabel(value?: string) {
@@ -35,7 +21,7 @@ export function formatReleaseLabel(value?: string) {
   }).format(d);
 }
 
-function mediaUrl(value: any, size = "w780") {
+function mediaUrl(value: any, size = "original") {
   if (!value) return "";
   if (
     typeof value === "string" &&
@@ -92,7 +78,6 @@ function normalizeTextList(...values: any[]) {
   return [];
 }
 
-
 const MOVIE_GENRES: Record<number, string> = {
   28: "Azione",
   12: "Avventura",
@@ -137,18 +122,13 @@ const TV_GENRES: Record<number, string> = {
 function genreNamesFromIds(ids: any, type: string) {
   if (!Array.isArray(ids)) return [];
   const table = type === "tv" ? TV_GENRES : MOVIE_GENRES;
-  return ids
-    .map((id) => table[Number(id)])
-    .filter(Boolean);
+  return ids.map((id) => table[Number(id)]).filter(Boolean);
 }
 
 function IconPlay() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M5 2.7a1 1 0 0 1 1.48-.88l16.93 9.3a1 1 0 0 1 0 1.76l-16.93 9.3A1 1 0 0 1 5 21.31z"
-      />
+      <path fill="currentColor" d="M5 2.7a1 1 0 0 1 1.48-.88l16.93 9.3a1 1 0 0 1 0 1.76l-16.93 9.3A1 1 0 0 1 5 21.31z" />
     </svg>
   );
 }
@@ -156,12 +136,7 @@ function IconPlay() {
 function IconPlus() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M11 11V2h2v9h9v2h-9v9h-2v-9H2v-2z"
-      />
+      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M11 11V2h2v9h9v2h-9v9h-2v-9H2v-2z" />
     </svg>
   );
 }
@@ -169,12 +144,7 @@ function IconPlus() {
 function IconCheck() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="m9.55 17.48-5.4-5.4 1.41-1.42 3.99 3.99 8.89-8.9 1.42 1.42z"
-      />
+      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="m9.55 17.48-5.4-5.4 1.41-1.42 3.99 3.99 8.89-8.9 1.42 1.42z" />
     </svg>
   );
 }
@@ -182,12 +152,15 @@ function IconCheck() {
 function IconThumb() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M10.696 8.773A2 2 0 0 0 11 7.713V4h.838c.877 0 1.59.553 1.77 1.311C13.822 6.228 14 7.227 14 8a7 7 0 0 1-.246 1.75L13.432 11H17.5a1.5 1.5 0 0 1 1.476 1.77l-.08.445.28.354c.203.256.324.578.324.931s-.12.675-.324.93l-.28.355.08.445q.024.13.024.27c0 .49-.234.925-.6 1.2l-.4.3v.5a1.5 1.5 0 0 1-1.5 1.5h-3.877a9 9 0 0 1-2.846-.462l-1.493-.497A10.5 10.5 0 0 0 5 18.5v-4.747l2.036-.581a3 3 0 0 0 1.72-1.295zM10.5 2A1.5 1.5 0 0 0 9 3.5v4.213l-1.94 3.105a1 1 0 0 1-.574.432l-2.035.581A2 2 0 0 0 3 13.754v4.793c0 1.078.874 1.953 1.953 1.953.917 0 1.828.148 2.698.438l1.493.498a11 11 0 0 0 3.479.564H16.5a3.5 3.5 0 0 0 3.467-3.017 3.5 3.5 0 0 0 1.028-2.671c.32-.529.505-1.15.505-1.812s-.185-1.283-.505-1.812Q21 12.595 21 12.5A3.5 3.5 0 0 0 17.5 9h-1.566c.041-.325.066-.66.066-1 0-1.011-.221-2.194-.446-3.148C15.14 3.097 13.543 2 11.838 2z"
-      />
+      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M10.696 8.773A2 2 0 0 0 11 7.713V4h.838c.877 0 1.59.553 1.77 1.311C13.822 6.228 14 7.227 14 8a7 7 0 0 1-.246 1.75L13.432 11H17.5a1.5 1.5 0 0 1 1.476 1.77l-.08.445.28.354c.203.256.324.578.324.931s-.12.675-.324.93l-.28.355.08.445q.024.13.024.27c0 .49-.234.925-.6 1.2l-.4.3v.5a1.5 1.5 0 0 1-1.5 1.5h-3.877a9 9 0 0 1-2.846-.462l-1.493-.497A10.5 10.5 0 0 0 5 18.5v-4.747l2.036-.581a3 3 0 0 0 1.72-1.295zM10.5 2A1.5 1.5 0 0 0 9 3.5v4.213l-1.94 3.105a1 1 0 0 1-.574.432l-2.035.581A2 2 0 0 0 3 13.754v4.793c0 1.078.874 1.953 1.953 1.953.917 0 1.828.148 2.698.438l1.493.498a11 11 0 0 0 3.479.564H16.5a3.5 3.5 0 0 0 3.467-3.017 3.5 3.5 0 0 0 1.028-2.671c.32-.529.505-1.15.505-1.812s-.185-1.283-.505-1.812Q21 12.595 21 12.5A3.5 3.5 0 0 0 17.5 9h-1.566c.041-.325.066-.66.066-1 0-1.011-.221-2.194-.446-3.148C15.14 3.097 13.543 2 11.838 2z" />
+    </svg>
+  );
+}
+
+function IconRemove() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M5.293 5.293a1 1 0 0 1 1.414 0L12 10.586l5.293-5.293a1 1 0 1 1 1.414 1.414L13.414 12l5.293 5.293a1 1 0 0 1-1.414 1.414L12 13.414l-5.293 5.293a1 1 0 0 1-1.414-1.414L10.586 12 5.293 6.707a1 1 0 0 1 0-1.414Z" />
     </svg>
   );
 }
@@ -195,12 +168,7 @@ function IconThumb() {
 function IconChevron() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="m12 15.586 7.293-7.293 1.414 1.414-8 8a1 1 0 0 1-1.414 0l-8-8 1.414-1.414z"
-      />
+      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="m12 15.586 7.293-7.293 1.414 1.414-8 8a1 1 0 0 1-1.414 0l-8-8 1.414-1.414z" />
     </svg>
   );
 }
@@ -209,12 +177,7 @@ function SpatialAudioMark() {
   return (
     <div className="spatial-audio spatial-audio-icon-it" aria-label="Audio spaziale">
       <svg viewBox="0 0 72 18" aria-hidden="true">
-        <path
-          d="M10 9c0-3.6 2.4-6.3 5.8-6.3S22 5.4 22 9s-2.7 6.3-6.2 6.3S10 12.6 10 9Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-        />
+        <path d="M10 9c0-3.6 2.4-6.3 5.8-6.3S22 5.4 22 9s-2.7 6.3-6.2 6.3S10 12.6 10 9Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
         <path d="M6.8 4.3a7.4 7.4 0 0 0 0 9.4M3.7 1.7a11.3 11.3 0 0 0 0 14.6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
         <text x="29" y="12.5" fill="currentColor" fontSize="9.5" fontFamily="inherit">SPATIAL</text>
       </svg>
@@ -222,20 +185,12 @@ function SpatialAudioMark() {
   );
 }
 
-function MiniButton({
-  primary = false,
-  label,
-  onClick,
-  selected = false,
-  children,
-}: any) {
+function MiniButton({ primary = false, label, onClick, selected = false, children }: any) {
   return (
     <button
       aria-label={label}
       title={label}
-      className={`nflx-mini-control ${
-        primary ? "color-primary" : "color-supplementary"
-      } hasIcon round${selected ? " is-selected" : ""}`}
+      className={`nflx-mini-control ${primary ? "color-primary" : "color-supplementary"} hasIcon round${selected ? " is-selected" : ""}`}
       type="button"
       onClick={(event) => {
         event.preventDefault();
@@ -243,67 +198,40 @@ function MiniButton({
         onClick?.(event);
       }}
     >
-      <span className="small" role="presentation">
-        {children}
-      </span>
+      <span className="small" role="presentation">{children}</span>
     </button>
   );
 }
 
-export default function ExpandedCard({
-  item,
-  mediaType,
-  onPlay,
-  onDetail,
-  watch,
-}: any) {
+export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch }: any) {
   const [inList, setInList] = useState(
-    !!firstValue(
-      item?.isInPlaylist,
-      item?.in_playlist,
-      item?.inList,
-      item?.in_list,
-      false
-    )
+    !!firstValue(item?.isInPlaylist, item?.in_playlist, item?.inList, item?.in_list, false)
   );
-  const [liked, setLiked] = useState(
-    !!firstValue(item?.liked, item?.thumb_up, false)
-  );
+  const [liked, setLiked] = useState(!!firstValue(item?.liked, item?.thumb_up, false));
 
-  const type =
-    item?.type ||
-    item?.media_type ||
-    (mediaType === MEDIA_TYPE.Tv ? "tv" : "movie");
-
+  const type = item?.type || item?.media_type || (mediaType === MEDIA_TYPE.Tv ? "tv" : "movie");
   const title = item?.title || item?.name || "";
 
   const cover = mediaUrl(
     firstValue(
+      item?.backdrop_path,
+      item?.titled_backdrop_path,
+      item?.cover_path,
+      item?.poster_path,
       item?.netflix_artwork_url,
       item?.netflixArtworkUrl,
       item?.netflix_cover_url,
       item?.contextualArtwork?.artwork?.url,
       item?.artwork?.url,
-      item?.image?.url,
-      item?.titled_backdrop_path,
-      item?.backdrop_path,
-      item?.cover_path,
-      item?.poster_path
+      item?.image?.url
     ),
-    "w780"
+    "original"
   );
 
-  const hasTitledArtwork = !!firstValue(
-    item?.titled_backdrop_path,
-    item?.titledBackdropPath
+  const logo = mediaUrl(
+    firstValue(item?.logo_path, item?.logo, item?.title_logo_path),
+    "original"
   );
-
-  const logo = hasTitledArtwork
-    ? ""
-    : mediaUrl(
-        firstValue(item?.logo_path, item?.logo, item?.title_logo_path),
-        "w500"
-      );
 
   const previewVideo = firstValue(
     item?.preview_video_url,
@@ -337,9 +265,7 @@ export default function ExpandedCard({
   );
 
   const runtime = firstValue(
-    item?.displayRuntimeSec
-      ? Math.max(1, Math.round(Number(item.displayRuntimeSec) / 60))
-      : undefined,
+    item?.displayRuntimeSec ? Math.max(1, Math.round(Number(item.displayRuntimeSec) / 60)) : undefined,
     item?.runtime,
     item?.duration,
     item?.runtime_minutes,
@@ -371,12 +297,7 @@ export default function ExpandedCard({
       item?.genreNames,
       item?.genres
     );
-
-    const fallbackGenres = genreNamesFromIds(
-      item?.genre_ids || item?.genreIds,
-      type
-    );
-
+    const fallbackGenres = genreNamesFromIds(item?.genre_ids || item?.genreIds, type);
     return (explicit.length ? explicit : fallbackGenres).slice(0, 4);
   }, [item, type]);
 
@@ -386,23 +307,9 @@ export default function ExpandedCard({
     item?.availability_message,
     item?.availabilityMessage
   );
-
-  const contentWarning = firstValue(
-    item?.content_warning,
-    item?.contentWarning?.message,
-    item?.contentWarning
-  );
-
-  const mostLiked = firstValue(
-    item?.most_liked_message,
-    item?.mostLikedMessage,
-    item?.most_liked
-  );
-
-  const watchPercent = Math.max(
-    0,
-    Math.min(100, Number(watch?.percent || item?.progress_percent || 0))
-  );
+  const contentWarning = firstValue(item?.content_warning, item?.contentWarning?.message, item?.contentWarning);
+  const mostLiked = firstValue(item?.most_liked_message, item?.mostLikedMessage, item?.most_liked);
+  const watchPercent = Math.max(0, Math.min(100, Number(watch?.percent || item?.progress_percent || 0)));
 
   const toggleList = (event: any) => {
     const next = !inList;
@@ -420,21 +327,11 @@ export default function ExpandedCard({
 
   return (
     <>
-      <div
-        className="previewModal--player_container has-smaller-buttons mini-modal"
-        data-uia="previewModal--player_container"
-      >
+      <div className="previewModal--player_container has-smaller-buttons mini-modal" data-uia="previewModal--player_container">
         <div className="previewModal--video-shell">
           <div className="previewModal--video-shell-inner">
             {previewVideo ? (
-              <video
-                disablePictureInPicture
-                src={previewVideo}
-                className="previewModal--video"
-                autoPlay
-                muted
-                playsInline
-              />
+              <video disablePictureInPicture src={previewVideo} className="previewModal--video" autoPlay muted playsInline />
             ) : null}
           </div>
         </div>
@@ -442,47 +339,21 @@ export default function ExpandedCard({
         <div className="videoMerchPlayer--boxart-wrapper">
           {cover ? (
             <>
-              <img
-                alt={title}
-                src={cover}
-                className="previewModal--boxart"
-                aria-hidden="true"
-                style={{ opacity: previewVideo ? 0 : 1 }}
-              />
-              <img
-                alt=""
-                src={cover}
-                aria-hidden="true"
-                className="previewModal--auxiliary-boxart"
-              />
+              <img alt={title} src={cover} className="previewModal--boxart" aria-hidden="true" decoding="async" style={{ opacity: previewVideo ? 0 : 1 }} />
+              <img alt="" src={cover} aria-hidden="true" decoding="async" className="previewModal--auxiliary-boxart" />
             </>
           ) : null}
         </div>
 
         {logo ? (
-          <div
-            aria-hidden="true"
-            className="previewModal--player-titleTreatmentWrapper"
-            style={{
-              pointerEvents: "none",
-              opacity: previewVideo ? 0 : 1,
-            }}
-          >
+          <div aria-hidden="true" className="previewModal--player-titleTreatmentWrapper" style={{ pointerEvents: "none", opacity: previewVideo ? 0 : 1 }}>
             <div className="previewModal--player-titleTreatment previewModal--player-titleTreatment-left has-smaller-buttons mini-modal">
-              <img
-                className="previewModal--player-titleTreatment-logo"
-                src={logo}
-                alt=""
-                style={{ opacity: previewVideo ? 0 : 1 }}
-              />
+              <img className="previewModal--player-titleTreatment-logo" src={logo} alt="" decoding="async" style={{ opacity: previewVideo ? 0 : 1 }} />
             </div>
           </div>
         ) : null}
 
-        <div
-          className="previewModal-audioToggle has-smaller-buttons mini-modal"
-          style={{ display: "none" }}
-        />
+        <div className="previewModal-audioToggle has-smaller-buttons mini-modal" style={{ display: "none" }} />
       </div>
 
       <div className="previewModal-close">
@@ -499,122 +370,78 @@ export default function ExpandedCard({
           }}
         >
           <div className="mini-modal-container">
-            <div
-              className="previewModal--info-container"
-              data-uia="previewModal--info-container"
-            >
-              <div
-                className="previewModal--metadatAndControls has-smaller-buttons mini-modal"
-                data-uia="previewModal--metadatAndControls"
-              >
+            <div className="previewModal--info-container" data-uia="previewModal--info-container">
+              <div className="previewModal--metadatAndControls has-smaller-buttons mini-modal" data-uia="previewModal--metadatAndControls">
                 <div className="previewModal--metadatAndControls-container">
-                  <div
-                    className="buttonControls--container has-smaller-buttons mini-modal"
-                    data-uia="mini-modal-controls"
-                  >
+                  <div className="buttonControls--container has-smaller-buttons mini-modal" data-uia="mini-modal-controls">
                     <div className="nflx-control-wrap">
-                      <MiniButton
-                        primary
-                        label="Riproduci"
-                        onClick={onPlay}
-                      >
-                        <IconPlay />
-                      </MiniButton>
+                      <MiniButton primary label="Riproduci" onClick={onPlay}><IconPlay /></MiniButton>
                     </div>
 
                     <div className="nflx-control-wrap">
-                      <MiniButton
-                        label={inList ? "Rimuovi dalla mia lista" : "La mia lista"}
-                        onClick={toggleList}
-                        selected={inList}
-                      >
+                      <MiniButton label={inList ? "Rimuovi dalla mia lista" : "La mia lista"} onClick={toggleList} selected={inList}>
                         {inList ? <IconCheck /> : <IconPlus />}
                       </MiniButton>
                     </div>
 
                     <div className="nflx-control-wrap">
-                      <MiniButton
-                        label={liked ? "Mi piace" : "Valuta"}
-                        onClick={toggleLike}
-                        selected={liked}
-                      >
+                      <MiniButton label={liked ? "Mi piace" : "Valuta"} onClick={toggleLike} selected={liked}>
                         <IconThumb />
                       </MiniButton>
                     </div>
 
+                    {typeof watch?.onRemove === "function" ? (
+                      <div className="nflx-control-wrap">
+                        <MiniButton label="Rimuovi da Continua a guardare" onClick={() => watch.onRemove()}>
+                          <IconRemove />
+                        </MiniButton>
+                      </div>
+                    ) : null}
+
                     <div className="buttonControls--expand-button">
-                      <MiniButton label="Altre info" onClick={onDetail}>
-                        <IconChevron />
-                      </MiniButton>
+                      <MiniButton label="Altre info" onClick={onDetail}><IconChevron /></MiniButton>
                     </div>
                   </div>
 
                   {watchPercent > 0 ? (
                     <div className="previewModal-progress">
                       <div className="previewModal-progress-track">
-                        <div
-                          className="previewModal-progress-value"
-                          style={{ width: `${watchPercent}%` }}
-                        />
+                        <div className="previewModal-progress-value" style={{ width: `${watchPercent}%` }} />
                       </div>
                     </div>
                   ) : null}
 
                   {supplementalMessage ? (
-                    <div className="previewModal-supplemental-message">
-                      {String(supplementalMessage)}
-                    </div>
+                    <div className="previewModal-supplemental-message">{String(supplementalMessage)}</div>
                   ) : null}
 
                   <div className="previewModal--metadatAndControls-info">
                     <div>
                       <div>
-                        <div
-                          data-uia="videoMetadata--container"
-                          className="videoMetadata--container"
-                        >
+                        <div data-uia="videoMetadata--container" className="videoMetadata--container">
                           <div className="videoMetadata--line">
-                            <span className="content-type">
-                              {type === "tv" ? "Serie" : "Film"}
-                            </span>
+                            <span className="content-type">{type === "tv" ? "Serie" : "Film"}</span>
 
                             {age ? (
-                              <div
-                                className="maturity-rating"
-                                data-uia="maturity-rating"
-                              >
-                                <span className="maturity-number">
-                                  {String(age)}
-                                </span>
+                              <div className="maturity-rating" data-uia="maturity-rating">
+                                <span className="maturity-number">{String(age)}</span>
                               </div>
                             ) : null}
 
                             {type === "tv" && seasons ? (
                               <span className="duration">
-                                {typeof seasons === "string" &&
-                                /stagion/i.test(seasons)
+                                {typeof seasons === "string" && /stagion/i.test(seasons)
                                   ? seasons
-                                  : `${seasons} ${
-                                      Number(seasons) === 1
-                                        ? "stagione"
-                                        : "stagioni"
-                                    }`}
+                                  : `${seasons} ${Number(seasons) === 1 ? "stagione" : "stagioni"}`}
                               </span>
                             ) : runtime ? (
                               <span className="duration">
-                                {String(runtime).match(/min|h|ora/i)
-                                  ? String(runtime)
-                                  : `${runtime} min`}
+                                {String(runtime).match(/min|h|ora/i) ? String(runtime) : `${runtime} min`}
                               </span>
                             ) : null}
 
                             {quality ? (
-                              <span
-                                className="player-feature-badge"
-                                data-uia={`player-feature-badge-${String(
-                                  quality
-                                ).toLowerCase()}`}
-                              >
+                              <span className="player-feature-badge" data-uia={`player-feature-badge-${String(quality).toLowerCase()}`}>
                                 {String(quality)}
                               </span>
                             ) : null}
@@ -631,13 +458,8 @@ export default function ExpandedCard({
                       <div className="evidence-tags">
                         <div className="evidence-list">
                           {evidence.map((value: string, index: number) => (
-                            <div
-                              className="evidence-item"
-                              key={`${value}-${index}`}
-                            >
-                              {index === 0 ? null : (
-                                <span className="evidence-separator" />
-                              )}
+                            <div className="evidence-item" key={`${value}-${index}`}>
+                              {index === 0 ? null : <span className="evidence-separator" />}
                               <span className="evidence-text">{value}</span>
                             </div>
                           ))}
@@ -647,10 +469,7 @@ export default function ExpandedCard({
                   ) : null}
 
                   {contentWarning ? (
-                    <div
-                      data-uia="preview-modal-content-warning"
-                      className="previewModal-contentWarning"
-                    >
+                    <div data-uia="preview-modal-content-warning" className="previewModal-contentWarning">
                       <span className="content-warning-icon">!</span>
                       <span>{String(contentWarning)}</span>
                     </div>
@@ -660,9 +479,7 @@ export default function ExpandedCard({
 
               {mostLiked ? (
                 <div className="previewModal-most-liked">
-                  {typeof mostLiked === "string"
-                    ? mostLiked
-                    : "Tra i più apprezzati"}
+                  {typeof mostLiked === "string" ? mostLiked : "Tra i più apprezzati"}
                 </div>
               ) : null}
             </div>
