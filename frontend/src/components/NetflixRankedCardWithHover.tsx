@@ -11,9 +11,9 @@ import HoverTrailerOverlay from "./HoverTrailerOverlay";
 import "./NetflixMiniModalExact.css";
 import NetflixTop10RankSvg from "./NetflixTop10RankSvg";
 
-function imageSrc(path: any, size = "w500") {
+function imageSrc(path: any, size = "w780") {
   if (!path) return "";
-  if (typeof path === "string" && (/^https?:\/\//i.test(path) || path.startsWith("data:"))) return path;
+  if (typeof path === "string" && (/^https?:\/\//i.test(path) || path.startsWith("data:") || path.startsWith("blob:"))) return path;
   const raw = String(path);
   return `${TMDB_IMG}${size}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
@@ -24,13 +24,13 @@ export default function NetflixRankedCardWithHover({ item, rank, mediaType, watc
   const normalizedId = item?.id || item?.tmdbId || item?.tmdb_id;
   const mType = mediaType || (item?.type === "tv" || item?.media_type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie);
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
-  const { open, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
+  const { open, intent, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
 
-  const assets = useDeferredMediaAssets({ ...item, id: normalizedId }, mType, open);
+  const assets = useDeferredMediaAssets({ ...item, id: normalizedId }, mType, intent || open);
   const resolved = useNetflixArtwork({ ...item, id: normalizedId }, mType, "top10", true);
   const fallbackPosterUrl = useMemo(() => imageSrc(
     item?.netflix_ranked_artwork_url || item?.netflixRankedArtworkUrl || item?.netflix_artwork_url || item?.netflixArtworkUrl || item?.netflix_cover_url || item?.contextualArtwork?.artwork?.url || item?.artwork?.url || item?.image?.url || item?.poster_path || item?.poster || item?.backdrop_path,
-    "w500"
+    "w780"
   ), [item?.netflix_ranked_artwork_url, item?.netflixRankedArtworkUrl, item?.netflix_artwork_url, item?.netflixArtworkUrl, item?.netflix_cover_url, item?.poster_path, item?.poster, item?.backdrop_path]);
 
   const [posterUrl, setPosterUrl] = useState(resolved?.artwork?.url || fallbackPosterUrl);
@@ -50,6 +50,10 @@ export default function NetflixRankedCardWithHover({ item, rank, mediaType, watc
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
     ? (assets?.resolved_trailer?.trailer_url || assets?.resolved_trailer?.trailer_key || assets?.preview_video_url)
     : null;
+  const hoverLogoUrl = imageSrc(
+    resolved?.logo?.url || assets?.logo_path || item?.logo_path,
+    "original"
+  );
 
   return (
     <>
@@ -83,7 +87,7 @@ export default function NetflixRankedCardWithHover({ item, rank, mediaType, watc
             onDetail={goDetail}
             watch={watch}
           />
-          <HoverTrailerOverlay url={trailerUrl} />
+          <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} />
         </ExpandOverlay>
       ) : null}
     </>
