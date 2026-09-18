@@ -1,8 +1,8 @@
 """
-Native player: FastAPI router + admin stream-source management.
+Native player + artwork services.
 
-Stream resolution is delegated to a modular ResolverRegistry
-(services/resolver_registry.py) with pluggable providers.
+Stream resolution is delegated to ResolverRegistry. Netflix-style artwork is
+isolated in services/netflix_artwork.py and is disabled by default.
 """
 import asyncio
 import logging
@@ -12,9 +12,12 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, field_validator
 
+from services.netflix_artwork import ArtworkResolver
 from services.resolver_registry import ResolverRegistry
 from services.resolvers import (
     AdminSourceResolver,
@@ -32,7 +35,11 @@ VIDEO_EXTS = (".m3u8", ".mp4", ".m4v", ".webm", ".ogv", ".mov")
 MIN_SITE_RATING_VOTES = 3
 
 _db = None
+_get_setting = None
+_set_setting = None
 registry = ResolverRegistry()
+artwork_resolver: Optional[ArtworkResolver] = None
+_artwork_security = HTTPBearer()
 
 __all__ = [
     "router", "registry", "init_player", "resolve_stream",
@@ -42,13 +49,22 @@ __all__ = [
 
 
 def init_player(db, get_setting=None, set_setting=None):
-    global _db
+    global _db, _get_setting, _set_setting, artwork_resolver
     _db = db
+    _get_setting = get_setting
+    _set_setting = set_setting
     registry.bind(db, get_setting, set_setting)
     registry.register(AdminSourceResolver())
     registry.register(VixSrcResolver())
     registry.register(StremioAddonResolver())
     registry.register(InternetArchiveResolver())
+    artwork_resolver = ArtworkResolver(
+        db,
+        get_setting,
+        set_setting,
+        # server.py already uses this same environment key for TMDB.
+        tmdb_api_key=os.environ.get("TMDB_API_KEY", ""),
+    )
     try:
         db["stream_sources"].create_index(
             [("tmdbId", 1), ("media_type", 1), ("season", 1), ("episode", 1)], unique=True
@@ -60,6 +76,44 @@ def init_player(db, get_setting=None, set_setting=None):
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _artwork() -> ArtworkResolver:
+    if artwork_resolver is None:
+        raise HTTPException(status_code=503, detail="Artwork resolver non inizializzato")
+    return artwork_resolver
+
+
+def _media_type(value: str) -> str:
+    if value not in ("movie", "tv"):
+        raise HTTPException(status_code=400, detail="media_type deve essere 'movie' o 'tv'")
+    return value
+
+
+def _require_artwork_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(_artwork_security),
+):
+    """Use the same JWT/user-role contract as server.py without a circular import."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Backend non inizializzato")
+    secret = os.environ.get("JWT_SECRET", "netflix-admin-super-secret-key-2024")
+    try:
+        payload = jwt.decode(credentials.credentials, secret, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    query = (
+        {"id": payload["user_id"]}
+        if payload.get("user_id")
+        else ({"email": str(payload.get("email") or "").lower()} if payload.get("email") else None)
+    )
+    if not query:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = _db["users"].find_one(query, {"_id": 0, "password": 0})
+    if not user or user.get("role", "user") not in ("admin", "superadmin"):
+        raise HTTPException(status_code=403, detail="Permessi insufficienti")
+    return user
 
 
 class StreamSourceUpdate(BaseModel):
@@ -130,15 +184,194 @@ def clear_cache() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Netflix-style artwork resolver
+# ---------------------------------------------------------------------------
+class ArtworkConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    region: Optional[str] = None
+    cookies: Optional[str] = None
+
+
+class ArtworkManualMatch(BaseModel):
+    netflix_id: str
+
+
+class ArtworkOverrideUpdate(BaseModel):
+    context: str = "home"
+    url: str
+    asset_type: Optional[str] = "manual"
+    width: Optional[int] = 0
+    height: Optional[int] = 0
+
+
+@router.get("/artwork/config")
+async def public_artwork_config():
+    cfg = _artwork().config()
+    # Never expose cookie state/source to the public client.
+    return {"enabled": cfg["enabled"], "region": cfg["region"]}
+
+
+@router.get("/artwork/admin/config")
+async def admin_artwork_config(_admin=Depends(_require_artwork_admin)):
+    return _artwork().config()
+
+
+@router.put("/artwork/admin/config")
+async def admin_update_artwork_config(data: ArtworkConfigUpdate, _admin=Depends(_require_artwork_admin)):
+    try:
+        return _artwork().update_config(
+            enabled=data.enabled,
+            region=data.region,
+            cookies=data.cookies,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/artwork/admin/test")
+async def admin_test_artwork(_admin=Depends(_require_artwork_admin)):
+    return await _artwork().test_connection()
+
+
+@router.get("/artwork/admin/matches")
+async def admin_artwork_matches(
+    status: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+    _admin=Depends(_require_artwork_admin),
+):
+    return {"items": _artwork().admin_list(limit=limit, status=status)}
+
+
+@router.get("/artwork/admin/{media_type}/{tmdb_id}")
+async def admin_artwork_preview(
+    media_type: str,
+    tmdb_id: int,
+    context: str = "home",
+    viewport: str = "desktop",
+    profile_id: str = "admin-preview",
+    refresh: bool = False,
+    _admin=Depends(_require_artwork_admin),
+):
+    return await _artwork().resolve(
+        _media_type(media_type),
+        tmdb_id,
+        context=context,
+        viewport=viewport,
+        profile_id=profile_id,
+        preview=True,
+        force_match=refresh,
+    )
+
+
+@router.post("/artwork/admin/{media_type}/{tmdb_id}/auto-match")
+async def admin_auto_match_artwork(
+    media_type: str,
+    tmdb_id: int,
+    _admin=Depends(_require_artwork_admin),
+):
+    return await _artwork().resolve(
+        _media_type(media_type), tmdb_id, preview=True, force_match=True
+    )
+
+
+@router.put("/artwork/admin/{media_type}/{tmdb_id}/manual-match")
+async def admin_manual_match_artwork(
+    media_type: str,
+    tmdb_id: int,
+    data: ArtworkManualMatch,
+    _admin=Depends(_require_artwork_admin),
+):
+    try:
+        doc = await _artwork().manual_match(_media_type(media_type), tmdb_id, data.netflix_id)
+        return await _artwork().resolve(
+            media_type, tmdb_id, preview=True, context="home", force_match=False
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/artwork/admin/{media_type}/{tmdb_id}/block")
+async def admin_block_artwork(
+    media_type: str,
+    tmdb_id: int,
+    _admin=Depends(_require_artwork_admin),
+):
+    return _artwork().block(_media_type(media_type), tmdb_id)
+
+
+@router.delete("/artwork/admin/{media_type}/{tmdb_id}/match")
+async def admin_reset_artwork_match(
+    media_type: str,
+    tmdb_id: int,
+    _admin=Depends(_require_artwork_admin),
+):
+    return _artwork().reset_match(_media_type(media_type), tmdb_id)
+
+
+@router.put("/artwork/admin/{media_type}/{tmdb_id}/override")
+async def admin_set_artwork_override(
+    media_type: str,
+    tmdb_id: int,
+    data: ArtworkOverrideUpdate,
+    _admin=Depends(_require_artwork_admin),
+):
+    try:
+        asset = _artwork().set_override(
+            _media_type(media_type),
+            tmdb_id,
+            data.context,
+            {
+                "url": data.url,
+                "type": data.asset_type,
+                "width": data.width,
+                "height": data.height,
+            },
+        )
+        return {"success": True, "override": asset}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/artwork/admin/{media_type}/{tmdb_id}/override")
+async def admin_reset_artwork_override(
+    media_type: str,
+    tmdb_id: int,
+    context: str = "home",
+    _admin=Depends(_require_artwork_admin),
+):
+    _artwork().reset_override(_media_type(media_type), tmdb_id, context)
+    return {"success": True, "context": context}
+
+
+@router.get("/artwork/{media_type}/{tmdb_id}")
+async def public_artwork(
+    media_type: str,
+    tmdb_id: int,
+    context: str = "home",
+    viewport: str = "desktop",
+    profile_id: str = "guest",
+):
+    # Public requests never force a refresh: first load can resolve and cache, then
+    # subsequent cards reuse Mongo. Feature-disabled requests are constant-time.
+    return await _artwork().resolve(
+        _media_type(media_type),
+        tmdb_id,
+        context=context,
+        viewport=viewport,
+        profile_id=profile_id,
+        preview=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Site-vote Top 10
 # ---------------------------------------------------------------------------
 def _rating_candidates(limit: int = 30) -> list:
     """Rank titles from FLIX-IT user votes.
 
     A title needs at least MIN_SITE_RATING_VOTES independent rating records to
-    qualify for the rating-led part of Top 10. This prevents one isolated 5-star
-    vote from putting a title at the top. Missing positions are filled from real
-    FLIX-IT viewing activity and finally from available catalogue entries.
+    qualify for the rating-led part of Top 10. Missing positions are filled from
+    real FLIX-IT viewing activity and finally from available catalogue entries.
     """
     if _db is None:
         return []
