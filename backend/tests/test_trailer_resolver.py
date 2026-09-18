@@ -5,6 +5,7 @@ from services.trailers.base import (
     is_blocked_url,
     pick_best,
 )
+from services.trailers.providers.imdb import _height_from_label, _trailer_type
 
 
 def c(height, lang="en", bitrate=5_000_000, hdr=False, url=None):
@@ -69,3 +70,16 @@ def test_exact_title_year_type_is_high_confidence():
     identity = {"type": "movie", "title": "Dune", "original_title": "Dune", "year": 2021}
     assert confidence_for_identity(identity, "Dune", 2021, "movie") >= 0.97
     assert confidence_for_identity(identity, "Dune", 2021, "tv") == 0.0
+
+
+def test_imdb_quality_label_parser():
+    assert _height_from_label("1080p") == 1080
+    assert _height_from_label("720p") == 720
+    assert _height_from_label("SD") is None
+
+
+def test_imdb_trailer_type_priority_labels():
+    assert _trailer_type("Official Trailer", "trailer") == "Official Trailer"
+    assert _trailer_type("Final Trailer", "trailer") == "Final Trailer"
+    assert _trailer_type("Official Teaser", "video") == "Official Teaser"
+    assert _trailer_type("Clip 1", "clip") == "Clip"
