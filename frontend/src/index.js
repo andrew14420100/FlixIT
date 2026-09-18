@@ -9,6 +9,7 @@ import { RouterProvider } from "react-router-dom";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import "@/index.css";
+import "@/scroll-stability.css";
 
 import store from "./store";
 import { extendedApi } from "./store/slices/configuration";
