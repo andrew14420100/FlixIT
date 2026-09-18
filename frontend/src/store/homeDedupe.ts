@@ -27,7 +27,10 @@ export const useHomeDedupe = create((set) => ({
       delete rows[key];
       return { rows };
     }),
-  reset: () => set({ rows: {} }),
+  // Mounted rows clean themselves up on unmount. A global reset while child
+  // effects are claiming rows can erase valid claims and briefly reintroduce
+  // duplicates, so reset is intentionally non-destructive.
+  reset: () => {},
 }));
 
 export const itemKey = (item) => {
