@@ -7,6 +7,7 @@ import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import HeroSection from "src/components/HeroSection";
 import ContinueWatchingSection from "src/components/ContinueWatchingSection";
+import HomeSmartSections from "src/components/HomeSmartSections";
 import { genreSliceEndpoints } from "src/store/slices/genre";
 import { MEDIA_TYPE } from "src/types/Common";
 import store from "src/store";
@@ -164,6 +165,7 @@ export function Component() {
         className="sliders" data-testid="home-rows"
       >
         <ContinueWatchingSection />
+        <HomeSmartSections />
 
         {visibleSections.map((section, index) => (
           <SectionRow key={section.key} section={section} index={index} onSettled={onRowSettled} />
