@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect, useMemo, useState } from "react";
 import "./NetflixMiniModalExact.css";
 
 interface Props {
@@ -12,6 +12,19 @@ interface Props {
   onMouseLeave?: any;
   watch?: any;
   testId?: string;
+}
+
+function tmdbResponsiveSet(url?: string | null) {
+  if (!url) return undefined;
+  const match = String(url).match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)(\/.*)$/i);
+  if (!match) return undefined;
+  const [, base, path] = match;
+  return [
+    `${base}w342${path} 342w`,
+    `${base}w500${path} 500w`,
+    `${base}w780${path} 780w`,
+    `${base}w1280${path} 1280w`,
+  ].join(", ");
 }
 
 const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixStandardCard(
@@ -34,6 +47,8 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
     setSrc(imageUrl || fallbackImageUrl || null);
   }, [imageUrl, fallbackImageUrl]);
 
+  const srcSet = useMemo(() => tmdbResponsiveSet(src), [src]);
+
   return (
     <div
       ref={ref}
@@ -54,6 +69,8 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
             {src ? (
               <img
                 src={src}
+                srcSet={srcSet}
+                sizes="(max-width: 500px) 50vw, (max-width: 800px) 33vw, (max-width: 1100px) 25vw, 17vw"
                 alt=""
                 width="342"
                 height="192"
