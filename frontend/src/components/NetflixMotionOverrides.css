@@ -16,12 +16,11 @@
   transform-style: preserve-3d;
 }
 
-/* Continua a guardare: remove sits in the hover control row immediately after
-   the thumb/rating button, not on top of the artwork. */
+/* Continue Watching remove is positioned from the measured modal width by
+   VideoItemWithHover, so it shares the exact button-control baseline at every
+   responsive card size instead of relying on a fixed desktop offset. */
 .continue-hover-remove {
   position: absolute !important;
-  top: calc(var(--flix-mini-modal-width, 366px) * .563925 + 16px);
-  left: 154px;
   z-index: 30;
   margin: 0 !important;
 }
