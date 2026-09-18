@@ -8,15 +8,55 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin
 
 import httpx
 
 from .base import TrailerCandidate
+
+
+def _find_media_binary(name: str) -> Optional[str]:
+    """Find ffmpeg/ffprobe even when Supervisor or a shell has a reduced PATH.
+
+    FLIX-IT installs Theryston's static binaries under /app/trailers-api, but
+    relying only on /usr/local/bin symlinks made trailer probing fragile across
+    restarts. Prefer an explicit env override, then PATH, then the bundled
+    Theryston locations.
+    """
+    env_name = "FFPROBE_BIN" if name == "ffprobe" else "FFMPEG_BIN"
+    candidates = [
+        (os.environ.get(env_name) or "").strip(),
+        shutil.which(name) or "",
+    ]
+    if name == "ffprobe":
+        candidates.extend([
+            "/app/trailers-api/node_modules/ffprobe-static/bin/linux/x64/ffprobe",
+            "/usr/local/bin/ffprobe",
+            "/usr/bin/ffprobe",
+        ])
+    else:
+        candidates.extend([
+            "/app/trailers-api/node_modules/ffmpeg-static/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+        ])
+
+    for raw in candidates:
+        if not raw:
+            continue
+        try:
+            path = Path(raw)
+            if path.is_file() and os.access(path, os.X_OK):
+                return str(path)
+        except Exception:
+            continue
+    return None
 
 
 def _attrs(raw: str) -> dict[str, str]:
@@ -248,7 +288,7 @@ async def inspect_dash(
 
 
 async def probe_direct_file(url: str, *, timeout: float = 18.0) -> Optional[dict]:
-    ffprobe = shutil.which("ffprobe")
+    ffprobe = _find_media_binary("ffprobe")
     if not ffprobe:
         return None
     proc = await asyncio.create_subprocess_exec(
