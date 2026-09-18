@@ -13,6 +13,7 @@ export { default as LogsPage } from './pages/LogsPage';
 export { default as Top10Page } from './pages/Top10Page';
 export { default as SettingsPage } from './pages/SettingsPage';
 export { default as ArtworkPage } from './pages/ArtworkPage';
+export { default as TrailersPage } from './pages/TrailersPage';
 export { default as UsersPage } from './pages/UsersPage';
 export { default as TicketsPage } from './pages/TicketsPage';
 export { default as PlansPage } from './pages/PlansPage';
