@@ -16,17 +16,32 @@
   transform-style: preserve-3d;
 }
 
-/* The first real section must keep a little breathing room from the Hero both
-   for guests and logged-in profiles. Moving the whole row stack preserves the
-   exact relative spacing of every section that follows it. */
-.sliders {
-  margin-top: -3.8vh !important;
+/* One geometry for the entire Hero. The previous root used a shorter em-based
+   height while backdrop/video layers used 56.25em, so rows could drift into the
+   billboard differently at different viewport widths. */
+.billboard {
+  height: clamp(560px, 42vw, 760px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
 }
 
-@media (max-width: 599px) {
-  .sliders {
-    margin-top: -4.3vh !important;
-  }
+.billboard > img,
+.billboard > .hero-video-container,
+.billboard > div {
+  height: 100% !important;
+  max-height: 100% !important;
+}
+
+/* Keep some Netflix-style overlap, but lower Continue Watching and therefore
+   every section below it. */
+.sliders {
+  margin-top: -3vh !important;
+  padding-top: 24px !important;
+}
+
+#continua.slider-row {
+  margin-top: 30px !important;
+  margin-bottom: 28px !important;
 }
 
 /* Keep compositor ownership during the most animation-heavy interactions. */
@@ -46,6 +61,24 @@
 .slider-row[data-sliding="true"] .netflix-standard-card-root,
 .slider-row[data-sliding="true"] .netflix-ranked-card-root {
   pointer-events: none;
+}
+
+@media (max-width: 799px) {
+  .billboard {
+    height: 66vh !important;
+    min-height: 460px !important;
+    max-height: 680px !important;
+  }
+
+  .sliders {
+    margin-top: -1.5vh !important;
+    padding-top: 18px !important;
+  }
+
+  #continua.slider-row {
+    margin-top: 22px !important;
+    margin-bottom: 20px !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
