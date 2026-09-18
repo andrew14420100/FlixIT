@@ -18,13 +18,40 @@ import { useHomeDedupe, itemKey, claimedAbove } from "src/store/homeDedupe";
 
 const INITIAL_ROWS = 4;
 const ROWS_PER_LOAD = 3;
-const FEED_REFRESH_MS = 5 * 60 * 1000;
+const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
+const HOME_CACHE_PREFIX = "flix-home-v3";
+
+function readPersistedCache(key) {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || "null");
+    if (!parsed || !parsed.savedAt || parsed.data == null) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedCache(key, data) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ savedAt: Date.now(), data })
+    );
+  } catch {
+    // A full localStorage must never block the homepage.
+  }
+}
 
 const freshFetchJson = async (url, fallback) => {
   if (!url) return fallback;
   try {
     const separator = url.includes("?") ? "&" : "?";
-    const response = await fetch(`${url}${separator}_flix=${Date.now()}`, {
+    // One network refresh per day, but when it happens it must bypass browser
+    // cache and ask FLIX-IT for the newest catalogue snapshot.
+    const dailyVersion = Math.floor(Date.now() / DAILY_REFRESH_MS);
+    const response = await fetch(`${url}${separator}_flix_day=${dailyVersion}`, {
       cache: "no-store",
       headers: { "Cache-Control": "no-cache" },
     });
@@ -78,33 +105,49 @@ function sectionSignature(section) {
   return `${type}|${media}|${genre}|${country}`;
 }
 
-function sectionRefreshMs(section) {
-  const type = section.section_type || section.apiString;
-  switch (type) {
-    case "top10":
-      return 2 * 60 * 1000;
-    case "trending":
-    case "latest":
-    case "new_releases":
-    case "new_seasons":
-    case "airing_today":
-    case "on_the_air":
-      return 5 * 60 * 1000;
-    case "upcoming":
-    case "now_playing":
-      return 10 * 60 * 1000;
-    case "genre":
-    case "popular":
-    case "top_rated":
-    default:
-      return 15 * 60 * 1000;
+function mergeDailyItems(previousData, incomingData, type) {
+  const incoming = incomingData?.items || [];
+  const previous = previousData?.items || [];
+
+  // Ranking rows are allowed to change order once per day because their order
+  // has meaning. Catalogue rows stay stable: newly available titles are
+  // prepended and existing cards keep their relative position. This prevents
+  // the random-looking reshuffle that was happening on every reload.
+  if (
+    !previous.length ||
+    type === "top10" ||
+    type === "trending" ||
+    type === "popular" ||
+    type === "top_rated"
+  ) {
+    return incomingData;
   }
+
+  const previousKeys = new Set(previous.map(itemKey).filter(Boolean));
+  const incomingByKey = new Map(
+    incoming.map((item) => [itemKey(item), item]).filter(([key]) => !!key)
+  );
+
+  const addedToday = incoming.filter((item) => {
+    const key = itemKey(item);
+    return key && !previousKeys.has(key);
+  });
+
+  const retained = previous
+    .map((item) => incomingByKey.get(itemKey(item)))
+    .filter(Boolean);
+
+  return {
+    ...incomingData,
+    items: [...addedToday, ...retained].slice(0, 30),
+  };
 }
 
 // Home Screen Sections replaces the vanilla home with a modular feed. FLIX-IT
-// now follows the same principle: configured rows stay first, then every other
-// supported template is appended automatically (not just genres). Infinite
-// loading keeps a large catalogue cheap to render.
+// follows the same principle: configured rows stay first, then every other
+// supported template is appended automatically. The section definitions and
+// catalogue cards are persisted locally so a browser reload paints immediately
+// while the network refresh happens only when the daily snapshot expires.
 function buildExtraSections(templates, adminSections) {
   const used = new Set(adminSections.map(sectionSignature));
   const usedNames = new Set(adminSections.map((s) => s.name));
@@ -155,15 +198,25 @@ function SectionRow({ section, index, onSettled }) {
   const url = sectionUrl(section);
   const type = section.section_type || section.apiString;
   const isTop10 = type === "top10";
-  const refreshMs = sectionRefreshMs(section);
+  const cacheKey = `${HOME_CACHE_PREFIX}:row:${sectionSignature(section)}`;
+  const initialCache = useMemo(() => readPersistedCache(cacheKey), [cacheKey]);
 
   const { data, isPending } = useQuery({
     queryKey: ["home-row", sectionSignature(section), url],
-    queryFn: () => freshFetchJson(url, { items: [] }),
-    staleTime: Math.min(refreshMs / 2, 2 * 60 * 1000),
-    refetchInterval: refreshMs,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
+    queryFn: async () => {
+      const incoming = await freshFetchJson(url, { items: [] });
+      const previous = readPersistedCache(cacheKey)?.data;
+      const merged = mergeDailyItems(previous, incoming, type);
+      writePersistedCache(cacheKey, merged);
+      return merged;
+    },
+    initialData: initialCache?.data,
+    initialDataUpdatedAt: initialCache?.savedAt,
+    staleTime: DAILY_REFRESH_MS,
+    gcTime: DAILY_REFRESH_MS * 7,
+    refetchInterval: DAILY_REFRESH_MS,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     refetchIntervalInBackground: false,
   });
 
@@ -208,6 +261,12 @@ export function Component() {
   const [tick, setTick] = useState(0);
   const sentinelRef = useRef(null);
 
+  const feedCacheKey = `${HOME_CACHE_PREFIX}:feed`;
+  const initialFeedCache = useMemo(
+    () => readPersistedCache(feedCacheKey),
+    [feedCacheKey]
+  );
+
   const { data: feed = null } = useQuery({
     queryKey: ["home-feed"],
     queryFn: async () => {
@@ -221,12 +280,17 @@ export function Component() {
         .map((s) => ({ ...s, key: `admin-${s.name}-${sectionSignature(s)}` }));
 
       const automatic = buildExtraSections(tplData.sections || [], admin);
-      return [...admin, ...automatic];
+      const nextFeed = [...admin, ...automatic];
+      writePersistedCache(feedCacheKey, nextFeed);
+      return nextFeed;
     },
-    staleTime: 60 * 1000,
-    refetchInterval: FEED_REFRESH_MS,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
+    initialData: initialFeedCache?.data,
+    initialDataUpdatedAt: initialFeedCache?.savedAt,
+    staleTime: DAILY_REFRESH_MS,
+    gcTime: DAILY_REFRESH_MS * 7,
+    refetchInterval: DAILY_REFRESH_MS,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     refetchIntervalInBackground: false,
   });
 
@@ -235,9 +299,11 @@ export function Component() {
   const hasMore = visibleCount < total;
 
   useEffect(() => {
-    // If an automatic refresh adds/removes sections, never leave the visible
-    // counter outside the new feed length.
-    if (feed) setVisibleCount((count) => Math.min(Math.max(INITIAL_ROWS, count), feed.length || INITIAL_ROWS));
+    if (feed) {
+      setVisibleCount((count) =>
+        Math.min(Math.max(INITIAL_ROWS, count), feed.length || INITIAL_ROWS)
+      );
+    }
   }, [feed]);
 
   useEffect(() => {
@@ -268,7 +334,7 @@ export function Component() {
         maxWidth: "none",
         mx: 0,
         overflowX: "hidden",
-        fontFamily: '"Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif',
+        fontFamily: '\"Netflix Sans\", \"Helvetica Neue\", Helvetica, Arial, sans-serif',
       }}
     >
       <HeroSection mediaType={currentMediaType} />
