@@ -38,6 +38,14 @@ function inferArtworkContext(explicit?: string) {
   return "home";
 }
 
+function RemoveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M5.293 5.293a1 1 0 0 1 1.414 0L12 10.586l5.293-5.293a1 1 0 1 1 1.414 1.414L13.414 12l5.293 5.293a1 1 0 0 1-1.414 1.414L12 13.414l-5.293 5.293a1 1 0 0 1-1.414-1.414L10.586 12 5.293 6.707a1 1 0 0 1 0-1.414Z"/>
+    </svg>
+  );
+}
+
 export default function VideoItemWithHover({ video, mediaType, watch, suppressHover = false, artworkContext }: Props) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -57,8 +65,6 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   }, []);
 
   const { open, intent, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
-  // Start the lightweight trailer/cache request on pointer intent, not after the
-  // expansion finishes. The actual video element is still mounted only when open.
   const assets = useDeferredMediaAssets(video, mType, intent || open);
   const resolved = useNetflixArtwork(video, mType, resolvedContext, nearViewport);
 
@@ -93,6 +99,13 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     "original"
   );
 
+  // Player is 16:9; info controls begin 16px below it. Computing the Y from
+  // the measured mini-modal width keeps the Continue-Watching X on exactly the
+  // same control baseline at every responsive card size.
+  const removeButtonTop = position?.modalWidth
+    ? Math.round(Number(position.modalWidth) * (9 / 16) + 20)
+    : 200;
+
   return (
     <>
       <NetflixStandardCard
@@ -125,6 +138,28 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
             watch={watch}
           />
           <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} />
+
+          {typeof watch?.onRemove === "function" ? (
+            <button
+              type="button"
+              className="nflx-mini-control color-supplementary hasIcon round continue-hover-remove"
+              aria-label="Rimuovi da Continua a guardare"
+              title="Rimuovi da Continua a guardare"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                watch.onRemove();
+              }}
+              style={{
+                position: "absolute",
+                top: `${removeButtonTop}px`,
+                right: "62px",
+                zIndex: 20,
+              }}
+            >
+              <span className="small" role="presentation"><RemoveIcon /></span>
+            </button>
+          ) : null}
         </ExpandOverlay>
       ) : null}
     </>
