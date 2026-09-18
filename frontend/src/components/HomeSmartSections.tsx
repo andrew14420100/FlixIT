@@ -10,9 +10,10 @@ import {
   claimedAbove,
   uniqueItems,
 } from "src/store/homeDedupe";
+import { writeHomePreferences } from "src/store/homePersonalization";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CACHE_PREFIX = "flix-home-smart-v6";
+const CACHE_PREFIX = "flix-home-smart-v7";
 const WATCH_AGAIN_DAYS = 28;
 const RECENT_DAYS = 14;
 const MAX_HISTORY = 12;
@@ -48,6 +49,59 @@ function daysSince(value) {
   const time = new Date(value).getTime();
   if (!Number.isFinite(time)) return Number.POSITIVE_INFINITY;
   return Math.max(0, (Date.now() - time) / 86400000);
+}
+
+function releaseTime(item) {
+  const raw = item?.release_date || item?.first_air_date || item?.available_at || "";
+  const time = new Date(raw).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function freshnessScore(item) {
+  const ts = releaseTime(item);
+  if (!ts) return 18;
+  const days = (Date.now() - ts) / 86400000;
+  if (days < 0) return 0;
+  if (days <= 14) return 100;
+  if (days <= 30) return 94;
+  if (days <= 90) return 84;
+  if (days <= 180) return 70;
+  if (days <= 365) return 54;
+  if (days <= 730) return 30;
+  return 8;
+}
+
+function fameScore(item) {
+  const popularity = Math.max(0, Number(item?.popularity || 0));
+  const votes = Math.max(0, Number(item?.vote_count || 0));
+  const rating = Math.max(0, Math.min(10, Number(item?.vote_average || 0)));
+  return (
+    Math.min(100, Math.log1p(popularity) * 17) * 0.52 +
+    Math.min(100, Math.log1p(votes) * 11) * 0.30 +
+    rating * 10 * 0.18
+  );
+}
+
+function rankNewForYou(items, favoriteGenres = []) {
+  const favorites = favoriteGenres.map(Number);
+  return normalize(items)
+    .map((item, index) => {
+      const itemGenres = (item?.genre_ids || []).map(Number);
+      let taste = 0;
+      favorites.forEach((genreId, rank) => {
+        if (itemGenres.includes(genreId)) taste += Math.max(8, 34 - rank * 9);
+      });
+      const fresh = freshnessScore(item);
+      const famous = fameScore(item);
+      const endpointRank = Math.max(0, 100 - index * 1.5);
+      return {
+        item,
+        score: fresh * 0.48 + famous * 0.22 + taste * 0.24 + endpointRank * 0.06,
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.item)
+    .slice(0, MAX_ROW_ITEMS);
 }
 
 function cacheKey() {
@@ -108,6 +162,20 @@ async function genrePool(genreId, mediaType) {
   return normalize(pages.flatMap((part) => part?.items || []), slug);
 }
 
+async function freshCataloguePool() {
+  const urls = [
+    "/api/public/homepage/latest",
+    "/api/public/tmdb/now_playing?page=1",
+    "/api/public/tmdb/now_playing?page=2",
+    "/api/public/tmdb/on_the_air?page=1",
+    "/api/public/tmdb/on_the_air?page=2",
+  ];
+  const parts = await Promise.all(
+    urls.map((url) => fetchJson(url, { items: [] }))
+  );
+  return normalize(parts.flatMap((part) => part?.items || []));
+}
+
 function removeTaken(items, taken) {
   return normalize(items)
     .filter((item) => !taken.has(itemKey(item)))
@@ -138,6 +206,7 @@ export default function HomeSmartSections() {
 
   const [becauseItems, setBecauseItems] = useState(initial.becauseItems || []);
   const [becauseTitle, setBecauseTitle] = useState(initial.becauseTitle || "");
+  const [newForYouItems, setNewForYouItems] = useState(initial.newForYouItems || []);
   const [genreItems, setGenreItems] = useState(initial.genreItems || []);
   const [genreTitle, setGenreTitle] = useState(initial.genreTitle || "");
   const [myListItems, setMyListItems] = useState(initial.myListItems || []);
@@ -189,6 +258,7 @@ export default function HomeSmartSections() {
   const applyState = useCallback((next) => {
     setBecauseItems(next.becauseItems || []);
     setBecauseTitle(next.becauseTitle || "");
+    setNewForYouItems(next.newForYouItems || []);
     setGenreItems(next.genreItems || []);
     setGenreTitle(next.genreTitle || "");
     setMyListItems(next.myListItems || []);
@@ -203,20 +273,22 @@ export default function HomeSmartSections() {
       }
 
       const request = ++requestRef.current;
-      const userId = localStorage.getItem("netflix_user_id") || "";
-      const [listData, likesData] = await Promise.all([
-        userId
+      const userId = localStorage.getItem("netflix_user_id") || "guest";
+      const [listData, likesData, freshPool] = await Promise.all([
+        userId !== "guest"
           ? fetchJson(`/api/user/list/${encodeURIComponent(userId)}`, { items: [] })
           : Promise.resolve({ items: [] }),
-        userId
+        userId !== "guest"
           ? fetchJson(`/api/user/likes/${encodeURIComponent(userId)}`, { items: [] })
           : Promise.resolve({ items: [] }),
+        freshCataloguePool(),
       ]);
       if (request !== requestRef.current) return;
 
       const next = {
         becauseItems: [],
         becauseTitle: "",
+        newForYouItems: rankNewForYou(freshPool, []),
         genreItems: [],
         genreTitle: "",
         myListItems: normalize(listData?.items || []).slice(0, MAX_ROW_ITEMS),
@@ -297,9 +369,23 @@ export default function HomeSmartSections() {
           });
         });
 
-        const favoriteGenre = [...genreScores.values()].sort(
+        const rankedGenres = [...genreScores.values()].sort(
           (a, b) => b.score - a.score
-        )[0];
+        );
+        const favoriteGenre = rankedGenres[0];
+        const favoriteGenreIds = rankedGenres.slice(0, 3).map((genre) => genre.id);
+
+        const movieCount = recentHistory.filter((item) => item.media_type !== "tv").length;
+        const tvCount = recentHistory.filter((item) => item.media_type === "tv").length;
+        const preferredMediaType = tvCount > movieCount ? "tv" : movieCount > tvCount ? "movie" : "mixed";
+
+        if (favoriteGenreIds.length) {
+          writeHomePreferences(userId, {
+            favoriteGenres: favoriteGenreIds,
+            preferredMediaType,
+          });
+        }
+
         if (favoriteGenre) {
           const pool = await genrePool(favoriteGenre.id, favoriteGenre.mediaType);
           const watched = new Set(recentHistory.map(itemKey));
@@ -309,6 +395,13 @@ export default function HomeSmartSections() {
           next.genreTitle = next.genreItems.length
             ? `${toSlug(favoriteGenre.mediaType) === "tv" ? "Serie" : "Film"} ${favoriteGenre.name}`
             : "";
+
+          // "Novità per te" combines fresh catalogue titles with the user's
+          // strongest taste pool, then ranks freshness + fame + genre affinity.
+          next.newForYouItems = rankNewForYou(
+            [...freshPool, ...pool],
+            favoriteGenreIds
+          ).filter((item) => !watched.has(itemKey(item)));
         }
       }
 
@@ -319,39 +412,48 @@ export default function HomeSmartSections() {
     [key, recentHistory, loadDetails, applyState]
   );
 
-  // A stale daily snapshot is recalculated only when this page mounts/reloads.
-  // No 24h timer mutates an already-open homepage underneath the user.
+  // Daily snapshots change only after the next page load/reload.
   useEffect(() => {
     refresh();
   }, [historyKey, refresh]);
 
   const visibleBecause = useMemo(() => {
-    const taken = claimedAbove(rows, -40, "smart-because-watched");
+    const taken = claimedAbove(rows, -45, "smart-because-watched");
     return removeTaken(becauseItems, taken);
   }, [becauseItems, rows]);
+
+  const visibleNewForYou = useMemo(() => {
+    const taken = claimedAbove(rows, -40, "smart-new-for-you");
+    visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    return removeTaken(newForYouItems, taken);
+  }, [newForYouItems, visibleBecause, rows]);
 
   const visibleWatchAgain = useMemo(() => {
     const taken = claimedAbove(rows, -30, "smart-watch-again");
     visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    visibleNewForYou.forEach((item) => taken.add(itemKey(item)));
     return removeTaken(watchAgainItems, taken);
-  }, [watchAgainItems, visibleBecause, rows]);
+  }, [watchAgainItems, visibleBecause, visibleNewForYou, rows]);
 
   const visibleMyList = useMemo(() => {
     const taken = claimedAbove(rows, -20, "smart-my-list");
     visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    visibleNewForYou.forEach((item) => taken.add(itemKey(item)));
     visibleWatchAgain.forEach((item) => taken.add(itemKey(item)));
     return removeTaken(myListItems, taken);
-  }, [myListItems, visibleBecause, visibleWatchAgain, rows]);
+  }, [myListItems, visibleBecause, visibleNewForYou, visibleWatchAgain, rows]);
 
   const visibleGenre = useMemo(() => {
     const taken = claimedAbove(rows, -10, "smart-genre");
     visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    visibleNewForYou.forEach((item) => taken.add(itemKey(item)));
     visibleWatchAgain.forEach((item) => taken.add(itemKey(item)));
     visibleMyList.forEach((item) => taken.add(itemKey(item)));
     return removeTaken(genreItems, taken);
-  }, [genreItems, visibleBecause, visibleWatchAgain, visibleMyList, rows]);
+  }, [genreItems, visibleBecause, visibleNewForYou, visibleWatchAgain, visibleMyList, rows]);
 
-  useClaimRow("smart-because-watched", -40, visibleBecause);
+  useClaimRow("smart-because-watched", -45, visibleBecause);
+  useClaimRow("smart-new-for-you", -40, visibleNewForYou);
   useClaimRow("smart-watch-again", -30, visibleWatchAgain);
   useClaimRow("smart-my-list", -20, visibleMyList);
   useClaimRow("smart-genre", -10, visibleGenre);
@@ -360,6 +462,9 @@ export default function HomeSmartSections() {
     <>
       {becauseTitle && visibleBecause.length > 0 && (
         <HomepageSlider title={becauseTitle} items={visibleBecause} />
+      )}
+      {visibleNewForYou.length > 0 && (
+        <HomepageSlider title="Novità per te" items={visibleNewForYou} />
       )}
       {visibleWatchAgain.length > 0 && (
         <HomepageSlider title="Guarda di nuovo" items={visibleWatchAgain} />
