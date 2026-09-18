@@ -24,12 +24,8 @@ const discoverSlice = createSlice({
     },
     initiateItem: (state, action) => {
       const { mediaType, itemKey } = action.payload;
-      if (!state[mediaType]) {
-        state[mediaType] = {};
-      }
-      if (!state[mediaType][itemKey]) {
-        state[mediaType][itemKey] = initialItemState;
-      }
+      if (!state[mediaType]) state[mediaType] = {};
+      if (!state[mediaType][itemKey]) state[mediaType][itemKey] = initialItemState;
     },
   },
   extraReducers(builder) {
@@ -59,6 +55,11 @@ const discoverSlice = createSlice({
 export const { setNextPage, initiateItem } = discoverSlice.actions;
 export default discoverSlice.reducer;
 
+const emptyVideos = (id: number) => ({
+  id,
+  results: [],
+});
+
 const extendedApi = tmdbApi.injectEndpoints({
   endpoints: (build) => ({
     getVideosByMediaTypeAndGenreId: build.query<
@@ -70,7 +71,12 @@ const extendedApi = tmdbApi.injectEndpoints({
     >({
       query: ({ mediaType, genreId, page }) => ({
         url: `/discover/${mediaType}`,
-        params: { api_key: TMDB_V3_API_KEY, with_genres: genreId, page, language: "it-IT" },
+        params: {
+          api_key: TMDB_V3_API_KEY,
+          with_genres: genreId,
+          page,
+          language: "it-IT",
+        },
       }),
       transformResponse: (
         response: PaginatedMovieResult,
@@ -82,6 +88,7 @@ const extendedApi = tmdbApi.injectEndpoints({
         itemKey: genreId,
       }),
     }),
+
     getVideosByMediaTypeAndCustomGenre: build.query<
       PaginatedMovieResult & {
         mediaType: MEDIA_TYPE;
@@ -97,14 +104,13 @@ const extendedApi = tmdbApi.injectEndpoints({
         response: PaginatedMovieResult,
         _,
         { mediaType, apiString }
-      ) => {
-        return {
-          ...response,
-          mediaType,
-          itemKey: apiString,
-        };
-      },
+      ) => ({
+        ...response,
+        mediaType,
+        itemKey: apiString,
+      }),
     }),
+
     getAppendedVideos: build.query<
       MovieDetail,
       { mediaType: MEDIA_TYPE; id: number }
@@ -113,47 +119,42 @@ const extendedApi = tmdbApi.injectEndpoints({
         url: `/${mediaType}/${id}`,
         params: {
           api_key: TMDB_V3_API_KEY,
-          append_to_response: "videos,credits",
+          // Credits are still used by DetailPage. Trailer metadata is resolved
+          // by FLIX-IT's backend, so there is no reason to download TMDB's
+          // YouTube video list on every detail/hero request.
+          append_to_response: "credits",
           language: "it-IT",
         },
       }),
-      transformResponse: (response: any) => {
-        // DetailPage's legacy implementation mounts its Hero trailer only when
-        // a video key exists. Give it one internal sentinel and never expose the
-        // old TMDB/YouTube list. TrailerPlayer intercepts this sentinel and reads
-        // the cached central resolver URL, so no YouTube iframe/thumbnail is
-        // requested while the multi-provider trailer system is active.
-        return {
-          ...response,
-          videos: {
-            ...(response?.videos || {}),
-            results: [
-              {
-                id: "flixit-resolver-sentinel",
-                key: "__flixit_resolver__",
-                name: "FLIX-IT Trailer Resolver",
-                site: "YouTube",
-                type: "Trailer",
-                iso_639_1: "it",
-              },
-            ],
-          },
-        };
-      },
+      transformResponse: (response: any) => ({
+        ...response,
+        // DetailPage still has a legacy "video key exists" gate. This internal
+        // sentinel opens that gate, but TrailerPlayer intercepts it and reads
+        // /api/public/trailer; no YouTube URL, iframe or thumbnail is requested.
+        videos: {
+          results: [
+            {
+              id: "flixit-resolver-sentinel",
+              key: "__flixit_resolver__",
+              name: "FLIX-IT Trailer Resolver",
+              site: "YouTube",
+              type: "Trailer",
+              iso_639_1: "it",
+            },
+          ],
+        },
+      }),
     }),
-    // Retained for compatibility with old components. DetailPage no longer
-    // renders this YouTube list; the sentinel above wins the legacy selector.
+
+    // Legacy compatibility only. Returning an empty collection locally removes
+    // two unnecessary TMDB /videos calls from DetailPage and older components.
     getAllVideos: build.query<
       { id: number; results: Array<{ id: string; key: string; name: string; site: string; type: string; iso_639_1: string }> },
       { mediaType: MEDIA_TYPE; id: number }
     >({
-      query: ({ mediaType, id }) => ({
-        url: `/${mediaType}/${id}/videos`,
-        params: {
-          api_key: TMDB_V3_API_KEY,
-        },
-      }),
+      queryFn: async ({ id }) => ({ data: emptyVideos(id) }),
     }),
+
     getSimilarVideos: build.query<
       PaginatedMovieResult,
       { mediaType: MEDIA_TYPE; id: number }
@@ -163,6 +164,7 @@ const extendedApi = tmdbApi.injectEndpoints({
         params: { api_key: TMDB_V3_API_KEY, language: "it-IT" },
       }),
     }),
+
     getMediaImages: build.query<
       {
         id: number;
@@ -180,28 +182,31 @@ const extendedApi = tmdbApi.injectEndpoints({
     >({
       query: ({ mediaType, id }) => ({
         url: `/${mediaType}/${id}/images`,
-        params: { api_key: TMDB_V3_API_KEY, include_image_language: "it,en,null" },
+        params: {
+          api_key: TMDB_V3_API_KEY,
+          include_image_language: "it,en,null",
+        },
       }),
     }),
-    // Get TV season details with episodes
+
     getTVSeasonDetails: build.query<
       TVSeasonDetail,
       { seriesId: number; seasonNumber: number }
     >({
       query: ({ seriesId, seasonNumber }) => ({
         url: `/tv/${seriesId}/season/${seasonNumber}`,
-        params: { api_key: TMDB_V3_API_KEY, language: "it-IT" },
+        params: {
+          api_key: TMDB_V3_API_KEY,
+          language: "it-IT",
+        },
       }),
     }),
-    // Get TV videos/trailers
+
     getMediaVideos: build.query<
       { id: number; results: Array<{ id: string; key: string; name: string; site: string; type: string; iso_639_1: string }> },
       { mediaType: MEDIA_TYPE; id: number }
     >({
-      query: ({ mediaType, id }) => ({
-        url: `/${mediaType}/${id}/videos`,
-        params: { api_key: TMDB_V3_API_KEY, language: "it-IT" },
-      }),
+      queryFn: async ({ id }) => ({ data: emptyVideos(id) }),
     }),
   }),
 });
