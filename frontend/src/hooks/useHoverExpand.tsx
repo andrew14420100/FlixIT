@@ -5,15 +5,17 @@ import "src/components/NetflixMiniModalExact.css";
 
 /**
  * Netflix-style mini-modal motion.
+ * Timing mirrors the Netflix values reconstructed from the supplied client:
+ * 400ms hover delay, 300ms open, 250ms close, 50ms opacity-in.
  * The preview portal is viewport-fixed so opening a card never changes the
  * document height or creates a second vertical scrolling surface.
  */
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
-const OPEN_DELAY_MS = 500;
-const OPEN_DURATION_MS = 420;
-const CLOSE_DURATION_MS = 320;
-const OPACITY_OPEN_MS = 180;
+const OPEN_DELAY_MS = 400;
+const OPEN_DURATION_MS = 300;
+const CLOSE_DURATION_MS = 250;
+const OPACITY_OPEN_MS = 50;
 const OPACITY_CLOSE_MS = CLOSE_DURATION_MS * 0.6;
 const EDGE_GUARD = 60;
 const EASE = "cubic-bezier(.21,0,.07,1)";
@@ -62,14 +64,13 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const requestClose = useCallback(() => {
     clearOpenTimer();
-
     if (!open) return;
 
     setClosing(true);
     clearCloseTimer();
     closeTimerRef.current = setTimeout(
       finishClose,
-      CLOSE_DURATION_MS + 40
+      CLOSE_DURATION_MS + 20
     );
   }, [open, clearOpenTimer, clearCloseTimer, finishClose]);
 
@@ -89,7 +90,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
           MIN_MODAL_WIDTH
         );
 
-        // Coordinates stay viewport-relative because the portal itself is fixed.
         setPosition({
           titleCardRect: rect,
           titleCardDocTop: rect.top,
@@ -137,9 +137,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   useEffect(() => clearTimers, [clearTimers]);
 
-  // Scrolling should always belong to the page. Close an expanded hover card
-  // immediately as soon as a wheel/touch scroll moves the document, preventing
-  // the preview from feeling like it captures or blocks the scroll gesture.
+  // The page always owns scrolling. Closing the preview immediately avoids the
+  // tiny scroll interception/jank that can otherwise happen over an expanded card.
   useEffect(() => {
     if (!open) return;
     const onScroll = () => {
@@ -147,7 +146,13 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       finishClose();
     };
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    window.addEventListener("wheel", onScroll, { passive: true });
+    window.addEventListener("touchmove", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("wheel", onScroll);
+      window.removeEventListener("touchmove", onScroll);
+    };
   }, [open, clearTimers, finishClose]);
 
   return {
@@ -185,7 +190,6 @@ export function ExpandOverlay({
 
     let f1 = 0;
     let f2 = 0;
-    let f3 = 0;
 
     f1 = requestAnimationFrame(() => {
       const node = modalRef.current;
@@ -246,19 +250,15 @@ export function ExpandOverlay({
         transformOrigin: "50% 50%",
       });
 
+      // One reset frame is enough and makes the scale-up feel noticeably more
+      // responsive than the previous three-frame sequence.
       setPhase("reset");
-
-      f2 = requestAnimationFrame(() => {
-        f3 = requestAnimationFrame(() => {
-          setPhase("open");
-        });
-      });
+      f2 = requestAnimationFrame(() => setPhase("open"));
     });
 
     return () => {
       if (f1) cancelAnimationFrame(f1);
       if (f2) cancelAnimationFrame(f2);
-      if (f3) cancelAnimationFrame(f3);
     };
   }, [position]);
 
@@ -346,6 +346,7 @@ export function ExpandOverlay({
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden",
           perspective: "1000px",
+          willChange: "transform, opacity",
         }}
       >
         {children}
