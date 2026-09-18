@@ -15,14 +15,23 @@ const StyledSlider = styled(Slider)(({ theme, padding }) => ({
   display: "flex !important",
   justifyContent: "center",
   overflow: "visible !important",
+  transform: "translate3d(0,0,0)",
 
   "& > .slick-list": {
     overflow: "visible",
+    transform: "translate3d(0,0,0)",
+    backfaceVisibility: "hidden",
+  },
+
+  "& .slick-track": {
+    willChange: "transform",
+    backfaceVisibility: "hidden",
   },
 
   "& .slick-slide": {
     position: "relative",
     zIndex: 1,
+    backfaceVisibility: "hidden",
   },
 
   "& .slick-slide > div": {
@@ -50,20 +59,33 @@ export default function Top10Slider({ title, items }) {
   const theme = useTheme();
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isEnd, setIsEnd] = useState(false);
+  const [isSliding, setIsSliding] = useState(false);
 
   const list = (items || []).slice(0, 10);
   if (!list.length) return null;
 
   const settings = {
-    speed: 500,
+    speed: 750,
+    cssEase: "cubic-bezier(.5,0,.1,1)",
     arrows: false,
     dots: false,
     infinite: false,
+    swipe: true,
+    swipeToSlide: true,
+    draggable: true,
+    waitForAnimate: true,
+    useCSS: true,
+    useTransform: true,
     slidesToShow: 6,
     slidesToScroll: 6,
+    beforeChange: (_current, next) => {
+      setIsSliding(true);
+      setActiveSlideIndex(next);
+    },
     afterChange: (index) => {
       setActiveSlideIndex(index);
-      setIsEnd(index + 7 >= list.length);
+      setIsEnd(index + 6 >= list.length);
+      setIsSliding(false);
     },
     responsive: [
       { breakpoint: 1536, settings: { slidesToShow: 5, slidesToScroll: 5 } },
@@ -77,11 +99,14 @@ export default function Top10Slider({ title, items }) {
     <Box
       data-testid="top10-slider"
       className="slider-row top10-row"
+      data-sliding={isSliding ? "true" : "false"}
       sx={{
         position: "relative",
         zIndex: 1,
         fontSize: "1vw",
         lineHeight: 1.5,
+        contain: "layout style",
+        "&:hover": { zIndex: 100 },
       }}
     >
       <Stack
@@ -137,9 +162,11 @@ export default function Top10Slider({ title, items }) {
                 item.type === "tv" || item.media_type === "tv"
                   ? MEDIA_TYPE.Tv
                   : MEDIA_TYPE.Movie;
+              const suppressHover =
+                isSliding || (activeSlideIndex > 0 && index === activeSlideIndex);
 
               return (
-                <div key={id}>
+                <div key={`${item.type || item.media_type || "movie"}-${id}`}>
                   <NetflixRankedCardWithHover
                     item={{
                       ...item,
@@ -150,6 +177,7 @@ export default function Top10Slider({ title, items }) {
                     rank={index + 1}
                     mediaType={mediaType}
                     watch={item.watch}
+                    suppressHover={suppressHover}
                   />
                 </div>
               );
