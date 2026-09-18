@@ -37,8 +37,14 @@ def _height_from_label(value) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _trailer_type(title: str) -> str:
-    text = normalize_title(title)
+def _trailer_type(title: str, content_type: str = "") -> str:
+    """Normalize IMDb video labels into the resolver's trailer priority types.
+
+    ``content_type`` is optional because the current compact GraphQL query only
+    needs the title, while tests/older call sites may still provide IMDb's
+    content type as a second argument.
+    """
+    text = normalize_title(f"{content_type} {title}")
     if "final trailer" in text:
         return "Final Trailer"
     if "official teaser" in text:
