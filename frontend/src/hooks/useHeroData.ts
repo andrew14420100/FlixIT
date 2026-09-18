@@ -22,12 +22,6 @@ function heroViewport() {
   return window.innerWidth < 700 ? 'mobile' : 'desktop';
 }
 
-/**
- * Hero data keeps the admin override contract intact. When the Netflix artwork
- * feature is enabled and the title is a safe Netflix-IT match, the resolver may
- * supply story art / title logo. customBackdrop still has absolute priority in
- * HeroSection because it is applied after this hook returns.
- */
 export function useHeroData() {
   const profile = heroProfile();
   const viewport = heroViewport();
@@ -39,8 +33,8 @@ export function useHeroData() {
         const response = await fetch('/api/public/hero');
         if (!response.ok) return null;
         const data = await response.json();
-
         if (!data?.contentId) return null;
+
         const mediaType = data.mediaType || 'tv';
         const base = { ...data, mediaType };
 
@@ -49,18 +43,39 @@ export function useHeroData() {
           const cfg = cfgResponse.ok ? await cfgResponse.json() : { enabled: false };
           if (!cfg.enabled) return base;
 
-          const params = new URLSearchParams({
-            context: 'hero',
+          const makeParams = (context: string) => new URLSearchParams({
+            context,
             viewport,
             profile_id: profile,
           });
+
           const artResponse = await fetch(
-            `/api/player/artwork/${mediaType}/${data.contentId}?${params.toString()}`,
+            `/api/player/artwork/${mediaType}/${data.contentId}?${makeParams('hero').toString()}`,
             { cache: 'no-store' }
           );
           if (!artResponse.ok) return base;
           const resolved = await artResponse.json();
           if (!resolved?.active) return base;
+
+          // A logo override is stored as the manual artwork for the reserved
+          // "logo" context. If none exists, keep the automatic Netflix logo.
+          let manualLogo: any = null;
+          try {
+            const logoResponse = await fetch(
+              `/api/player/artwork/${mediaType}/${data.contentId}?${makeParams('logo').toString()}`,
+              { cache: 'no-store' }
+            );
+            if (logoResponse.ok) {
+              const logoResolved = await logoResponse.json();
+              const candidate = logoResolved?.artwork;
+              if (
+                candidate?.source === 'manual' &&
+                /logo/i.test(String(candidate?.type || ''))
+              ) {
+                manualLogo = candidate;
+              }
+            }
+          } catch {}
 
           const originalBackdrop = data?.detail?.backdrop_path || data?.assets?.backdrop_path || null;
           const originalLogo = data?.assets?.logo_path || null;
@@ -73,7 +88,7 @@ export function useHeroData() {
             assets: {
               ...(data.assets || {}),
               backdrop_path: resolved?.artwork?.url || originalBackdrop,
-              logo_path: resolved?.logo?.url || originalLogo,
+              logo_path: manualLogo?.url || resolved?.logo?.url || originalLogo,
               netflix_artwork: resolved,
               fallback_backdrop_path: originalBackdrop,
               fallback_logo_path: originalLogo,
