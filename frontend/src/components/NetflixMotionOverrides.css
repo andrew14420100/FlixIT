@@ -16,25 +16,6 @@
   transform-style: preserve-3d;
 }
 
-/* Continue Watching remove is positioned from the measured modal width by
-   VideoItemWithHover, so it shares the exact button-control baseline at every
-   responsive card size instead of relying on a fixed desktop offset. */
-.continue-hover-remove {
-  position: absolute !important;
-  z-index: 30;
-  margin: 0 !important;
-}
-
-.continue-hover-remove .small,
-.continue-hover-remove svg {
-  pointer-events: none;
-}
-
-.previewModal--container[data-phase="close"] .continue-hover-remove {
-  opacity: 0;
-  transition: opacity 80ms linear !important;
-}
-
 /* Keep compositor ownership during the most animation-heavy interactions. */
 .slider-row .slick-track,
 .slider-row .slick-list,
