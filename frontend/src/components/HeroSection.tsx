@@ -20,9 +20,9 @@ import { TMDB_IMG } from "./ExpandedCard";
 
 const DEFAULT_FEATURED_ID = 202208;
 const DEFAULT_FEATURED_TYPE = MEDIA_TYPE.Tv;
-const TRAILER_DELAY_MS = 2500;
+const TRAILER_DELAY_MS = 3000;
 
-function artworkUrl(value: any, size = "w1280") {
+function artworkUrl(value: any, size = "original") {
   if (!value) return null;
   const raw = String(value);
   if (/^https?:\/\//i.test(raw) || raw.startsWith("data:") || raw.startsWith("blob:")) {
@@ -58,22 +58,36 @@ export default function HeroSection({ mediaType }) {
   const detailData = inlineDetail || fetchedDetail;
   const { data: fetchedAssets } = useQuery({
     queryKey: ["media-assets", typeSlug, featuredId],
-    queryFn: () =>
-      fetch(`/api/public/media-assets/${typeSlug}/${featuredId}`).then((r) =>
-        r.ok ? r.json() : null
-      ),
+    queryFn: ({ signal }: any) =>
+      fetch(`/api/public/media-assets/${typeSlug}/${featuredId}`, {
+        signal,
+        headers: { Accept: "application/json" },
+      }).then((r) => (r.ok ? r.json() : null)),
     enabled: !skipQueries && !inlineAssets,
-    staleTime: 10 * 60 * 1000,
+    staleTime: 6 * 60 * 60 * 1000,
+    gcTime: 7 * 24 * 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const assets = inlineAssets || fetchedAssets;
   const { data: trailerData } = useQuery({
-    queryKey: ["trailer", typeSlug, featuredId],
-    queryFn: () =>
-      fetch(`/api/public/trailer/${typeSlug}/${featuredId}`).then((r) =>
-        r.ok ? r.json() : null
-      ),
-    enabled: !skipQueries && !inlineAssets?.trailer_key,
-    staleTime: 10 * 60 * 1000,
+    queryKey: ["resolved-trailer", typeSlug, featuredId, false],
+    queryFn: ({ signal }: any) =>
+      fetch(`/api/public/trailer/${typeSlug}/${featuredId}?hdr=false`, {
+        signal,
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      }).then((r) => (r.ok ? r.json() : null)),
+    enabled: !skipQueries,
+    staleTime: 12 * 60 * 1000,
+    gcTime: 3 * 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: (query: any) => {
+      const value = query?.state?.data;
+      if (!value?.enabled || value?.available) return false;
+      return 1200;
+    },
   });
 
   const [muted, setMuted] = useState(true);
@@ -87,19 +101,23 @@ export default function HeroSection({ mediaType }) {
 
   const isOffset = useOffSetTop(window.innerHeight * 0.6);
 
-  const trailerKey = trailerData?.trailer_key || assets?.trailer_key || null;
+  // The Hero consumes only the central resolver. Legacy media-assets trailer
+  // keys are intentionally ignored so a stale YouTube key can never reappear.
+  const trailerKey = trailerData?.enabled && trailerData?.available
+    ? (trailerData?.trailer_url || trailerData?.trailer_key || trailerData?.manifest_url)
+    : null;
 
-  const logoPath = artworkUrl(assets?.logo_path, "w500");
-  const fallbackLogoPath = artworkUrl(assets?.fallback_logo_path, "w500");
+  const logoPath = artworkUrl(assets?.logo_path, "original");
+  const fallbackLogoPath = artworkUrl(assets?.fallback_logo_path, "original");
 
   const backdropUrl = useMemo(() => {
     if (heroSettings?.customBackdrop) return heroSettings.customBackdrop;
-    const path = detailData?.backdrop_path || assets?.backdrop_path;
-    return artworkUrl(path, "w1280");
-  }, [heroSettings?.customBackdrop, detailData?.backdrop_path, assets?.backdrop_path]);
+    const path = detailData?.backdrop_path || assets?.backdrop_path || assets?.titled_backdrop_path;
+    return artworkUrl(path, "original");
+  }, [heroSettings?.customBackdrop, detailData?.backdrop_path, assets?.backdrop_path, assets?.titled_backdrop_path]);
 
   const fallbackBackdropUrl = useMemo(
-    () => artworkUrl(assets?.fallback_backdrop_path, "w1280"),
+    () => artworkUrl(assets?.fallback_backdrop_path, "original"),
     [assets?.fallback_backdrop_path]
   );
 
@@ -123,23 +141,30 @@ export default function HeroSection({ mediaType }) {
     setVideoEnded(false);
     setVideoPlaying(false);
     setInfoTarget(false);
+    if (!trailerKey) return;
 
-    const trailerTimer = setTimeout(() => setShowVideo(true), TRAILER_DELAY_MS);
-    let raf = 0;
-    if (trailerKey) raf = requestAnimationFrame(() => setInfoTarget(true));
+    // Netflix-style dwell: keep the hero artwork visible for three seconds,
+    // then hand off to the already-resolved trailer.
+    const trailerTimer = window.setTimeout(
+      () => setShowVideo(true),
+      TRAILER_DELAY_MS
+    );
 
-    return () => {
-      clearTimeout(trailerTimer);
-      if (raf) cancelAnimationFrame(raf);
-    };
+    return () => window.clearTimeout(trailerTimer);
   }, [featuredId, trailerKey]);
 
   const handleVideoEnded = useCallback(() => {
     setVideoEnded(true);
     setShowVideo(false);
     setVideoPlaying(false);
+    setInfoTarget(false);
   }, []);
-  const handleVideoPlaying = useCallback(() => setVideoPlaying(true), []);
+  const handleVideoPlaying = useCallback(() => {
+    setVideoPlaying(true);
+    // Shrink the treatment as the moving artwork becomes visible, rather than
+    // waiting an additional five seconds after playback has already started.
+    setInfoTarget(true);
+  }, []);
   const videoActive = showVideo && !videoEnded && !!trailerKey && videoPlaying;
 
   const prefetchedRef = useRef(false);
@@ -222,7 +247,7 @@ export default function HeroSection({ mediaType }) {
             objectFit: "cover",
             objectPosition: "top center",
             opacity: imageLoaded ? (videoActive ? 0 : 1) : 0,
-            transition: "opacity 1.5s ease-in-out",
+            transition: "opacity 1.1s ease-in-out",
             zIndex: 0,
           }}
         />
@@ -241,7 +266,7 @@ export default function HeroSection({ mediaType }) {
             zIndex: 3,
             overflow: "hidden",
             opacity: videoActive ? 1 : 0,
-            transition: "opacity 1.5s ease-in-out",
+            transition: "opacity 1.1s ease-in-out",
           }}
         >
           <TrailerPlayer
@@ -345,8 +370,8 @@ export default function HeroSection({ mediaType }) {
                   ? "scale(0.8) translate3d(0px, 2.5em, 0px)"
                   : "scale(1) translate3d(0px, 0px, 0px)",
                 transitionProperty: "transform",
-                transitionDuration: "1.3s",
-                transitionDelay: "5s",
+                transitionDuration: "1.05s",
+                transitionDelay: "0s",
                 transitionTimingFunction: "ease",
                 "@media (max-width:499px)": { display: "flex", justifyContent: "center" },
               }}
@@ -364,6 +389,7 @@ export default function HeroSection({ mediaType }) {
                       setHeroLogoSrc(null);
                     }
                   }}
+                  decoding="async"
                   sx={{
                     display: "block",
                     width: "auto",
@@ -412,7 +438,7 @@ export default function HeroSection({ mediaType }) {
                   lineHeight: "inherit",
                   transitionProperty: "opacity",
                   transitionDuration: ".5s",
-                  transitionDelay: "5s",
+                  transitionDelay: "0s",
                   transitionTimingFunction: "ease",
                   "@media (max-width:499px)": { mb: "-.25em", textAlign: "center" },
                 }}
@@ -450,7 +476,7 @@ export default function HeroSection({ mediaType }) {
                 textShadow: "2px 2px 4px rgba(0,0,0,.45)",
                 transitionProperty: "opacity",
                 transitionDuration: ".5s",
-                transitionDelay: "5s",
+                transitionDelay: "0s",
                 transitionTimingFunction: "ease",
                 display: "-webkit-box",
                 WebkitLineClamp: 3,
@@ -569,7 +595,7 @@ export default function HeroSection({ mediaType }) {
             pointerEvents: "auto",
           }}
         >
-          {trailerKey && (
+          {trailerKey && showVideo && (
             <IconButton
               onClick={() => setMuted((m) => !m)}
               data-testid="hero-audio-toggle"
