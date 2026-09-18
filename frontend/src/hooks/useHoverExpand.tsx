@@ -12,8 +12,6 @@ const CLOSE_DURATION_MS = 220;
 const OPACITY_OPEN_MS = 70;
 const OPACITY_CLOSE_MS = 120;
 const VIEWPORT_GUTTER = 4;
-const FIRST_CARD_RIGHT_SHIFT_PX = 18;
-const FIRST_CARD_UP_SHIFT_PX = 14;
 const EASE = "cubic-bezier(.21,0,.07,1)";
 
 type AnchorData = {
@@ -21,18 +19,11 @@ type AnchorData = {
   modalWidth: number;
 };
 
-function isFirstVisibleCard(card: DOMRect) {
-  if (typeof window === "undefined") return false;
-  // Rows begin around 4vw on desktop and ~16px on mobile. This detects only
-  // the left-most visible tile, without giving every card a permanent bias.
-  return card.left <= Math.max(96, window.innerWidth * 0.065);
-}
-
 /**
  * Netflix-style hover intent + expansion.
- * Normal cards expand from their own centre. The first visible card gets the
- * small right/up correction Netflix uses at the row edge so the enlarged
- * preview overlaps the row heading instead of looking detached from it.
+ * Every card, including the first visible tile, expands from its own centre.
+ * We only clamp the final modal to the viewport when it would physically leave
+ * the screen; there is no permanent left/right bias on edge cards.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -185,14 +176,10 @@ export function ExpandOverlay({
       const modalRect = node.getBoundingClientRect();
       const card = position.cardRect as DOMRect;
       const scale = 1 / SCALE_FACTOR;
-      const firstCard = isFirstVisibleCard(card);
 
-      const desiredLeft =
-        card.left + card.width / 2 - modalRect.width / 2 +
-        (firstCard ? FIRST_CARD_RIGHT_SHIFT_PX : 0);
-      const desiredTop =
-        card.top + card.height / 2 - modalRect.height / 2 -
-        (firstCard ? FIRST_CARD_UP_SHIFT_PX : 0);
+      // Same formula for every tile: final modal centre == source card centre.
+      const desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
+      const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
 
       const maxLeft = Math.max(
         VIEWPORT_GUTTER,
@@ -210,12 +197,14 @@ export function ExpandOverlay({
         Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
       );
 
+      // Reset geometry maps the shrunken modal exactly over the original card,
+      // so the opening motion grows around the card centre instead of drifting.
       const scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
       const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
       const resetX = Math.round(card.left - scaledLeft);
       const resetY = Math.round(card.top - scaledTop);
 
-      setGeometry({ left, top, resetX, resetY, firstCard });
+      setGeometry({ left, top, resetX, resetY });
       setPhase("reset");
       frame2 = requestAnimationFrame(() => setPhase("open"));
     });
@@ -234,20 +223,15 @@ export function ExpandOverlay({
 
   const card = position.cardRect as DOMRect;
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
-  const firstCard = isFirstVisibleCard(card);
   const fallbackLeft = Math.min(
     Math.max(
-      card.left + card.width / 2 - modalWidth / 2 +
-        (firstCard ? FIRST_CARD_RIGHT_SHIFT_PX : 0),
+      card.left + card.width / 2 - modalWidth / 2,
       VIEWPORT_GUTTER
     ),
     Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
   );
   const left = geometry?.left ?? fallbackLeft;
-  const top = geometry?.top ?? Math.max(
-    VIEWPORT_GUTTER,
-    card.top - (firstCard ? FIRST_CARD_UP_SHIFT_PX : 0)
-  );
+  const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
 
   let transform = "translate3d(0,0,0) scale(1)";
   let opacity = 0;
@@ -281,7 +265,6 @@ export function ExpandOverlay({
         data-uia="modal-motion-container-MINI_MODAL"
         data-testid={testId}
         data-phase={phase}
-        data-first-card={firstCard ? "true" : "false"}
         className="previewModal--container has-smaller-buttons mini-modal"
         onMouseLeave={onMouseLeave}
         onClick={handleOverlayClick}
