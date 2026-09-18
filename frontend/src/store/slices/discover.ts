@@ -55,18 +55,12 @@ const discoverSlice = createSlice({
 export const { setNextPage, initiateItem } = discoverSlice.actions;
 export default discoverSlice.reducer;
 
-const emptyVideos = (id: number) => ({
-  id,
-  results: [],
-});
+const emptyVideos = (id: number) => ({ id, results: [] });
 
 const extendedApi = tmdbApi.injectEndpoints({
   endpoints: (build) => ({
     getVideosByMediaTypeAndGenreId: build.query<
-      PaginatedMovieResult & {
-        mediaType: MEDIA_TYPE;
-        itemKey: number | string;
-      },
+      PaginatedMovieResult & { mediaType: MEDIA_TYPE; itemKey: number | string },
       { mediaType: MEDIA_TYPE; genreId: number; page: number }
     >({
       query: ({ mediaType, genreId, page }) => ({
@@ -78,11 +72,7 @@ const extendedApi = tmdbApi.injectEndpoints({
           language: "it-IT",
         },
       }),
-      transformResponse: (
-        response: PaginatedMovieResult,
-        _,
-        { mediaType, genreId }
-      ) => ({
+      transformResponse: (response: PaginatedMovieResult, _, { mediaType, genreId }) => ({
         ...response,
         mediaType,
         itemKey: genreId,
@@ -90,21 +80,14 @@ const extendedApi = tmdbApi.injectEndpoints({
     }),
 
     getVideosByMediaTypeAndCustomGenre: build.query<
-      PaginatedMovieResult & {
-        mediaType: MEDIA_TYPE;
-        itemKey: number | string;
-      },
+      PaginatedMovieResult & { mediaType: MEDIA_TYPE; itemKey: number | string },
       { mediaType: MEDIA_TYPE; apiString: string; page: number }
     >({
       query: ({ mediaType, apiString, page }) => ({
         url: `/${mediaType}/${apiString}`,
         params: { api_key: TMDB_V3_API_KEY, page, language: "it-IT" },
       }),
-      transformResponse: (
-        response: PaginatedMovieResult,
-        _,
-        { mediaType, apiString }
-      ) => ({
+      transformResponse: (response: PaginatedMovieResult, _, { mediaType, apiString }) => ({
         ...response,
         mediaType,
         itemKey: apiString,
@@ -119,24 +102,20 @@ const extendedApi = tmdbApi.injectEndpoints({
         url: `/${mediaType}/${id}`,
         params: {
           api_key: TMDB_V3_API_KEY,
-          // Credits are still used by DetailPage. Trailer metadata is resolved
-          // by FLIX-IT's backend, so there is no reason to download TMDB's
-          // YouTube video list on every detail/hero request.
           append_to_response: "credits",
           language: "it-IT",
         },
       }),
       transformResponse: (response: any) => ({
         ...response,
-        // DetailPage still has a legacy "video key exists" gate. This internal
-        // sentinel opens that gate, but TrailerPlayer intercepts it and reads
-        // /api/public/trailer; no YouTube URL, iframe or thumbnail is requested.
         videos: {
           results: [
             {
               id: "flixit-resolver-sentinel",
               key: "__flixit_resolver__",
               name: "FLIX-IT Trailer Resolver",
+              // Kept only for DetailPage's legacy selector. TrailerPlayer never
+              // treats this sentinel as a YouTube id while the resolver is on.
               site: "YouTube",
               type: "Trailer",
               iso_639_1: "it",
@@ -146,8 +125,6 @@ const extendedApi = tmdbApi.injectEndpoints({
       }),
     }),
 
-    // Legacy compatibility only. Returning an empty collection locally removes
-    // two unnecessary TMDB /videos calls from DetailPage and older components.
     getAllVideos: build.query<
       { id: number; results: Array<{ id: string; key: string; name: string; site: string; type: string; iso_639_1: string }> },
       { mediaType: MEDIA_TYPE; id: number }
@@ -180,13 +157,39 @@ const extendedApi = tmdbApi.injectEndpoints({
       },
       { mediaType: MEDIA_TYPE; id: number }
     >({
-      query: ({ mediaType, id }) => ({
-        url: `/${mediaType}/${id}/images`,
-        params: {
-          api_key: TMDB_V3_API_KEY,
-          include_image_language: "it,en,null",
-        },
-      }),
+      // DetailPage used to make a separate direct TMDB /images request. Reuse
+      // FLIX-IT's automatic 14-day media-assets cache instead so logos follow
+      // the same no-admin pipeline as cards and Hero.
+      queryFn: async ({ mediaType, id }, _api, _extra, baseQuery) => {
+        try {
+          const type = mediaType === MEDIA_TYPE.Tv ? "tv" : "movie";
+          const response = await fetch(`/api/public/media-assets/${type}/${id}`, {
+            headers: { Accept: "application/json" },
+          });
+          const asset = response.ok ? await response.json() : null;
+          const logo = asset?.logo_path;
+          return {
+            data: {
+              id,
+              logos: logo
+                ? [
+                    {
+                      aspect_ratio: 0,
+                      height: 0,
+                      iso_639_1: "it",
+                      file_path: logo,
+                      vote_average: 10,
+                      vote_count: 1,
+                      width: 0,
+                    },
+                  ]
+                : [],
+            },
+          };
+        } catch {
+          return { data: { id, logos: [] } };
+        }
+      },
     }),
 
     getTVSeasonDetails: build.query<
@@ -195,10 +198,7 @@ const extendedApi = tmdbApi.injectEndpoints({
     >({
       query: ({ seriesId, seasonNumber }) => ({
         url: `/tv/${seriesId}/season/${seasonNumber}`,
-        params: {
-          api_key: TMDB_V3_API_KEY,
-          language: "it-IT",
-        },
+        params: { api_key: TMDB_V3_API_KEY, language: "it-IT" },
       }),
     }),
 
