@@ -19,18 +19,19 @@ class TherystonTrailerProvider:
 
     FLIX-IT does not need Google Custom Search for the common IMDb path: TMDB
     already gives us an IMDb id, so we submit that exact IMDb title page to
-    /process/by-trailer-page.  Provider pages already known for Apple/Prime/
+    /process/by-trailer-page. Provider pages already known for Apple/Prime/
     Netflix can be submitted the same way.
 
     The Theryston service stores its finished media under DATA_FOLDER/files.
     FLIX-IT re-serves those files from its own backend, so browsers never need
-    to contact localhost:3000 directly.
+    to contact the internal Theryston port directly.
     """
 
     name = "theryston"
 
     def __init__(self):
-        self.api_url = (os.environ.get("THERYSTON_TRAILERS_API_URL") or "http://127.0.0.1:3000").rstrip("/")
+        # 3011 deliberately avoids the common CRA frontend port 3000.
+        self.api_url = (os.environ.get("THERYSTON_TRAILERS_API_URL") or "http://127.0.0.1:3011").rstrip("/")
         self.data_dir = Path(os.environ.get("THERYSTON_TRAILERS_DATA_DIR") or "/app/trailers-data").resolve()
         try:
             self.max_wait_seconds = max(20, min(300, int(os.environ.get("THERYSTON_TRAILERS_MAX_WAIT", "150"))))
@@ -50,7 +51,6 @@ class TherystonTrailerProvider:
             if value.startswith("https://"):
                 pages.append((key, value, 0.98))
 
-        # Keep insertion order but deduplicate exact URLs.
         seen = set()
         unique = []
         for source, url, confidence in pages:
@@ -189,8 +189,6 @@ class TherystonTrailerProvider:
 
         timeout = httpx.Timeout(10.0, connect=2.5)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as http:
-            # A local service that is not running should fail fast rather than
-            # delaying the other providers in the resolver.
             try:
                 probe = await http.get(f"{self.api_url}/docs")
                 if probe.status_code >= 500:
