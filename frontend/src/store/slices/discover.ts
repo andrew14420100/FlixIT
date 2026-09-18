@@ -111,12 +111,40 @@ const extendedApi = tmdbApi.injectEndpoints({
     >({
       query: ({ mediaType, id }) => ({
         url: `/${mediaType}/${id}`,
-        params: { 
-          api_key: TMDB_V3_API_KEY, 
+        params: {
+          api_key: TMDB_V3_API_KEY,
           append_to_response: "videos,credits",
           language: "it-IT",
         },
       }),
+      transformResponse: (response: any) => {
+        const current = response?.videos?.results || [];
+        const hasLegacyMountKey = current.some((v: any) => v?.site === "YouTube" && v?.key);
+        if (hasLegacyMountKey) return response;
+
+        // DetailPage historically mounts its Hero trailer only when a video key
+        // exists. This sentinel never contacts YouTube: TrailerPlayer intercepts
+        // it while the central resolver is enabled and replaces it with the
+        // cached /api/public/trailer URL. It only keeps the existing Detail hero
+        // render path mounted for titles whose TMDB payload has no old trailer.
+        return {
+          ...response,
+          videos: {
+            ...(response?.videos || {}),
+            results: [
+              ...current,
+              {
+                id: "flixit-resolver-sentinel",
+                key: "__flixit_resolver__",
+                name: "FLIX-IT Trailer Resolver",
+                site: "YouTube",
+                type: "Trailer",
+                iso_639_1: "it",
+              },
+            ],
+          },
+        };
+      },
     }),
     // Get all videos with Italian priority
     getAllVideos: build.query<
@@ -125,7 +153,7 @@ const extendedApi = tmdbApi.injectEndpoints({
     >({
       query: ({ mediaType, id }) => ({
         url: `/${mediaType}/${id}/videos`,
-        params: { 
+        params: {
           api_key: TMDB_V3_API_KEY,
           // Request all languages to get Italian if available
         },
