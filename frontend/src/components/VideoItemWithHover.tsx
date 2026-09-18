@@ -1,11 +1,12 @@
 // @ts-nocheck
-import { useRef, useMemo, useCallback } from "react";
+import { useRef, useMemo, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Movie } from "src/types/Movie";
 import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
+import useNetflixArtwork from "src/hooks/useNetflixArtwork";
 import ExpandedCard, { TMDB_IMG } from "./ExpandedCard";
 import NetflixStandardCard from "./NetflixStandardCard";
 
@@ -14,6 +15,7 @@ interface Props {
   mediaType?: any;
   watch?: any;
   suppressHover?: boolean;
+  artworkContext?: string;
 }
 
 function imageSrc(path: any, size: string) {
@@ -46,12 +48,33 @@ export default function VideoItemWithHover({
   mediaType,
   watch,
   suppressHover = false,
+  artworkContext = "home",
 }: Props) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
+  const [nearViewport, setNearViewport] = useState(false);
 
   const mType = mediaType || MEDIA_TYPE.Movie;
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setNearViewport(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNearViewport(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "1000px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const {
     open,
@@ -62,11 +85,12 @@ export default function VideoItemWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Rich logos/trailers/certifications are fetched only after the preview opens.
-  // Normal rows therefore stay light even with 50-60 titles.
+  // Rich TMDB/trailer metadata remains deferred to hover. Netflix artwork is
+  // resolved only as the card approaches the viewport and is cached for a day.
   const assets = useDeferredMediaAssets(video, mType, open);
+  const resolved = useNetflixArtwork(video, mType, artworkContext, nearViewport);
 
-  const netflixArtwork =
+  const existingNetflixArtwork =
     video.netflix_artwork_url ||
     video.netflixArtworkUrl ||
     video.netflix_cover_url ||
@@ -74,14 +98,15 @@ export default function VideoItemWithHover({
     video.artwork?.url ||
     video.image?.url;
 
-  const titled = video.titled_backdrop_path;
-  const backdrop = netflixArtwork || titled || video.backdrop_path;
+  const existingBackdrop =
+    existingNetflixArtwork || video.titled_backdrop_path || video.backdrop_path;
 
-  const imageUrl = useMemo(() => {
-    if (backdrop) return imageSrc(backdrop, "w500");
-    const poster = video.poster_path;
-    return poster ? imageSrc(poster, "w342") : null;
-  }, [backdrop, video.poster_path]);
+  const fallbackImageUrl = useMemo(() => {
+    if (existingBackdrop) return imageSrc(existingBackdrop, "w500");
+    return video.poster_path ? imageSrc(video.poster_path, "w342") : null;
+  }, [existingBackdrop, video.poster_path]);
+
+  const imageUrl = resolved?.artwork?.url || fallbackImageUrl;
 
   const id = video.id || video.tmdbId || video.tmdb_id;
   const title = video.title || video.name || "";
@@ -126,6 +151,7 @@ export default function VideoItemWithHover({
       <NetflixStandardCard
         ref={ref}
         imageUrl={imageUrl}
+        fallbackImageUrl={fallbackImageUrl}
         title={title}
         href={detailHref}
         onClick={goDetail}
@@ -148,6 +174,8 @@ export default function VideoItemWithHover({
               ...video,
               ...assets,
               id,
+              netflix_artwork_url: resolved?.artwork?.url || existingNetflixArtwork,
+              logo_path: resolved?.logo?.url || assets?.logo_path || video?.logo_path,
             }}
             mediaType={mType}
             onPlay={goPlay}
