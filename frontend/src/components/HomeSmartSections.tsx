@@ -8,10 +8,11 @@ import { useHomeDedupe, itemKey } from "src/store/homeDedupe";
 
 // FLIX-IT adaptation of the behavioural ideas from
 // IAmParadox27/jellyfin-plugin-home-sections.
-// The upstream project is a C# Jellyfin plugin, so its runtime cannot be
-// imported into this React app. We reproduce the section/card-selection logic
-// against FLIX-IT/TMDB data and keep it live.
-const SMART_REFRESH_MS = 5 * 60 * 1000;
+// Recommendations are now stable during the day: no random rotation on reload.
+// A fresh catalogue snapshot is calculated once every 24 hours and persisted so
+// the rows are already available when the user reloads the site.
+const SMART_REFRESH_MS = 24 * 60 * 60 * 1000;
+const SMART_CACHE_PREFIX = "flix-home-smart-v3";
 const MAX_SMART_ITEMS = 24;
 const RECENT_DAYS = 14;
 const WATCH_AGAIN_DAYS = 28;
@@ -55,6 +56,21 @@ const normalizeItems = (results, fallbackType) => {
     .slice(0, MAX_SMART_ITEMS);
 };
 
+function releaseTime(item) {
+  const value =
+    item?.release_date ||
+    item?.first_air_date ||
+    item?.available_at ||
+    item?.created_at ||
+    "";
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function newestFirst(items) {
+  return [...(items || [])].sort((a, b) => releaseTime(b) - releaseTime(a));
+}
+
 function daysSince(dateValue) {
   if (!dateValue) return Number.POSITIVE_INFINITY;
   const value = new Date(dateValue).getTime();
@@ -62,10 +78,40 @@ function daysSince(dateValue) {
   return Math.max(0, (Date.now() - value) / 86400000);
 }
 
+function getSmartCacheKey() {
+  if (typeof window === "undefined") return `${SMART_CACHE_PREFIX}:guest`;
+  const userId = window.localStorage.getItem("netflix_user_id") || "guest";
+  return `${SMART_CACHE_PREFIX}:${userId}`;
+}
+
+function readSmartCache(key) {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) || "null");
+    if (!parsed || !parsed.savedAt || !parsed.data) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeSmartCache(key, data) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ savedAt: Date.now(), data })
+    );
+  } catch {
+    // Recommendation cache is an optimization only.
+  }
+}
+
 async function fetchJson(url, fallback = null) {
   try {
     const separator = url.includes("?") ? "&" : "?";
-    const response = await fetch(`${url}${separator}_flix=${Date.now()}`, {
+    const dailyVersion = Math.floor(Date.now() / SMART_REFRESH_MS);
+    const response = await fetch(`${url}${separator}_flix_day=${dailyVersion}`, {
       cache: "no-store",
       headers: { "Cache-Control": "no-cache" },
     });
@@ -83,16 +129,7 @@ async function fetchAvailableGenre(genreId, mediaType) {
     `${API_PREFIX}/public/tmdb/genre/${genreId}/${slug}`,
     { items: [] }
   );
-  return normalizeItems(data?.items || [], slug);
-}
-
-function chooseFreshSource(history, cycle) {
-  const candidates = (history || []).slice(0, 15);
-  if (!candidates.length) return null;
-  // The Jellyfin plugin picks a recent watched source freshly each load. We
-  // rotate deterministically every refresh so the row changes without jumping
-  // on every React render.
-  return candidates[Math.abs(cycle) % candidates.length];
+  return newestFirst(normalizeItems(data?.items || [], slug));
 }
 
 function buildWatchAgainItems(items) {
@@ -101,26 +138,10 @@ function buildWatchAgainItems(items) {
       const duration = Number(item?.duration || 0);
       const progress = Number(item?.progress || 0);
       if (!duration || progress / duration < 0.9) return false;
-      // Upstream uses a 28-day cutoff. If legacy FLIX-IT progress entries have
-      // no timestamp we keep them eligible instead of silently dropping them.
       return !item?.updated_at || daysSince(item.updated_at) >= WATCH_AGAIN_DAYS;
     }),
     "movie"
   );
-}
-
-function weightedPick(entries, cycle) {
-  const valid = (entries || []).filter((entry) => entry.score > 0);
-  if (!valid.length) return null;
-  const total = valid.reduce((sum, entry) => sum + entry.score, 0);
-  // Stable pseudo-random value per refresh cycle; avoids layout flicker while
-  // still reproducing weighted-random genre selection.
-  let cursor = ((cycle * 9301 + 49297) % 233280) / 233280 * total;
-  for (const entry of valid) {
-    cursor -= entry.score;
-    if (cursor <= 0) return entry;
-  }
-  return valid[valid.length - 1];
 }
 
 function buildGenreScores(detailRows, likedKeys) {
@@ -155,28 +176,47 @@ function buildGenreScores(detailRows, likedKeys) {
     });
   });
 
-  return [...scores.values()].sort((a, b) => b.score - a.score);
+  return [...scores.values()].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return String(a.name).localeCompare(String(b.name), "it");
+  });
 }
 
 export default function HomeSmartSections() {
-  const { items: historyItems, refresh: refreshHistory } = useContinueWatching();
+  const { items: historyItems } = useContinueWatching();
   const [loadDetails] = useLazyGetAppendedVideosQuery();
-  const [cycle, setCycle] = useState(0);
   const requestId = useRef(0);
+  const cacheKey = getSmartCacheKey();
+  const initialCache = useMemo(() => readSmartCache(cacheKey), [cacheKey]);
 
-  const [becauseItems, setBecauseItems] = useState([]);
-  const [becauseTitle, setBecauseTitle] = useState("");
-  const [genreItems, setGenreItems] = useState([]);
-  const [genreTitle, setGenreTitle] = useState("");
-  const [myListItems, setMyListItems] = useState([]);
+  const [becauseItems, setBecauseItems] = useState(
+    () => initialCache?.data?.becauseItems || []
+  );
+  const [becauseTitle, setBecauseTitle] = useState(
+    () => initialCache?.data?.becauseTitle || ""
+  );
+  const [genreItems, setGenreItems] = useState(
+    () => initialCache?.data?.genreItems || []
+  );
+  const [genreTitle, setGenreTitle] = useState(
+    () => initialCache?.data?.genreTitle || ""
+  );
+  const [myListItems, setMyListItems] = useState(
+    () => initialCache?.data?.myListItems || []
+  );
 
   const claim = useHomeDedupe((state) => state.claim);
   const release = useHomeDedupe((state) => state.release);
 
   const usableHistory = useMemo(
     () =>
-      (historyItems || [])
+      [...(historyItems || [])]
         .filter((item) => item?.tmdb_id && item?.media_type)
+        .sort((a, b) => {
+          const aTime = new Date(a?.updated_at || 0).getTime() || 0;
+          const bTime = new Date(b?.updated_at || 0).getTime() || 0;
+          return bTime - aTime;
+        })
         .slice(0, 15),
     [historyItems]
   );
@@ -199,7 +239,25 @@ export default function HomeSmartSections() {
     [usableHistory]
   );
 
-  const refreshSmartRows = useCallback(async () => {
+  const applySmartState = useCallback((next) => {
+    setBecauseItems(next.becauseItems || []);
+    setBecauseTitle(next.becauseTitle || "");
+    setGenreItems(next.genreItems || []);
+    setGenreTitle(next.genreTitle || "");
+    setMyListItems(next.myListItems || []);
+  }, []);
+
+  const refreshSmartRows = useCallback(async (force = false) => {
+    const cached = readSmartCache(cacheKey);
+    if (
+      !force &&
+      cached?.savedAt &&
+      Date.now() - cached.savedAt < SMART_REFRESH_MS
+    ) {
+      applySmartState(cached.data);
+      return;
+    }
+
     const currentRequest = ++requestId.current;
     const userId = localStorage.getItem("netflix_user_id") || "";
 
@@ -214,13 +272,17 @@ export default function HomeSmartSections() {
 
     if (currentRequest !== requestId.current) return;
 
-    setMyListItems(normalizeItems(listData?.items || [], "movie"));
+    const next = {
+      becauseItems: [],
+      becauseTitle: "",
+      genreItems: [],
+      genreTitle: "",
+      myListItems: normalizeItems(listData?.items || [], "movie"),
+    };
 
     if (!usableHistory.length) {
-      setBecauseItems([]);
-      setBecauseTitle("");
-      setGenreItems([]);
-      setGenreTitle("");
+      applySmartState(next);
+      writeSmartCache(cacheKey, next);
       return;
     }
 
@@ -247,11 +309,10 @@ export default function HomeSmartSections() {
 
     if (currentRequest !== requestId.current) return;
 
-    // Because You Watched: choose one of the 15 most recently watched titles
-    // freshly each cycle and build a row from its strongest genres, excluding
-    // items already watched. This keeps FLIX-IT availability filtering in the
-    // loop instead of exposing arbitrary TMDB-only results.
-    const source = chooseFreshSource(usableHistory, cycle);
+    // Deterministic recommendation source: always use the most recently watched
+    // title. The row therefore stays stable for the whole daily snapshot instead
+    // of choosing a different title whenever the page is reloaded.
+    const source = usableHistory[0];
     const sourceRow = detailRows.find(
       (row) => Number(row.history.tmdb_id) === Number(source?.tmdb_id)
     );
@@ -264,67 +325,54 @@ export default function HomeSmartSections() {
       const watched = new Set(
         usableHistory.map((item) => `${item.media_type}:${item.tmdb_id}`)
       );
-      const merged = normalizeItems(
-        pools.flat().filter(
-          (item) =>
-            Number(item.id) !== Number(source.tmdb_id) &&
-            !watched.has(`${item.type}:${item.id}`)
-        ),
-        toSlug(sourceRow.mediaType)
+      const merged = newestFirst(
+        normalizeItems(
+          pools.flat().filter(
+            (item) =>
+              Number(item.id) !== Number(source.tmdb_id) &&
+              !watched.has(`${item.type}:${item.id}`)
+          ),
+          toSlug(sourceRow.mediaType)
+        )
       );
-      setBecauseItems(merged.slice(0, 16));
-      setBecauseTitle(
-        merged.length && source.title ? `Perché hai guardato ${source.title}` : ""
-      );
-    } else {
-      setBecauseItems([]);
-      setBecauseTitle("");
+      next.becauseItems = merged.slice(0, 16);
+      next.becauseTitle =
+        merged.length && source.title ? `Perché hai guardato ${source.title}` : "";
     }
 
+    // Pick the strongest genre deterministically. No weighted-random selection:
+    // newly available titles for the user's strongest genre are added at the
+    // front on the next daily refresh.
     const rankedGenres = buildGenreScores(detailRows, likedKeys);
-    const selectedGenre = weightedPick(rankedGenres, cycle + 1);
+    const selectedGenre = rankedGenres[0];
     if (selectedGenre?.id) {
       const pool = await fetchAvailableGenre(selectedGenre.id, selectedGenre.mediaType);
       const watchedIds = new Set(usableHistory.map((item) => Number(item.tmdb_id)));
-      const clean = pool.filter((item) => !watchedIds.has(Number(item.id))).slice(0, 16);
-      setGenreItems(clean);
-      setGenreTitle(
-        clean.length
-          ? `${toSlug(selectedGenre.mediaType) === "tv" ? "Serie" : "Film"} ${selectedGenre.name}`
-          : ""
-      );
-    } else {
-      setGenreItems([]);
-      setGenreTitle("");
+      const clean = pool
+        .filter((item) => !watchedIds.has(Number(item.id)))
+        .slice(0, 16);
+      next.genreItems = clean;
+      next.genreTitle = clean.length
+        ? `${toSlug(selectedGenre.mediaType) === "tv" ? "Serie" : "Film"} ${selectedGenre.name}`
+        : "";
     }
-  }, [usableHistory, loadDetails, cycle]);
+
+    if (currentRequest !== requestId.current) return;
+    applySmartState(next);
+    writeSmartCache(cacheKey, next);
+  }, [usableHistory, loadDetails, cacheKey, applySmartState]);
 
   useEffect(() => {
-    refreshSmartRows();
+    refreshSmartRows(false);
   }, [historyKey, refreshSmartRows]);
 
   useEffect(() => {
-    const refreshAll = async () => {
-      await refreshHistory?.();
-      setCycle((value) => value + 1);
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") refreshAll();
-    };
-
-    const timer = window.setInterval(refreshAll, SMART_REFRESH_MS);
-    window.addEventListener("focus", refreshAll);
-    window.addEventListener("online", refreshAll);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refreshAll);
-      window.removeEventListener("online", refreshAll);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [refreshHistory]);
+    const timer = window.setInterval(
+      () => refreshSmartRows(true),
+      SMART_REFRESH_MS
+    );
+    return () => window.clearInterval(timer);
+  }, [refreshSmartRows]);
 
   useEffect(() => {
     const ids = becauseItems.map(itemKey).filter(Boolean);
