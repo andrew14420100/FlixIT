@@ -11,13 +11,23 @@ function VolumeIcon({ muted }: { muted: boolean }) {
 }
 
 /** Mounted only while the expanded card exists. Unmounting destroys HLS/video immediately. */
-export default function HoverTrailerOverlay({ url, delay = 650 }: { url?: string; delay?: number }) {
+export default function HoverTrailerOverlay({
+  url,
+  logoUrl,
+  delay = 160,
+}: {
+  url?: string;
+  logoUrl?: string | null;
+  delay?: number;
+}) {
   const [ready, setReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     setReady(false);
+    setPlaying(false);
     setMuted(true);
     setFailed(false);
     if (!url) return;
@@ -49,8 +59,47 @@ export default function HoverTrailerOverlay({ url, delay = 650 }: { url?: string
         playing
         loop={false}
         zoom={1.02}
+        onPlaying={() => setPlaying(true)}
         onError={() => setFailed(true)}
       />
+
+      {logoUrl ? (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 14,
+            bottom: 13,
+            zIndex: 11,
+            width: "43%",
+            maxHeight: 56,
+            display: "flex",
+            alignItems: "flex-end",
+            opacity: playing ? 1 : 0,
+            transform: playing ? "translateY(0)" : "translateY(4px)",
+            transition: "opacity 220ms ease, transform 220ms ease",
+            pointerEvents: "none",
+          }}
+        >
+          <img
+            src={logoUrl}
+            alt=""
+            draggable={false}
+            decoding="async"
+            style={{
+              display: "block",
+              maxWidth: "100%",
+              maxHeight: 54,
+              width: "auto",
+              height: "auto",
+              objectFit: "contain",
+              objectPosition: "left bottom",
+              filter: "drop-shadow(0 2px 4px rgba(0,0,0,.7))",
+            }}
+          />
+        </div>
+      ) : null}
+
       <button
         type="button"
         aria-label={muted ? "Attiva audio trailer" : "Disattiva audio trailer"}
