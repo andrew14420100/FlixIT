@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
+import re
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +15,7 @@ from pydantic import BaseModel
 
 from .resolver import TrailerResolver
 from .queue_policy import install_queue_policy
+from .providers import TherystonTrailerProvider
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,10 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         return getattr(app.state, "trailer_resolver", None)
 
     resolver = install_queue_policy(TrailerResolver(db, fetch_tmdb_data, logger=logger))
+    # Keep Apple in slot 0 because resolver.resolve() performs the "perfect Apple
+    # candidate" early-exit check there. Theryston is added immediately after it
+    # and therefore runs automatically with the remaining providers.
+    resolver.providers.insert(1, TherystonTrailerProvider())
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
@@ -54,7 +62,13 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     @router.get("/api/public/trailer-config")
     async def public_trailer_config():
         cfg = resolver.config()
-        return {"enabled": cfg["enabled"], "youtube_enabled": cfg["youtube_enabled"], "minimum_resolution": 1080}
+        return {
+            "enabled": cfg["enabled"],
+            "youtube_enabled": cfg["youtube_enabled"],
+            "minimum_resolution": 1080,
+            "theryston_enabled": True,
+            "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3000"),
+        }
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
     async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
@@ -95,6 +109,26 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="Trailer temporaneo scaduto")
         return FileResponse(path, media_type="video/mp4")
+
+    @router.get("/api/public/theryston-file/{filename}")
+    async def theryston_file(filename: str):
+        # Theryston local storage uses UUID-prefixed file names.  Only a plain
+        # basename is accepted, then the resolved path is constrained to files/.
+        if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+            raise HTTPException(status_code=400, detail="Invalid trailer filename")
+        files_dir = (Path(os.environ.get("THERYSTON_TRAILERS_DATA_DIR", "/app/trailers-data")) / "files").resolve()
+        path = (files_dir / filename).resolve()
+        try:
+            path.relative_to(files_dir)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid trailer file path")
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail="Trailer non disponibile")
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     # Static admin endpoints MUST stay before /{media_type}/{tmdb_id}; otherwise
     # FastAPI would try to parse "queue" or "status" as an integer TMDB id.
