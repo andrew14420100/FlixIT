@@ -92,6 +92,56 @@ function normalizeTextList(...values: any[]) {
   return [];
 }
 
+
+const MOVIE_GENRES: Record<number, string> = {
+  28: "Azione",
+  12: "Avventura",
+  16: "Animazione",
+  35: "Commedia",
+  80: "Crime",
+  99: "Documentario",
+  18: "Dramma",
+  10751: "Famiglia",
+  14: "Fantasy",
+  36: "Storia",
+  27: "Horror",
+  10402: "Musica",
+  9648: "Mistero",
+  10749: "Romantico",
+  878: "Fantascienza",
+  10770: "Film TV",
+  53: "Thriller",
+  10752: "Guerra",
+  37: "Western",
+};
+
+const TV_GENRES: Record<number, string> = {
+  10759: "Azione e avventura",
+  16: "Animazione",
+  35: "Commedia",
+  80: "Crime",
+  99: "Documentario",
+  18: "Dramma",
+  10751: "Famiglia",
+  10762: "Kids",
+  9648: "Mistero",
+  10763: "News",
+  10764: "Reality",
+  10765: "Sci-Fi e Fantasy",
+  10766: "Soap",
+  10767: "Talk",
+  10768: "Guerra e politica",
+  37: "Western",
+};
+
+function genreNamesFromIds(ids: any, type: string) {
+  if (!Array.isArray(ids)) return [];
+  const table = type === "tv" ? TV_GENRES : MOVIE_GENRES;
+  return ids
+    .map((id) => table[Number(id)])
+    .filter(Boolean);
+}
+
 function IconPlay() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -229,6 +279,12 @@ export default function ExpandedCard({
 
   const cover = mediaUrl(
     firstValue(
+      item?.netflix_artwork_url,
+      item?.netflixArtworkUrl,
+      item?.netflix_cover_url,
+      item?.contextualArtwork?.artwork?.url,
+      item?.artwork?.url,
+      item?.image?.url,
       item?.titled_backdrop_path,
       item?.backdrop_path,
       item?.cover_path,
@@ -237,10 +293,17 @@ export default function ExpandedCard({
     "w780"
   );
 
-  const logo = mediaUrl(
-    firstValue(item?.logo_path, item?.logo, item?.title_logo_path),
-    "w500"
+  const hasTitledArtwork = !!firstValue(
+    item?.titled_backdrop_path,
+    item?.titledBackdropPath
   );
+
+  const logo = hasTitledArtwork
+    ? ""
+    : mediaUrl(
+        firstValue(item?.logo_path, item?.logo, item?.title_logo_path),
+        "w500"
+      );
 
   const previewVideo = firstValue(
     item?.preview_video_url,
@@ -254,8 +317,11 @@ export default function ExpandedCard({
     item?.certificationValue,
     item?.age,
     item?.content_rating,
+    item?.contentRating,
     item?.certification,
+    item?.certification_value,
     item?.maturity_rating,
+    item?.maturityRating,
     item?.maturity
   );
 
@@ -265,7 +331,9 @@ export default function ExpandedCard({
     item?.seasons_label,
     item?.seasons_count,
     item?.number_of_seasons,
-    item?.seasonsCount
+    item?.seasonsCount,
+    item?.season_count,
+    item?.seasonCount
   );
 
   const runtime = firstValue(
@@ -273,7 +341,9 @@ export default function ExpandedCard({
       ? Math.max(1, Math.round(Number(item.displayRuntimeSec) / 60))
       : undefined,
     item?.runtime,
-    item?.duration
+    item?.duration,
+    item?.runtime_minutes,
+    item?.runtimeMinutes
   );
 
   const quality = firstValue(
@@ -292,18 +362,23 @@ export default function ExpandedCard({
     false
   );
 
-  const evidence = useMemo(
-    () =>
-      normalizeTextList(
-        item?.evidence,
-        item?.evidence_tags,
-        item?.tags,
-        item?.genre_names,
-        item?.genreNames,
-        item?.genres
-      ).slice(0, 4),
-    [item]
-  );
+  const evidence = useMemo(() => {
+    const explicit = normalizeTextList(
+      item?.evidence,
+      item?.evidence_tags,
+      item?.tags,
+      item?.genre_names,
+      item?.genreNames,
+      item?.genres
+    );
+
+    const fallbackGenres = genreNamesFromIds(
+      item?.genre_ids || item?.genreIds,
+      type
+    );
+
+    return (explicit.length ? explicit : fallbackGenres).slice(0, 4);
+  }, [item, type]);
 
   const supplementalMessage = firstValue(
     item?.supplemental_message,

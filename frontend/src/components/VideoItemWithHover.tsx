@@ -48,8 +48,19 @@ export default function VideoItemWithHover({
   } = useHoverExpand(ref);
 
   // Keep FLIX-IT's own artwork data, but render it through the Netflix card shell.
+  const netflixArtwork =
+    video.netflix_artwork_url ||
+    video.netflixArtworkUrl ||
+    video.netflix_cover_url ||
+    video.contextualArtwork?.artwork?.url ||
+    video.artwork?.url ||
+    video.image?.url ||
+    assets.netflix_artwork_url ||
+    assets.netflixArtworkUrl;
+
   const titled = video.titled_backdrop_path || assets.titled_backdrop_path;
   const backdrop =
+    netflixArtwork ||
     titled ||
     video.backdrop_path ||
     assets.backdrop_path;

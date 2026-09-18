@@ -21,10 +21,11 @@ const StyledSlider = styled(Slider)(
     display: "flex !important",
     justifyContent: "flex-start",
     overflow: "visible !important",
+    transform: "translateZ(0)",
 
     "& > .slick-list": {
       width: "100%",
-      overflow: "visible",
+      overflow: "visible !important",
     },
     "& .slick-track": {
       marginLeft: "0 !important",
@@ -36,12 +37,12 @@ const StyledSlider = styled(Slider)(
       transition: "z-index 0s .28s",
     },
     "& .slick-slide:hover": {
-      zIndex: "10000 !important",
+      zIndex: "2 !important",
       transition: "z-index 0s 0s",
     },
     "& .slick-slide:hover > div": {
       position: "relative",
-      zIndex: "10000",
+      zIndex: "2",
     },
     "& .slick-slide > div": {
       height: "100%",

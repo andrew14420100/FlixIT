@@ -24,13 +24,17 @@ import "src/components/NetflixMiniModalExact.css";
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
 const OPEN_DELAY_MS = 500;
-const OPEN_DURATION_MS = 300;
-const CLOSE_DURATION_MS = 250;
-const OPACITY_OPEN_MS = 50;
+const OPEN_DURATION_MS = 420;
+const CLOSE_DURATION_MS = 320;
+const OPACITY_OPEN_MS = 180;
 const OPACITY_CLOSE_MS = CLOSE_DURATION_MS * 0.6;
 const EDGE_GUARD = 60;
 const EASE = "cubic-bezier(.21,0,.07,1)";
-const MODAL_BOX_SHADOW = "0 3px 10px rgba(0, 0, 0, 0.75)";
+// FLIX-IT has different row padding than Netflix; these two tiny offsets
+// reproduce the same visual overlap with the row title/left side.
+const FLIX_LEFT_BIAS_PX = 42;
+const FLIX_TITLE_OVERLAP_PX = 34;
+const MODAL_BOX_SHADOW = "none";
 
 type AnchorData = {
   titleCardRect: DOMRect;
@@ -201,8 +205,12 @@ export function ExpandOverlay({
       const verticalOverflow = (modalRect.height - card.height) / 2;
 
       // getMiniModalTopLeft() — normal video row branch.
-      const top = Math.round(cardDocTop - verticalOverflow);
-      const left = Math.round(cardDocLeft - horizontalOverflow);
+      const top = Math.round(
+        cardDocTop - verticalOverflow - FLIX_TITLE_OVERLAP_PX
+      );
+      const left = Math.round(
+        cardDocLeft - horizontalOverflow - FLIX_LEFT_BIAS_PX
+      );
 
       // getMiniModalOriginalY() — normal video row branch.
       const originalY = Math.round(
@@ -212,19 +220,36 @@ export function ExpandOverlay({
       // getOpenMiniModalVariant(): keep a 60px viewport safety margin.
       const tooCloseRight =
         window.innerWidth -
-          (card.left + card.width + horizontalOverflow) <
+          (card.left + card.width + horizontalOverflow - FLIX_LEFT_BIAS_PX) <
         EDGE_GUARD;
 
       let openX = 0;
-      if (card.left - horizontalOverflow < EDGE_GUARD) {
-        openX = Math.round(horizontalOverflow);
+      if (
+        card.left -
+          horizontalOverflow -
+          FLIX_LEFT_BIAS_PX <
+        EDGE_GUARD
+      ) {
+        // Same Netflix edge behavior: first card expands to the right.
+        openX = Math.round(
+          horizontalOverflow + FLIX_LEFT_BIAS_PX
+        );
       } else if (tooCloseRight) {
-        openX = Math.round(-horizontalOverflow);
+        openX = Math.round(
+          -horizontalOverflow + FLIX_LEFT_BIAS_PX
+        );
       }
 
       let openY = 0;
-      if (card.top - verticalOverflow < EDGE_GUARD) {
-        openY = Math.round(verticalOverflow);
+      if (
+        card.top -
+          verticalOverflow -
+          FLIX_TITLE_OVERLAP_PX <
+        EDGE_GUARD
+      ) {
+        openY = Math.round(
+          verticalOverflow + FLIX_TITLE_OVERLAP_PX
+        );
       }
 
       setGeometry({
@@ -271,7 +296,8 @@ export function ExpandOverlay({
     geometry?.left ??
     position.titleCardRect.left +
       (window.pageXOffset || 0) -
-      (modalWidth - position.titleCardRect.width) / 2;
+      (modalWidth - position.titleCardRect.width) / 2 -
+      FLIX_LEFT_BIAS_PX;
   let boxShadow = "none";
   let zIndex = 4;
 
@@ -326,6 +352,9 @@ export function ExpandOverlay({
           opacity,
           transition,
           pointerEvents: phase === "measure" ? "none" : "auto",
+          backfaceVisibility: "hidden",
+          WebkitBackfaceVisibility: "hidden",
+          perspective: "1000px",
         }}
       >
         {children}
