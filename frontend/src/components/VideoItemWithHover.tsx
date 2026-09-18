@@ -19,6 +19,15 @@ interface Props {
   artworkContext?: string;
 }
 
+function firstArtwork(...values: any[]) {
+  for (const value of values) {
+    if (!value) continue;
+    if (typeof value === "string") return value;
+    if (typeof value?.url === "string") return value.url;
+  }
+  return null;
+}
+
 export default function VideoItemWithHover({
   video,
   mediaType,
@@ -77,20 +86,51 @@ export default function VideoItemWithHover({
     [automaticAssets, deferredAssets]
   );
 
+  // Automatic media-assets always wins, but every artwork shape that older
+  // rows may already carry remains an instant fallback. This makes the cover
+  // visible immediately instead of showing an empty tile while the automatic
+  // request is still in flight.
+  const legacyLandscape = firstArtwork(
+    video?.backdrop_path,
+    video?.titled_backdrop_path,
+    video?.titledBackdropPath,
+    video?.netflix_artwork_url,
+    video?.netflixArtworkUrl,
+    video?.netflix_cover_url,
+    video?.contextualArtwork?.artwork,
+    video?.artwork,
+    video?.image,
+    video?.cover_path,
+    video?.cover,
+    video?.image_url,
+    video?.thumbnail_url
+  );
+  const legacyPoster = firstArtwork(
+    video?.poster_path,
+    video?.poster,
+    video?.netflix_ranked_artwork_url,
+    video?.netflixRankedArtworkUrl,
+    video?.netflix_cover_url,
+    video?.cover_path,
+    video?.cover,
+    video?.image,
+    video?.artwork
+  );
+
   const imageCandidates = useMemo(
     () => [
       tmdbImageUrl(automaticAssets?.backdrop_path, "original"),
       tmdbImageUrl(automaticAssets?.titled_backdrop_path, "original"),
-      tmdbImageUrl(video?.backdrop_path, "original"),
+      tmdbImageUrl(legacyLandscape, "original"),
       tmdbImageUrl(automaticAssets?.poster_path, "original"),
-      tmdbImageUrl(video?.poster_path, "original"),
+      tmdbImageUrl(legacyPoster, "original"),
     ].filter(Boolean),
     [
       automaticAssets?.backdrop_path,
       automaticAssets?.titled_backdrop_path,
       automaticAssets?.poster_path,
-      video?.backdrop_path,
-      video?.poster_path,
+      legacyLandscape,
+      legacyPoster,
     ]
   );
 
@@ -143,7 +183,7 @@ export default function VideoItemWithHover({
         ref={ref}
         imageUrl={imageCandidates[0] || null}
         imageCandidates={imageCandidates.slice(1)}
-        fallbackImageUrl={tmdbImageUrl(video?.backdrop_path || video?.poster_path, "original")}
+        fallbackImageUrl={tmdbImageUrl(legacyLandscape || legacyPoster, "original")}
         title={title}
         href={detailHref}
         onClick={goDetail}
@@ -167,7 +207,8 @@ export default function VideoItemWithHover({
               ...assets,
               id,
               preview_video_url: "",
-              // Never let legacy/admin artwork win inside the hover modal.
+              // Automatic assets win; pre-existing artwork is preserved only
+              // as a visual fallback so migration never creates blank covers.
               netflix_artwork_url: undefined,
               netflixArtworkUrl: undefined,
               netflix_cover_url: undefined,
@@ -177,10 +218,12 @@ export default function VideoItemWithHover({
               backdrop_path:
                 automaticAssets?.backdrop_path ||
                 automaticAssets?.titled_backdrop_path ||
-                video?.backdrop_path,
+                legacyLandscape ||
+                legacyPoster,
               titled_backdrop_path:
                 automaticAssets?.titled_backdrop_path || video?.titled_backdrop_path,
-              poster_path: automaticAssets?.poster_path || video?.poster_path,
+              poster_path:
+                automaticAssets?.poster_path || legacyPoster || legacyLandscape,
               logo_path: automaticAssets?.logo_path || video?.logo_path,
             }}
             mediaType={mType}
