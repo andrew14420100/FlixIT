@@ -38,9 +38,8 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
-    # Preserve the existing SC/TMDB YouTube endpoint exclusively for rollback
-    # when MULTI_PROVIDER_TRAILERS_ENABLED=false. While the new resolver is on,
-    # it is never used as a fallback.
+    # Preserve the old SC/TMDB YouTube endpoint only for rollback when the new
+    # resolver is disabled. While enabled, legacy YouTube is never a fallback.
     legacy_endpoint = None
     kept_routes = []
     for route in app.router.routes:
@@ -88,20 +87,30 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     async def trailer_file(cache_key: str):
         if not cache_key.isalnum() or len(cache_key) > 64:
             raise HTTPException(status_code=400, detail="Invalid trailer cache key")
-        path = resolver.cache_dir / f"{cache_key}.mp4"
+        path = (resolver.cache_dir / f"{cache_key}.mp4").resolve()
         try:
-            path = path.resolve()
-            root = resolver.cache_dir.resolve()
-            path.relative_to(root)
+            path.relative_to(resolver.cache_dir.resolve())
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid trailer cache path")
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="Trailer temporaneo scaduto")
-        return FileResponse(path, media_type="video/mp4", filename=f"{cache_key}.mp4")
+        return FileResponse(path, media_type="video/mp4")
 
+    # Static admin endpoints MUST stay before /{media_type}/{tmdb_id}; otherwise
+    # FastAPI would try to parse "queue" or "status" as an integer TMDB id.
     @router.get("/api/admin/trailers/config")
     async def admin_trailer_config(admin=Depends(get_current_admin)):
         return resolver.config()
+
+    @router.post("/api/admin/trailers/catalog/queue")
+    async def admin_queue_catalog(body: QueueBody, admin=Depends(get_current_admin)):
+        result = resolver.enqueue_catalog(limit=body.limit)
+        log_admin_action("QUEUE_TRAILER_CATALOG", metadata=result)
+        return {**result, **resolver.queue_status()}
+
+    @router.get("/api/admin/trailers/jobs/status")
+    async def admin_trailer_jobs(admin=Depends(get_current_admin)):
+        return resolver.queue_status()
 
     @router.get("/api/admin/trailers/{media_type}/{tmdb_id}")
     async def admin_get_trailer(media_type: str, tmdb_id: int, admin=Depends(get_current_admin)):
@@ -144,16 +153,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             raise HTTPException(status_code=400, detail=str(exc))
         resolver.enqueue(media_type, tmdb_id, priority=1, reason="provider_page_changed")
         return doc
-
-    @router.post("/api/admin/trailers/catalog/queue")
-    async def admin_queue_catalog(body: QueueBody, admin=Depends(get_current_admin)):
-        result = resolver.enqueue_catalog(limit=body.limit)
-        log_admin_action("QUEUE_TRAILER_CATALOG", metadata=result)
-        return {**result, **resolver.queue_status()}
-
-    @router.get("/api/admin/trailers/jobs/status")
-    async def admin_trailer_jobs(admin=Depends(get_current_admin)):
-        return resolver.queue_status()
 
     app.include_router(router)
     app.add_event_handler("startup", resolver.start)
