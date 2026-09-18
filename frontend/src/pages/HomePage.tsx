@@ -14,12 +14,19 @@ import store from "src/store";
 import HomepageSlider from "src/components/HomepageSlider";
 import Top10Slider from "src/components/Top10Slider";
 import { useQuery } from "@tanstack/react-query";
-import { useHomeDedupe, itemKey, claimedAbove } from "src/store/homeDedupe";
+import {
+  useHomeDedupe,
+  itemKey,
+  claimedAbove,
+  uniqueItems,
+} from "src/store/homeDedupe";
 
 const INITIAL_ROWS = 4;
 const ROWS_PER_LOAD = 3;
 const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
-const HOME_CACHE_PREFIX = "flix-home-v3";
+// v4 intentionally invalidates the previous daily snapshots: those snapshots
+// could contain the same title in several rows.
+const HOME_CACHE_PREFIX = "flix-home-v4";
 
 function readPersistedCache(key) {
   if (typeof window === "undefined") return null;
@@ -48,8 +55,6 @@ const freshFetchJson = async (url, fallback) => {
   if (!url) return fallback;
   try {
     const separator = url.includes("?") ? "&" : "?";
-    // One network refresh per day, but when it happens it must bypass browser
-    // cache and ask FLIX-IT for the newest catalogue snapshot.
     const dailyVersion = Math.floor(Date.now() / DAILY_REFRESH_MS);
     const response = await fetch(`${url}${separator}_flix_day=${dailyVersion}`, {
       cache: "no-store",
@@ -105,64 +110,157 @@ function sectionSignature(section) {
   return `${type}|${media}|${genre}|${country}`;
 }
 
-function mergeDailyItems(previousData, incomingData, type) {
-  const incoming = incomingData?.items || [];
-  const previous = previousData?.items || [];
+function sectionPriority(section) {
+  const type = section.section_type || section.apiString;
+  const priorities = {
+    trending: 130,
+    latest: 125,
+    new_releases: 123,
+    new_seasons: 121,
+    popular: 116,
+    top10: 114,
+    now_playing: 108,
+    airing_today: 108,
+    on_the_air: 106,
+    top_rated: 98,
+    genre: 82,
+    upcoming: 70,
+  };
+  return priorities[type] ?? 50;
+}
 
-  // Ranking rows are allowed to change order once per day because their order
-  // has meaning. Catalogue rows stay stable: newly available titles are
-  // prepended and existing cards keep their relative position. This prevents
-  // the random-looking reshuffle that was happening on every reload.
-  if (
-    !previous.length ||
-    type === "top10" ||
-    type === "trending" ||
-    type === "popular" ||
-    type === "top_rated"
-  ) {
-    return incomingData;
+function releaseTimestamp(item) {
+  const raw =
+    item?.release_date ||
+    item?.first_air_date ||
+    item?.available_at ||
+    item?.created_at ||
+    "";
+  if (!raw) return 0;
+  const value = new Date(raw).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function freshnessScore(item) {
+  const releasedAt = releaseTimestamp(item);
+  if (!releasedAt) return 15;
+
+  const days = (Date.now() - releasedAt) / 86400000;
+  // Future releases remain highly relevant only to rows which explicitly ask
+  // for them. For normal rows this still prevents an old classic from beating
+  // every recent title only because of lifetime vote count.
+  if (days < 0) return Math.max(20, 92 - Math.abs(days) * 0.3);
+  if (days <= 14) return 100;
+  if (days <= 30) return 92;
+  if (days <= 90) return 78;
+  if (days <= 180) return 64;
+  if (days <= 365) return 50;
+  if (days <= 730) return 34;
+  if (days <= 1825) return 22;
+  return 10;
+}
+
+function fameScore(item) {
+  const popularity = Math.max(0, Number(item?.popularity || 0));
+  const voteCount = Math.max(0, Number(item?.vote_count || 0));
+  const rating = Math.max(0, Math.min(10, Number(item?.vote_average || 0)));
+
+  // Logarithms prevent giant franchises from permanently crowding out fresh
+  // releases while still giving well-known titles a strong signal.
+  return (
+    Math.min(100, Math.log1p(popularity) * 17) * 0.52 +
+    Math.min(100, Math.log1p(voteCount) * 11) * 0.30 +
+    rating * 10 * 0.18
+  );
+}
+
+function rowScore(item, type, originalIndex) {
+  const endpointRank = Math.max(0, 100 - originalIndex * 3.5);
+  const fresh = freshnessScore(item);
+  const famous = fameScore(item);
+
+  switch (type) {
+    case "latest":
+    case "new_releases":
+    case "new_seasons":
+    case "now_playing":
+    case "airing_today":
+    case "on_the_air":
+      return fresh * 0.58 + famous * 0.27 + endpointRank * 0.15;
+
+    case "trending":
+      return endpointRank * 0.45 + famous * 0.35 + fresh * 0.20;
+
+    case "popular":
+      return famous * 0.50 + endpointRank * 0.32 + fresh * 0.18;
+
+    case "top_rated":
+      return famous * 0.55 + endpointRank * 0.34 + fresh * 0.11;
+
+    case "upcoming":
+      return endpointRank * 0.55 + famous * 0.30 + fresh * 0.15;
+
+    case "genre":
+    default:
+      return famous * 0.40 + fresh * 0.34 + endpointRank * 0.26;
   }
+}
 
-  const previousKeys = new Set(previous.map(itemKey).filter(Boolean));
-  const incomingByKey = new Map(
-    incoming.map((item) => [itemKey(item), item]).filter(([key]) => !!key)
+function rankDailyItems(items, type) {
+  const valid = uniqueItems(items).filter(
+    (item) => item && (item.backdrop_path || item.poster_path)
   );
 
-  const addedToday = incoming.filter((item) => {
-    const key = itemKey(item);
-    return key && !previousKeys.has(key);
-  });
+  // Top 10 is already a meaningful rank supplied by the backend; preserve it.
+  if (type === "top10") return valid;
 
-  const retained = previous
-    .map((item) => incomingByKey.get(itemKey(item)))
-    .filter(Boolean);
+  return valid
+    .map((item, originalIndex) => ({
+      item,
+      originalIndex,
+      score: rowScore(item, type, originalIndex),
+    }))
+    .sort((a, b) => b.score - a.score || a.originalIndex - b.originalIndex)
+    .map((entry) => entry.item);
+}
 
+function buildDailySnapshot(incomingData, type) {
+  const ranked = rankDailyItems(incomingData?.items || [], type);
   return {
-    ...incomingData,
-    items: [...addedToday, ...retained].slice(0, 30),
+    ...(incomingData || {}),
+    items: ranked.slice(0, type === "top10" ? 10 : 30),
   };
 }
 
-// Home Screen Sections replaces the vanilla home with a modular feed. FLIX-IT
-// follows the same principle: configured rows stay first, then every other
-// supported template is appended automatically. The section definitions and
-// catalogue cards are persisted locally so a browser reload paints immediately
-// while the network refresh happens only when the daily snapshot expires.
+// Generate automatic rows once, without repeated signatures/names. Admin rows
+// keep their chosen order; automatic discovery rows are then ordered so current,
+// fresh and broadly popular catalogues are surfaced before narrow genre rows.
 function buildExtraSections(templates, adminSections) {
   const used = new Set(adminSections.map(sectionSignature));
-  const usedNames = new Set(adminSections.map((s) => s.name));
+  const usedNames = new Set(
+    adminSections.map((s) => String(s.name || "").trim().toLowerCase())
+  );
+  const result = [];
 
-  return (templates || [])
-    .filter((template) => !!sectionUrl(template))
-    .filter(
-      (template) =>
-        !used.has(sectionSignature(template)) && !usedNames.has(template.name)
-    )
-    .map((template) => ({
+  for (const template of templates || []) {
+    if (!sectionUrl(template)) continue;
+
+    const signature = sectionSignature(template);
+    const normalizedName = String(template.name || "").trim().toLowerCase();
+    if (used.has(signature) || (normalizedName && usedNames.has(normalizedName))) {
+      continue;
+    }
+
+    used.add(signature);
+    if (normalizedName) usedNames.add(normalizedName);
+    result.push({
       ...template,
-      key: `auto-${sectionSignature(template)}-${template.name}`,
+      key: `auto-${signature}-${template.name}`,
       auto_generated: true,
-    }));
+    });
+  }
+
+  return result.sort((a, b) => sectionPriority(b) - sectionPriority(a));
 }
 
 function RowSkeleton({ title }) {
@@ -205,10 +303,9 @@ function SectionRow({ section, index, onSettled }) {
     queryKey: ["home-row", sectionSignature(section), url],
     queryFn: async () => {
       const incoming = await freshFetchJson(url, { items: [] });
-      const previous = readPersistedCache(cacheKey)?.data;
-      const merged = mergeDailyItems(previous, incoming, type);
-      writePersistedCache(cacheKey, merged);
-      return merged;
+      const snapshot = buildDailySnapshot(incoming, type);
+      writePersistedCache(cacheKey, snapshot);
+      return snapshot;
     },
     initialData: initialCache?.data,
     initialDataUpdatedAt: initialCache?.savedAt,
@@ -226,24 +323,24 @@ function SectionRow({ section, index, onSettled }) {
 
   const items = useMemo(() => {
     if (isPending) return null;
-    const all = (data?.items || []).filter(
-      (item) => item && (item.backdrop_path || item.poster_path)
-    );
-    if (isTop10) return all.slice(0, 10);
 
-    const taken = claimedAbove(rows, index);
-    const kept = all.filter((item) => !taken.has(itemKey(item)));
-    return (kept.length >= 6 ? kept : all).slice(0, 30);
-  }, [data, isPending, rows, index, isTop10]);
+    const ranked = rankDailyItems(data?.items || [], type);
+    const taken = claimedAbove(rows, index, section.key);
+    // Strict page-level diversity: never put a title back merely to fill a row.
+    return ranked
+      .filter((item) => !taken.has(itemKey(item)))
+      .slice(0, isTop10 ? 10 : 30);
+  }, [data, isPending, rows, index, section.key, isTop10, type]);
 
   useEffect(() => {
     if (!isPending) onSettled();
   }, [isPending, onSettled]);
 
-  const idsKey = items && !isTop10 ? items.map(itemKey).filter(Boolean).join("|") : "";
+  const idsKey = items ? items.map(itemKey).filter(Boolean).join("|") : "";
   useEffect(() => {
     if (idsKey) claim(section.key, index, idsKey.split("|"));
-  }, [idsKey, section.key, index, claim]);
+    else release(section.key);
+  }, [idsKey, section.key, index, claim, release]);
 
   useEffect(() => () => release(section.key), [section.key, release]);
 
@@ -260,6 +357,7 @@ export function Component() {
   const [visibleCount, setVisibleCount] = useState(INITIAL_ROWS);
   const [tick, setTick] = useState(0);
   const sentinelRef = useRef(null);
+  const resetDedupe = useHomeDedupe((state) => state.reset);
 
   const feedCacheKey = `${HOME_CACHE_PREFIX}:feed`;
   const initialFeedCache = useMemo(
@@ -268,7 +366,7 @@ export function Component() {
   );
 
   const { data: feed = null } = useQuery({
-    queryKey: ["home-feed"],
+    queryKey: ["home-feed-v4"],
     queryFn: async () => {
       const [secData, tplData] = await Promise.all([
         freshFetchJson("/api/public/sections", { sections: [] }),
@@ -293,6 +391,10 @@ export function Component() {
     refetchOnReconnect: false,
     refetchIntervalInBackground: false,
   });
+
+  useEffect(() => {
+    resetDedupe();
+  }, [filterMediaType, resetDedupe]);
 
   const onRowSettled = useCallback(() => setTick((t) => t + 1), []);
   const total = feed?.length || 0;
@@ -333,7 +435,7 @@ export function Component() {
         width: "100%",
         maxWidth: "none",
         mx: 0,
-        overflowX: "hidden",
+        overflowX: "clip",
         fontFamily: '\"Netflix Sans\", \"Helvetica Neue\", Helvetica, Arial, sans-serif',
       }}
     >
