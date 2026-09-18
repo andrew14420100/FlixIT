@@ -60,12 +60,22 @@ interface HomepageSliderProps {
   title: string;
   items: any[];
   linkTo?: string;
+  compactSpacing?: boolean;
+  rowId?: string;
+}
+
+function sliderItemKey(item: any) {
+  const id = item?.tmdbId || item?.tmdb_id || item?.id;
+  const type = item?.type === "tv" || item?.media_type === "tv" ? "tv" : "movie";
+  return id ? `${type}-${id}` : "";
 }
 
 export default function HomepageSlider({
   title,
   items,
   linkTo,
+  compactSpacing = false,
+  rowId,
 }: HomepageSliderProps) {
   const sliderRef = useRef<Slider>(null);
   const theme = useTheme();
@@ -75,19 +85,22 @@ export default function HomepageSlider({
   const up800 = useMediaQuery("(min-width:800px)");
   const up500 = useMediaQuery("(min-width:500px)");
 
-  // StreamingUnity's source works with an integer tile count and computes
-  // pages/translation from that count. The fractional visible value below
-  // intentionally exposes the next card ("peek") like the supplied desktop UI.
   const tiles = up1400 ? 6 : up1100 ? 5 : up800 ? 4 : up500 ? 3 : 2;
   const visibleTiles = up1400 ? 6.38 : up1100 ? 5.35 : tiles;
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [showExplore, setShowExplore] = useState(false);
 
-  const visibleItems = useMemo(
-    () => (items || []).filter((i) => !!i.backdrop_path || !!i.poster_path),
-    [items]
-  );
+  const visibleItems = useMemo(() => {
+    const seen = new Set();
+    return (items || []).filter((item) => {
+      if (!item || (!item.backdrop_path && !item.poster_path)) return false;
+      const key = sliderItemKey(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [items]);
 
   const isTop10 = /top\s*10/i.test(title);
 
@@ -123,10 +136,10 @@ export default function HomepageSlider({
 
   return (
     <Box
-      className={`slider-row${isTop10 ? " top10-row" : ""}`}
+      id={rowId}
+      className={`slider-row${isTop10 ? " top10-row" : ""}${compactSpacing ? " compact-row" : ""}`}
       data-testid={`homepage-slider-${title.toLowerCase().replace(/\s+/g, "-")}`}
       sx={{
-        // Misure reali rilevate dal computed style di StreamingUnity
         position: "relative",
         left: 0,
         right: 0,
@@ -134,8 +147,12 @@ export default function HomepageSlider({
         bottom: 0,
         width: "100%",
         height: { xs: "auto", md: "237.241px" },
-        mt: { xs: "32px", md: "57.3007px" },
-        mb: { xs: "32px", md: "57.3007px" },
+        mt: compactSpacing
+          ? { xs: "8px", md: "14px" }
+          : { xs: "32px", md: "57.3007px" },
+        mb: compactSpacing
+          ? { xs: "12px", md: "18px" }
+          : { xs: "32px", md: "57.3007px" },
         boxSizing: "border-box",
         userSelect: "none",
         overflow: "visible",
@@ -147,7 +164,6 @@ export default function HomepageSlider({
         "&:hover": { zIndex: 100 },
       }}
     >
-      {/* SC: row-header > header-wrap > label + browse */}
       <Box
         className="row-header"
         sx={{
@@ -220,7 +236,6 @@ export default function HomepageSlider({
           </Box>
         </NetflixNavigationLink>
 
-        {/* SC-style page indicator: visible when the row has more than one page */}
         {pageCount > 1 && (
           <Box
             className="tab-indicator"
@@ -250,7 +265,6 @@ export default function HomepageSlider({
         )}
       </Box>
 
-      {/* SC: slider > show-peek > slider-content > slider-item */}
       <Box className="slider" sx={{ position: "relative", zIndex: 3, width: "100%", overflow: "visible" }}>
         <Box
           className="show-peek"
@@ -271,48 +285,51 @@ export default function HomepageSlider({
               activeSlideIndex={activeSlideIndex}
             >
               <StyledSlider ref={sliderRef} {...settings} theme={theme}>
-                {visibleItems.map((item) => (
-                  <Box
-                    className="slider-item"
-                    key={item.id || item.tmdbId}
-                    sx={{
-                      px: { xs: "2px", sm: "3px", md: "3.82005px" },
-                      boxSizing: "border-box",
-                      "&:first-of-type": { pl: 0 },
-                      position: "relative",
-                    }}
-                  >
-                    {isTop10 ? (
-                      <NetflixRankedCardWithHover
-                        item={{
-                          ...item,
-                          id: item.id || item.tmdbId,
-                          title: item.title || item.name,
-                          name: item.title || item.name,
-                        }}
-                        rank={(visibleItems.indexOf(item) % 10) + 1}
-                        mediaType={
-                          item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
-                        }
-                        watch={item.watch}
-                      />
-                    ) : (
-                      <VideoItemWithHover
-                        video={{
-                          ...item,
-                          id: item.id || item.tmdbId,
-                          title: item.title || item.name,
-                          name: item.title || item.name,
-                          genre_ids: item.genre_ids || [],
-                        }}
-                        mediaType={
-                          item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
-                        }
-                        watch={item.watch}
-                      />
-                    )}
-                  </Box>
-                ))}
+                {visibleItems.map((item, index) => {
+                  const key = sliderItemKey(item) || `item-${index}`;
+                  return (
+                    <Box
+                      className="slider-item"
+                      key={key}
+                      sx={{
+                        px: { xs: "2px", sm: "3px", md: "3.82005px" },
+                        boxSizing: "border-box",
+                        "&:first-of-type": { pl: 0 },
+                        position: "relative",
+                      }}
+                    >
+                      {isTop10 ? (
+                        <NetflixRankedCardWithHover
+                          item={{
+                            ...item,
+                            id: item.id || item.tmdbId,
+                            title: item.title || item.name,
+                            name: item.title || item.name,
+                          }}
+                          rank={index + 1}
+                          mediaType={
+                            item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
+                          }
+                          watch={item.watch}
+                        />
+                      ) : (
+                        <VideoItemWithHover
+                          video={{
+                            ...item,
+                            id: item.id || item.tmdbId,
+                            title: item.title || item.name,
+                            name: item.title || item.name,
+                            genre_ids: item.genre_ids || [],
+                          }}
+                          mediaType={
+                            item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
+                          }
+                          watch={item.watch}
+                        />
+                      )}
+                    </Box>
+                  );
+                })}
               </StyledSlider>
             </CustomNavigation>
           </RootStyle>
