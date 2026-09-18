@@ -46,10 +46,10 @@ export async function uploadFile(filePath) {
 }
 EOF
 
-# IMDb playback files do not always contain an ISO language tag. Upstream
-# discards an otherwise valid trailer when every file lacks that metadata.
-# FLIX-IT verifies resolution/codec itself afterwards, so keep valid trailers
-# even when the audio language tag is absent.
+# IMDb HTML scraping in upstream Theryston is currently fragile because IMDb
+# may return WAF/empty documents. FLIX-IT now handles IMDb through its own
+# GraphQL provider, but keep this worker patch so known Apple/Prime/Netflix
+# pages are not discarded merely because an audio ISO tag is absent.
 TRAILERS_API_DIR="$TRAILERS_API_DIR" python3 - <<'PY'
 import os
 from pathlib import Path
@@ -106,7 +106,7 @@ sleep 2
 echo "--- trailers-api ---"
 supervisorctl status trailers-api || true
 printf "docs HTTP: "
-curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:$THERYSTON_PORT/docs" || true
+curl -L -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:$THERYSTON_PORT/docs/" || true
 printf "ffmpeg: "
 ffmpeg -version 2>/dev/null | head -1 || true
 printf "ffprobe: "
