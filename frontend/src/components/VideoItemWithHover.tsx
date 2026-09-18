@@ -30,6 +30,18 @@ function imageSrc(path: any, size: string) {
   return `${TMDB_IMG}${size}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
 
+function inferArtworkContext(explicit?: string) {
+  if (explicit) return explicit;
+  if (typeof window === "undefined") return "home";
+  const path = window.location.pathname.toLowerCase();
+  if (path === "/browse" || path === "/") return "home";
+  if (path.startsWith("/film")) return "movie";
+  if (path.startsWith("/serie-tv") || path === "/serie") return "tv";
+  if (/^\/browse\/(movie|tv)\/\d+/.test(path)) return "detail";
+  if (path.includes("search") || path.startsWith("/archivio")) return "search";
+  return "home";
+}
+
 function RemoveIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -48,7 +60,7 @@ export default function VideoItemWithHover({
   mediaType,
   watch,
   suppressHover = false,
-  artworkContext = "home",
+  artworkContext,
 }: Props) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -56,6 +68,7 @@ export default function VideoItemWithHover({
 
   const mType = mediaType || MEDIA_TYPE.Movie;
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
+  const resolvedContext = inferArtworkContext(artworkContext);
 
   useEffect(() => {
     const node = ref.current;
@@ -85,10 +98,8 @@ export default function VideoItemWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Rich TMDB/trailer metadata remains deferred to hover. Netflix artwork is
-  // resolved only as the card approaches the viewport and is cached for a day.
   const assets = useDeferredMediaAssets(video, mType, open);
-  const resolved = useNetflixArtwork(video, mType, artworkContext, nearViewport);
+  const resolved = useNetflixArtwork(video, mType, resolvedContext, nearViewport);
 
   const existingNetflixArtwork =
     video.netflix_artwork_url ||
