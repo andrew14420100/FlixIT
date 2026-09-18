@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -15,83 +14,85 @@ import { MAIN_PATH } from "src/constant";
 import { useGetAppendedVideosQuery } from "src/store/slices/discover";
 import { useHeroData } from "src/hooks/useHeroData";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
+import useAutomaticMediaAssets, { tmdbImageUrl } from "src/hooks/useAutomaticMediaAssets";
+import useResolvedTrailer from "src/hooks/useResolvedTrailer";
 import TrailerPlayer from "./TrailerPlayer";
-import { TMDB_IMG } from "./ExpandedCard";
 
 const DEFAULT_FEATURED_ID = 202208;
 const DEFAULT_FEATURED_TYPE = MEDIA_TYPE.Tv;
 const TRAILER_DELAY_MS = 3000;
+const STREAM_CACHE_PREFIX = "watch_stream_cache:";
 
-function artworkUrl(value: any, size = "original") {
-  if (!value) return null;
-  const raw = String(value);
-  if (/^https?:\/\//i.test(raw) || raw.startsWith("data:") || raw.startsWith("blob:")) {
-    return raw;
+function cachePrefetchedStream(typeSlug: string, id: number, data: any) {
+  if (!data?.success || !data?.stream || typeof window === "undefined") return;
+  const season = typeSlug === "tv" ? 1 : 0;
+  const episode = typeSlug === "tv" ? 1 : 0;
+  const logicalKey = `${typeSlug}:${id}:${season}:${episode}`;
+  const now = Date.now();
+  try {
+    sessionStorage.setItem(
+      STREAM_CACHE_PREFIX + logicalKey,
+      JSON.stringify({
+        stream: data.stream,
+        type: data.type || "hls",
+        source: data.source,
+        savedAt: now,
+      })
+    );
+    const legacyPayload = JSON.stringify({ data, ts: now, timestamp: now });
+    [
+      `stream:${typeSlug}:${id}:${season}:${episode}`,
+      `stream_${typeSlug}_${id}_${season}_${episode}`,
+      `stream-${typeSlug}-${id}-${season}-${episode}`,
+    ].forEach((key) => sessionStorage.setItem(key, legacyPayload));
+  } catch {
+    // Prefetch cache is an optimization only.
   }
-  return `${TMDB_IMG}${size}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
 
-export default function HeroSection({ mediaType }) {
+export default function HeroSection({ mediaType: _mediaType }) {
   const navigate = useNavigate();
   const { data: heroSettings, isLoading: heroLoading } = useHeroData();
   const { getProgress } = useContinueWatching();
 
   const featuredId = useMemo(
     () => (heroSettings?.contentId ? parseInt(heroSettings.contentId) : DEFAULT_FEATURED_ID),
-    [heroSettings]
+    [heroSettings?.contentId]
   );
   const featuredMediaType = useMemo(() => {
     if (heroSettings?.mediaType) {
       return heroSettings.mediaType === "movie" ? MEDIA_TYPE.Movie : MEDIA_TYPE.Tv;
     }
     return DEFAULT_FEATURED_TYPE;
-  }, [heroSettings]);
+  }, [heroSettings?.mediaType]);
   const typeSlug = featuredMediaType === MEDIA_TYPE.Movie ? "movie" : "tv";
   const skipQueries = heroLoading || !featuredId;
 
   const inlineDetail = heroSettings?.detail?.id === featuredId ? heroSettings.detail : null;
   const inlineAssets = heroSettings?.assets || null;
+
   const { data: fetchedDetail } = useGetAppendedVideosQuery(
     { mediaType: featuredMediaType, id: featuredId },
     { skip: skipQueries || !!inlineDetail }
   );
   const detailData = inlineDetail || fetchedDetail;
-  const { data: fetchedAssets } = useQuery({
-    queryKey: ["media-assets", typeSlug, featuredId],
-    queryFn: ({ signal }: any) =>
-      fetch(`/api/public/media-assets/${typeSlug}/${featuredId}`, {
-        signal,
-        headers: { Accept: "application/json" },
-      }).then((r) => (r.ok ? r.json() : null)),
-    enabled: !skipQueries && !inlineAssets,
-    staleTime: 6 * 60 * 60 * 1000,
-    gcTime: 7 * 24 * 60 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-  });
-  const assets = inlineAssets || fetchedAssets;
-  const { data: trailerData } = useQuery({
-    queryKey: ["resolved-trailer", typeSlug, featuredId, false],
-    queryFn: ({ signal }: any) =>
-      fetch(`/api/public/trailer/${typeSlug}/${featuredId}?hdr=false`, {
-        signal,
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-      }).then((r) => (r.ok ? r.json() : null)),
-    enabled: !skipQueries,
-    staleTime: 12 * 60 * 1000,
-    gcTime: 3 * 60 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    refetchInterval: (query: any) => {
-      const value = query?.state?.data;
-      if (!value?.enabled || value?.available) return false;
-      return 1200;
-    },
-  });
+
+  const automaticAssets = useAutomaticMediaAssets(
+    { id: featuredId, type: typeSlug },
+    featuredMediaType,
+    !skipQueries && !inlineAssets
+  );
+  const assets = inlineAssets || automaticAssets || {};
+
+  const resolvedTrailer = useResolvedTrailer(
+    featuredMediaType,
+    featuredId,
+    !skipQueries
+  );
+  const trailerKey = resolvedTrailer.url;
 
   const [muted, setMuted] = useState(true);
-  const [showVideo, setShowVideo] = useState(false);
+  const [trailerGateOpen, setTrailerGateOpen] = useState(false);
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [videoEnded, setVideoEnded] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -101,23 +102,26 @@ export default function HeroSection({ mediaType }) {
 
   const isOffset = useOffSetTop(window.innerHeight * 0.6);
 
-  // The Hero consumes only the central resolver. Legacy media-assets trailer
-  // keys are intentionally ignored so a stale YouTube key can never reappear.
-  const trailerKey = trailerData?.enabled && trailerData?.available
-    ? (trailerData?.trailer_url || trailerData?.trailer_key || trailerData?.manifest_url)
-    : null;
-
-  const logoPath = artworkUrl(assets?.logo_path, "original");
-  const fallbackLogoPath = artworkUrl(assets?.fallback_logo_path, "original");
+  const logoPath = tmdbImageUrl(assets?.logo_path, "original");
+  const fallbackLogoPath = tmdbImageUrl(assets?.fallback_logo_path, "original");
 
   const backdropUrl = useMemo(() => {
     if (heroSettings?.customBackdrop) return heroSettings.customBackdrop;
-    const path = detailData?.backdrop_path || assets?.backdrop_path || assets?.titled_backdrop_path;
-    return artworkUrl(path, "original");
-  }, [heroSettings?.customBackdrop, detailData?.backdrop_path, assets?.backdrop_path, assets?.titled_backdrop_path]);
+    return tmdbImageUrl(
+      assets?.backdrop_path ||
+        detailData?.backdrop_path ||
+        assets?.titled_backdrop_path,
+      "original"
+    );
+  }, [
+    heroSettings?.customBackdrop,
+    assets?.backdrop_path,
+    assets?.titled_backdrop_path,
+    detailData?.backdrop_path,
+  ]);
 
   const fallbackBackdropUrl = useMemo(
-    () => artworkUrl(assets?.fallback_backdrop_path, "original"),
+    () => tmdbImageUrl(assets?.fallback_backdrop_path, "original"),
     [assets?.fallback_backdrop_path]
   );
 
@@ -131,53 +135,62 @@ export default function HeroSection({ mediaType }) {
   }, [logoPath]);
 
   const displayTitle =
-    heroSettings?.customTitle || detailData?.name || detailData?.title || "";
+    heroSettings?.customTitle || detailData?.name || detailData?.title || assets?.title || "";
   const displayDescription =
     heroSettings?.customDescription || detailData?.overview || "";
   const seasonLabel = heroSettings?.seasonLabel || "";
 
+  // The three-second dwell belongs to the featured title, not to the moment the
+  // resolver happens to finish. If the trailer is already cached it starts at
+  // three seconds; if it becomes available later it starts immediately then.
   useEffect(() => {
-    setShowVideo(false);
+    setTrailerGateOpen(false);
     setVideoEnded(false);
     setVideoPlaying(false);
     setInfoTarget(false);
-    if (!trailerKey) return;
+    setMuted(true);
+    const timer = window.setTimeout(() => setTrailerGateOpen(true), TRAILER_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [featuredId, typeSlug]);
 
-    // Netflix-style dwell: keep the hero artwork visible for three seconds,
-    // then hand off to the already-resolved trailer.
-    const trailerTimer = window.setTimeout(
-      () => setShowVideo(true),
-      TRAILER_DELAY_MS
-    );
-
-    return () => window.clearTimeout(trailerTimer);
-  }, [featuredId, trailerKey]);
+  const showVideo = trailerGateOpen && !!trailerKey && !videoEnded;
+  const videoActive = showVideo && videoPlaying;
 
   const handleVideoEnded = useCallback(() => {
     setVideoEnded(true);
-    setShowVideo(false);
     setVideoPlaying(false);
     setInfoTarget(false);
   }, []);
+
   const handleVideoPlaying = useCallback(() => {
     setVideoPlaying(true);
-    // Shrink the treatment as the moving artwork becomes visible, rather than
-    // waiting an additional five seconds after playback has already started.
     setInfoTarget(true);
   }, []);
-  const videoActive = showVideo && !videoEnded && !!trailerKey && videoPlaying;
 
-  const prefetchedRef = useRef(false);
+  const prefetchedRef = useRef("");
+  useEffect(() => {
+    prefetchedRef.current = "";
+  }, [featuredId, typeSlug]);
+
   const prefetchStream = useCallback(() => {
-    if (prefetchedRef.current) return;
-    prefetchedRef.current = true;
+    const identity = `${typeSlug}:${featuredId}`;
+    if (!featuredId || prefetchedRef.current === identity) return;
+    prefetchedRef.current = identity;
+
     const url =
       typeSlug === "tv"
         ? `/api/player/tv/${featuredId}/1/1`
         : `/api/player/movie/${featuredId}`;
-    fetch(url).catch(() => {
-      prefetchedRef.current = false;
-    });
+
+    fetch(url, { cache: "no-store", headers: { Accept: "application/json" } })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data) => cachePrefetchedStream(typeSlug, featuredId, data))
+      .catch(() => {
+        prefetchedRef.current = "";
+      });
   }, [typeSlug, featuredId]);
 
   const handlePlay = () => {
@@ -247,13 +260,13 @@ export default function HeroSection({ mediaType }) {
             objectFit: "cover",
             objectPosition: "top center",
             opacity: imageLoaded ? (videoActive ? 0 : 1) : 0,
-            transition: "opacity 1.1s ease-in-out",
+            transition: "opacity 900ms ease-in-out",
             zIndex: 0,
           }}
         />
       )}
 
-      {trailerKey && showVideo && !videoEnded && (
+      {showVideo && (
         <Box
           className="hero-video-container"
           data-testid="hero-trailer"
@@ -266,7 +279,7 @@ export default function HeroSection({ mediaType }) {
             zIndex: 3,
             overflow: "hidden",
             opacity: videoActive ? 1 : 0,
-            transition: "opacity 1.1s ease-in-out",
+            transition: "opacity 900ms ease-in-out",
           }}
         >
           <TrailerPlayer
@@ -300,7 +313,8 @@ export default function HeroSection({ mediaType }) {
             left: 0,
             right: 0,
             height: "14.7em",
-            backgroundImage: "linear-gradient(to bottom, rgba(0,0,0,.5) 0%, rgba(0,0,0,0) 85%)",
+            backgroundImage:
+              "linear-gradient(to bottom, rgba(0,0,0,.5) 0%, rgba(0,0,0,0) 85%)",
           }}
         />
         <Box
@@ -311,7 +325,8 @@ export default function HeroSection({ mediaType }) {
             right: "26.09%",
             bottom: 0,
             display: { xs: "none", sm: "block" },
-            backgroundImage: "linear-gradient(77deg, rgba(0,0,0,.6) 0%, rgba(0,0,0,0) 85%)",
+            backgroundImage:
+              "linear-gradient(77deg, rgba(0,0,0,.6) 0%, rgba(0,0,0,0) 85%)",
           }}
         />
         <Box
@@ -369,11 +384,11 @@ export default function HeroSection({ mediaType }) {
                 transform: infoTarget
                   ? "scale(0.8) translate3d(0px, 2.5em, 0px)"
                   : "scale(1) translate3d(0px, 0px, 0px)",
-                transitionProperty: "transform",
-                transitionDuration: "1.05s",
-                transitionDelay: "0s",
-                transitionTimingFunction: "ease",
-                "@media (max-width:499px)": { display: "flex", justifyContent: "center" },
+                transition: "transform 1.05s ease",
+                "@media (max-width:499px)": {
+                  display: "flex",
+                  justifyContent: "center",
+                },
               }}
             >
               {heroLogoSrc ? (
@@ -436,10 +451,7 @@ export default function HeroSection({ mediaType }) {
                   fontWeight: 700,
                   fontFamily: "inherit",
                   lineHeight: "inherit",
-                  transitionProperty: "opacity",
-                  transitionDuration: ".5s",
-                  transitionDelay: "0s",
-                  transitionTimingFunction: "ease",
+                  transition: "opacity .5s ease",
                   "@media (max-width:499px)": { mb: "-.25em", textAlign: "center" },
                 }}
               >
@@ -474,10 +486,7 @@ export default function HeroSection({ mediaType }) {
                 fontFamily: "inherit",
                 color: "#fff",
                 textShadow: "2px 2px 4px rgba(0,0,0,.45)",
-                transitionProperty: "opacity",
-                transitionDuration: ".5s",
-                transitionDelay: "0s",
-                transitionTimingFunction: "ease",
+                transition: "opacity .5s ease",
                 display: "-webkit-box",
                 WebkitLineClamp: 3,
                 WebkitBoxOrient: "vertical",
@@ -534,12 +543,27 @@ export default function HeroSection({ mediaType }) {
                   viewBox="0 0 384 512"
                   aria-hidden="true"
                   className="play-icon"
-                  sx={{ width: ".9em", height: "1.2em", mr: ".5em", flex: "0 0 auto", fontSize: "1.5em" }}
+                  sx={{
+                    width: ".9em",
+                    height: "1.2em",
+                    mr: ".5em",
+                    flex: "0 0 auto",
+                    fontSize: "1.5em",
+                  }}
                 >
-                  <path fill="currentColor" d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80v352c0 17.4 9.4 33.4 24.5 41.9S58.2 482 73 473l288-176c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41z" />
+                  <path
+                    fill="currentColor"
+                    d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80v352c0 17.4 9.4 33.4 24.5 41.9S58.2 482 73 473l288-176c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41z"
+                  />
                 </Box>
-                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>Riproduci</Box>
+                <Box
+                  component="span"
+                  sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}
+                >
+                  Riproduci
+                </Box>
               </Box>
+
               <Box
                 component="button"
                 onClick={() => navigate(`/browse/${typeSlug}/${featuredId}`)}
@@ -572,11 +596,25 @@ export default function HeroSection({ mediaType }) {
                   viewBox="0 0 24 24"
                   aria-hidden="true"
                   className="info-icon"
-                  sx={{ width: "1.2em", height: "1.2em", mr: ".5em", flex: "0 0 auto", fontSize: "1.7em" }}
+                  sx={{
+                    width: "1.2em",
+                    height: "1.2em",
+                    mr: ".5em",
+                    flex: "0 0 auto",
+                    fontSize: "1.7em",
+                  }}
                 >
-                  <path fill="currentColor" d="M11 17h2v-6h-2zm1.713-8.287Q13 8.425 13 8t-.288-.712T12 7t-.712.288T11 8t.288.713T12 9t.713-.288M12 22q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9T2 12t.788-3.9t2.137-3.175T8.1 2.788T12 2t3.9.788t3.175 2.137T21.213 8.1T22 12t-.788 3.9t-2.137 3.175t-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12t-2.325-5.675T12 4T6.325 6.325T4 12t2.325 5.675T12 20m0-8" />
+                  <path
+                    fill="currentColor"
+                    d="M11 17h2v-6h-2zm1.713-8.287Q13 8.425 13 8t-.288-.712T12 7t-.712.288T11 8t.288.713T12 9t.713-.288M12 22q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9T2 12t.788-3.9t2.137-3.175T8.1 2.788T12 2t3.9.788t3.175 2.137T21.213 8.1T22 12t-.788 3.9t-2.137 3.175t-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12t-2.325-5.675T12 4T6.325 6.325T4 12t2.325 5.675T12 20m0-8"
+                  />
                 </Box>
-                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>Altre info</Box>
+                <Box
+                  component="span"
+                  sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}
+                >
+                  Altre info
+                </Box>
               </Box>
             </Stack>
           </Box>
@@ -595,7 +633,7 @@ export default function HeroSection({ mediaType }) {
             pointerEvents: "auto",
           }}
         >
-          {trailerKey && showVideo && (
+          {showVideo && (
             <IconButton
               onClick={() => setMuted((m) => !m)}
               data-testid="hero-audio-toggle"
@@ -606,7 +644,8 @@ export default function HeroSection({ mediaType }) {
                 height: { xs: 46, md: 60 },
                 bgcolor: "rgba(0,0,0,0.35)",
                 backdropFilter: "blur(8px)",
-                transition: "background-color 200ms ease, border-color 200ms ease, transform 200ms ease",
+                transition:
+                  "background-color 200ms ease, border-color 200ms ease, transform 200ms ease",
                 "&:hover": {
                   borderColor: "#fff",
                   color: "#fff",
