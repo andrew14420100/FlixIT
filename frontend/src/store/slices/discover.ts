@@ -118,21 +118,16 @@ const extendedApi = tmdbApi.injectEndpoints({
         },
       }),
       transformResponse: (response: any) => {
-        const current = response?.videos?.results || [];
-        const hasLegacyMountKey = current.some((v: any) => v?.site === "YouTube" && v?.key);
-        if (hasLegacyMountKey) return response;
-
-        // DetailPage historically mounts its Hero trailer only when a video key
-        // exists. This sentinel never contacts YouTube: TrailerPlayer intercepts
-        // it while the central resolver is enabled and replaces it with the
-        // cached /api/public/trailer URL. It only keeps the existing Detail hero
-        // render path mounted for titles whose TMDB payload has no old trailer.
+        // DetailPage's legacy implementation mounts its Hero trailer only when
+        // a video key exists. Give it one internal sentinel and never expose the
+        // old TMDB/YouTube list. TrailerPlayer intercepts this sentinel and reads
+        // the cached central resolver URL, so no YouTube iframe/thumbnail is
+        // requested while the multi-provider trailer system is active.
         return {
           ...response,
           videos: {
             ...(response?.videos || {}),
             results: [
-              ...current,
               {
                 id: "flixit-resolver-sentinel",
                 key: "__flixit_resolver__",
@@ -146,7 +141,8 @@ const extendedApi = tmdbApi.injectEndpoints({
         };
       },
     }),
-    // Get all videos with Italian priority
+    // Retained for compatibility with old components. DetailPage no longer
+    // renders this YouTube list; the sentinel above wins the legacy selector.
     getAllVideos: build.query<
       { id: number; results: Array<{ id: string; key: string; name: string; site: string; type: string; iso_639_1: string }> },
       { mediaType: MEDIA_TYPE; id: number }
@@ -155,7 +151,6 @@ const extendedApi = tmdbApi.injectEndpoints({
         url: `/${mediaType}/${id}/videos`,
         params: {
           api_key: TMDB_V3_API_KEY,
-          // Request all languages to get Italian if available
         },
       }),
     }),
