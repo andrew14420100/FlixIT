@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useCallback, useState } from "react";
 import Hls from "hls.js";
 
 const YT_ORIGIN = "https://www.youtube.com";
+const RESOLVER_SENTINEL = "__flixit_resolver__";
 
 interface Props {
   videoKey: string;
@@ -122,7 +123,7 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
   const direct = isDirectUrl(playbackKey || "");
 
   const ytSrc = useMemo(() => {
-    if (direct || resolverEnabled !== false || !playbackKey) return "";
+    if (direct || resolverEnabled !== false || !playbackKey || playbackKey === RESOLVER_SENTINEL) return "";
     const origin = encodeURIComponent(window.location.origin);
     const params = [
       "autoplay=1", "mute=1", "controls=0", "rel=0", "iv_load_policy=3", "disablekb=1",
@@ -213,7 +214,7 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
   }, [direct, playbackKey, playing, onError]);
 
   useEffect(() => {
-    if (direct || resolverEnabled !== false) return;
+    if (direct || resolverEnabled !== false || playbackKey === RESOLVER_SENTINEL) return;
     const onMessage = (e: MessageEvent) => {
       if (e.origin !== YT_ORIGIN || e.source !== iframeRef.current?.contentWindow) return;
       let data: any;
@@ -226,9 +227,9 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [onEnded, onPlaying, onError, applyAudio, playing, post, direct, resolverEnabled]);
+  }, [onEnded, onPlaying, onError, applyAudio, playing, post, direct, resolverEnabled, playbackKey]);
 
-  if (!playbackKey) return null;
+  if (!playbackKey || playbackKey === RESOLVER_SENTINEL) return null;
 
   if (direct) {
     return (
