@@ -67,7 +67,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "youtube_enabled": cfg["youtube_enabled"],
             "minimum_resolution": 1080,
             "theryston_enabled": True,
-            "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3000"),
+            "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
         }
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
@@ -112,8 +112,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
 
     @router.get("/api/public/theryston-file/{filename}")
     async def theryston_file(filename: str):
-        # Theryston local storage uses UUID-prefixed file names.  Only a plain
-        # basename is accepted, then the resolved path is constrained to files/.
         if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
             raise HTTPException(status_code=400, detail="Invalid trailer filename")
         files_dir = (Path(os.environ.get("THERYSTON_TRAILERS_DATA_DIR", "/app/trailers-data")) / "files").resolve()
