@@ -21,7 +21,7 @@ interface Props {
 
 function imageSrc(path: any, size: string) {
   if (!path) return null;
-  if (typeof path === "string" && (/^https?:\/\//i.test(path) || path.startsWith("data:"))) return path;
+  if (typeof path === "string" && (/^https?:\/\//i.test(path) || path.startsWith("data:") || path.startsWith("blob:"))) return path;
   const raw = String(path);
   return `${TMDB_IMG}${size}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
@@ -38,10 +38,6 @@ function inferArtworkContext(explicit?: string) {
   return "home";
 }
 
-function RemoveIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M5.293 5.293a1 1 0 0 1 1.414 0L12 10.586l5.293-5.293a1 1 0 1 1 1.414 1.414L13.414 12l5.293 5.293a1 1 0 0 1-1.414 1.414L12 13.414l-5.293 5.293a1 1 0 0 1-1.414-1.414L10.586 12 5.293 6.707a1 1 0 0 1 0-1.414Z"/></svg>;
-}
-
 export default function VideoItemWithHover({ video, mediaType, watch, suppressHover = false, artworkContext }: Props) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -55,20 +51,22 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     if (!node || typeof IntersectionObserver === "undefined") { setNearViewport(true); return; }
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) { setNearViewport(true); observer.disconnect(); }
-    }, { rootMargin: "1000px 0px" });
+    }, { rootMargin: "800px 0px" });
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
 
-  const { open, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
-  const assets = useDeferredMediaAssets(video, mType, open);
+  const { open, intent, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
+  // Start the lightweight trailer/cache request on pointer intent, not after the
+  // expansion finishes. The actual video element is still mounted only when open.
+  const assets = useDeferredMediaAssets(video, mType, intent || open);
   const resolved = useNetflixArtwork(video, mType, resolvedContext, nearViewport);
 
   const existingNetflixArtwork = video.netflix_artwork_url || video.netflixArtworkUrl || video.netflix_cover_url || video.contextualArtwork?.artwork?.url || video.artwork?.url || video.image?.url;
-  const existingBackdrop = existingNetflixArtwork || video.titled_backdrop_path || video.backdrop_path;
+  const existingBackdrop = existingNetflixArtwork || video.backdrop_path || video.titled_backdrop_path;
   const fallbackImageUrl = useMemo(() => {
-    if (existingBackdrop) return imageSrc(existingBackdrop, "w500");
-    return video.poster_path ? imageSrc(video.poster_path, "w342") : null;
+    if (existingBackdrop) return imageSrc(existingBackdrop, "w780");
+    return video.poster_path ? imageSrc(video.poster_path, "w500") : null;
   }, [existingBackdrop, video.poster_path]);
   const imageUrl = resolved?.artwork?.url || fallbackImageUrl;
 
@@ -90,6 +88,10 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
     ? (assets?.resolved_trailer?.trailer_url || assets?.resolved_trailer?.trailer_key || assets?.preview_video_url)
     : null;
+  const hoverLogoUrl = imageSrc(
+    resolved?.logo?.url || assets?.logo_path || video?.logo_path,
+    "original"
+  );
 
   return (
     <>
@@ -122,13 +124,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
             onDetail={goDetail}
             watch={watch}
           />
-          <HoverTrailerOverlay url={trailerUrl} />
-
-          {typeof watch?.onRemove === "function" ? (
-            <button type="button" className="nflx-mini-control color-supplementary hasIcon round continue-hover-remove" aria-label="Rimuovi da Continua a guardare" title="Rimuovi da Continua a guardare" onClick={(event) => { event.preventDefault(); event.stopPropagation(); watch.onRemove(); }}>
-              <span className="small" role="presentation"><RemoveIcon /></span>
-            </button>
-          ) : null}
+          <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} />
         </ExpandOverlay>
       ) : null}
     </>
