@@ -56,8 +56,6 @@ export default function NetflixRankedCardWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Top 10 is always on screen as a small set, so resolve its automatic
-  // media-assets immediately. No admin artwork mapping is required.
   const automaticAssets = useAutomaticMediaAssets(
     { ...item, id: normalizedId },
     mType,
@@ -192,6 +190,12 @@ export default function NetflixRankedCardWithHover({
               ...assets,
               id: normalizedId,
               preview_video_url: "",
+              netflix_artwork_url: undefined,
+              netflixArtworkUrl: undefined,
+              netflix_cover_url: undefined,
+              contextualArtwork: undefined,
+              artwork: undefined,
+              image: undefined,
               backdrop_path:
                 automaticAssets?.backdrop_path ||
                 automaticAssets?.titled_backdrop_path ||
