@@ -23,6 +23,15 @@ function responsivePosterSet(url?: string | null) {
   ].join(", ");
 }
 
+function unique(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  return values.filter((value): value is string => {
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
 export default function NetflixRankedCardWithHover({
   item,
   rank,
@@ -47,6 +56,8 @@ export default function NetflixRankedCardWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
+  // Top 10 is always on screen as a small set, so resolve its automatic
+  // media-assets immediately. No admin artwork mapping is required.
   const automaticAssets = useAutomaticMediaAssets(
     { ...item, id: normalizedId },
     mType,
@@ -62,29 +73,30 @@ export default function NetflixRankedCardWithHover({
     [automaticAssets, deferredAssets]
   );
 
-  const fallbackPosterUrl = useMemo(
-    () => tmdbImageUrl(
-      automaticAssets?.poster_path ||
-      item?.poster_path ||
-      item?.poster ||
-      automaticAssets?.backdrop_path ||
-      item?.backdrop_path,
-      "original"
-    ),
+  const posterCandidates = useMemo(
+    () => unique([
+      tmdbImageUrl(automaticAssets?.poster_path, "original"),
+      tmdbImageUrl(item?.poster_path || item?.poster, "original"),
+      tmdbImageUrl(automaticAssets?.backdrop_path, "original"),
+      tmdbImageUrl(automaticAssets?.titled_backdrop_path, "original"),
+      tmdbImageUrl(item?.backdrop_path, "original"),
+    ]),
     [
       automaticAssets?.poster_path,
       automaticAssets?.backdrop_path,
+      automaticAssets?.titled_backdrop_path,
       item?.poster_path,
       item?.poster,
       item?.backdrop_path,
     ]
   );
 
-  const [posterUrl, setPosterUrl] = useState(fallbackPosterUrl || "");
-  useEffect(() => setPosterUrl(fallbackPosterUrl || ""), [fallbackPosterUrl]);
+  const [posterIndex, setPosterIndex] = useState(0);
+  useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
+  const posterUrl = posterCandidates[posterIndex] || "";
   const posterSrcSet = useMemo(() => responsivePosterSet(posterUrl), [posterUrl]);
 
-  const title = item?.title || item?.name || automaticAssets?.title || "";
+  const title = automaticAssets?.title || item?.title || item?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${normalizedId}`;
 
   const goDetail = useCallback(
@@ -123,7 +135,7 @@ export default function NetflixRankedCardWithHover({
     : null;
 
   const hoverLogoUrl = tmdbImageUrl(
-    assets?.logo_path || automaticAssets?.logo_path || item?.logo_path,
+    automaticAssets?.logo_path || assets?.logo_path || item?.logo_path,
     "original"
   );
 
@@ -156,7 +168,7 @@ export default function NetflixRankedCardWithHover({
                 draggable={false}
                 loading="lazy"
                 decoding="async"
-                onError={() => setPosterUrl("")}
+                onError={() => setPosterIndex((index) => index + 1)}
                 className="netflix-ranked-card-poster"
               />
             ) : (
@@ -181,11 +193,13 @@ export default function NetflixRankedCardWithHover({
               id: normalizedId,
               preview_video_url: "",
               backdrop_path:
-                assets?.backdrop_path ||
-                assets?.titled_backdrop_path ||
+                automaticAssets?.backdrop_path ||
+                automaticAssets?.titled_backdrop_path ||
                 item?.backdrop_path,
-              poster_path: assets?.poster_path || item?.poster_path,
-              logo_path: assets?.logo_path || item?.logo_path,
+              titled_backdrop_path:
+                automaticAssets?.titled_backdrop_path || item?.titled_backdrop_path,
+              poster_path: automaticAssets?.poster_path || item?.poster_path,
+              logo_path: automaticAssets?.logo_path || item?.logo_path,
             }}
             mediaType={mType}
             onPlay={goPlay}
