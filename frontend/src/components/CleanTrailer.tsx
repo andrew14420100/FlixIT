@@ -26,8 +26,10 @@ function hdrSupported() {
 }
 
 /**
- * Trailer detail player. The new resolver is authoritative when enabled; the
- * legacy YouTube key is used only when MULTI_PROVIDER_TRAILERS_ENABLED=false.
+ * Trailer detail player. The central resolver is authoritative when enabled;
+ * the legacy YouTube key is used only when MULTI_PROVIDER_TRAILERS_ENABLED is
+ * disabled. The old "Altri video" YouTube strip is hidden while the resolver
+ * is active so the Detail trailer area has a single source of truth.
  */
 export default function CleanTrailer({ videoKey, poster, testId = "clean-trailer" }) {
   const [started, setStarted] = useState(false);
@@ -62,6 +64,17 @@ export default function CleanTrailer({ videoKey, poster, testId = "clean-trailer
     load();
     return () => { cancelled = true; };
   }, [videoKey]);
+
+  useEffect(() => {
+    if (resolverEnabled !== true || typeof document === "undefined") return;
+    const node = document.querySelector(`[data-testid="${testId}"]`);
+    const wrapper = node?.parentElement;
+    const legacyOtherVideos = wrapper?.nextElementSibling as HTMLElement | null;
+    if (!legacyOtherVideos) return;
+    const previous = legacyOtherVideos.style.display;
+    legacyOtherVideos.style.display = "none";
+    return () => { legacyOtherVideos.style.display = previous; };
+  }, [resolverEnabled, testId]);
 
   const playbackKey = resolverEnabled ? resolvedUrl : videoKey;
 
