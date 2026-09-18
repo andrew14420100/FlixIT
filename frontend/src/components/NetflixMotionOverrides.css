@@ -16,12 +16,12 @@
   transform-style: preserve-3d;
 }
 
-/* Continua a guardare: Netflix places the remove action with the hover controls,
-   after the rating/thumb control, never floating over the cover artwork. */
+/* Continua a guardare: remove sits in the hover control row immediately after
+   the thumb/rating button, not on top of the artwork. */
 .continue-hover-remove {
   position: absolute !important;
   top: calc(var(--flix-mini-modal-width, 366px) * .563925 + 16px);
-  left: 148px;
+  left: 154px;
   z-index: 30;
   margin: 0 !important;
 }
@@ -29,6 +29,11 @@
 .continue-hover-remove .small,
 .continue-hover-remove svg {
   pointer-events: none;
+}
+
+.previewModal--container[data-phase="close"] .continue-hover-remove {
+  opacity: 0;
+  transition: opacity 80ms linear !important;
 }
 
 /* Keep compositor ownership during the most animation-heavy interactions. */
@@ -43,6 +48,11 @@
 
 .slider-row .slick-track {
   will-change: transform;
+}
+
+.slider-row[data-sliding="true"] .netflix-standard-card-root,
+.slider-row[data-sliding="true"] .netflix-ranked-card-root {
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
