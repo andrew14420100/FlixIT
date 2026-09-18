@@ -16,16 +16,16 @@
   transform-style: preserve-3d;
 }
 
-/* The complete row stack starts slightly lower under the billboard. Moving the
-   stack itself (rather than only Continue Watching) keeps every following row
-   in natural document flow with the same spacing. */
+/* The first real section must keep a little breathing room from the Hero both
+   for guests and logged-in profiles. Moving the whole row stack preserves the
+   exact relative spacing of every section that follows it. */
 .sliders {
-  margin-top: -5vh !important;
+  margin-top: -3.8vh !important;
 }
 
 @media (max-width: 599px) {
   .sliders {
-    margin-top: -5.5vh !important;
+    margin-top: -4.3vh !important;
   }
 }
 
