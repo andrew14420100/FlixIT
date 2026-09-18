@@ -10,11 +10,15 @@ function VolumeIcon({ muted }: { muted: boolean }) {
   );
 }
 
-/** Mounted only while the expanded card exists. Unmounting destroys HLS/video immediately. */
+/**
+ * The trailer starts almost immediately after the mini-modal opens. The static
+ * artwork stays visible until the video fires onPlaying, preventing a black
+ * buffering flash. At that exact moment the title logo fades in over the video.
+ */
 export default function HoverTrailerOverlay({
   url,
   logoUrl,
-  delay = 160,
+  delay = 90,
 }: {
   url?: string;
   logoUrl?: string | null;
@@ -49,8 +53,11 @@ export default function HoverTrailerOverlay({
         aspectRatio: "16 / 9",
         overflow: "hidden",
         borderRadius: "6px 6px 0 0",
-        background: "#000",
+        background: playing ? "#000" : "transparent",
         zIndex: 8,
+        opacity: playing ? 1 : 0,
+        transition: "opacity 180ms ease",
+        pointerEvents: playing ? "auto" : "none",
       }}
     >
       <TrailerPlayer
@@ -72,12 +79,12 @@ export default function HoverTrailerOverlay({
             bottom: 13,
             zIndex: 11,
             width: "43%",
-            maxHeight: 56,
+            maxHeight: 58,
             display: "flex",
             alignItems: "flex-end",
             opacity: playing ? 1 : 0,
             transform: playing ? "translateY(0)" : "translateY(4px)",
-            transition: "opacity 220ms ease, transform 220ms ease",
+            transition: "opacity 180ms ease 40ms, transform 180ms ease 40ms",
             pointerEvents: "none",
           }}
         >
@@ -89,46 +96,49 @@ export default function HoverTrailerOverlay({
             style={{
               display: "block",
               maxWidth: "100%",
-              maxHeight: 54,
+              maxHeight: 56,
               width: "auto",
               height: "auto",
               objectFit: "contain",
               objectPosition: "left bottom",
-              filter: "drop-shadow(0 2px 4px rgba(0,0,0,.7))",
+              filter: "drop-shadow(0 2px 5px rgba(0,0,0,.78))",
             }}
           />
         </div>
       ) : null}
 
-      <button
-        type="button"
-        aria-label={muted ? "Attiva audio trailer" : "Disattiva audio trailer"}
-        title={muted ? "Attiva audio" : "Disattiva audio"}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          setMuted((value) => !value);
-        }}
-        style={{
-          position: "absolute",
-          right: 10,
-          bottom: 10,
-          zIndex: 12,
-          width: 34,
-          height: 34,
-          borderRadius: "50%",
-          border: "2px solid rgba(255,255,255,.68)",
-          background: "rgba(24,24,24,.55)",
-          color: "#fff",
-          display: "grid",
-          placeItems: "center",
-          cursor: "pointer",
-          padding: 7,
-          backdropFilter: "blur(3px)",
-        }}
-      >
-        <VolumeIcon muted={muted} />
-      </button>
+      {playing ? (
+        <button
+          type="button"
+          aria-label={muted ? "Attiva audio trailer" : "Disattiva audio trailer"}
+          title={muted ? "Attiva audio" : "Disattiva audio"}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setMuted((value) => !value);
+          }}
+          style={{
+            position: "absolute",
+            right: 10,
+            bottom: 10,
+            zIndex: 12,
+            width: 34,
+            height: 34,
+            borderRadius: "50%",
+            border: "2px solid rgba(255,255,255,.68)",
+            background: "rgba(24,24,24,.55)",
+            color: "#fff",
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer",
+            padding: 7,
+            backdropFilter: "blur(3px)",
+            pointerEvents: "auto",
+          }}
+        >
+          <VolumeIcon muted={muted} />
+        </button>
+      ) : null}
     </div>
   );
 }
