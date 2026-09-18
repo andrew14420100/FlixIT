@@ -1,9 +1,10 @@
 // @ts-nocheck
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import "./NetflixMiniModalExact.css";
 
 interface Props {
   imageUrl?: string | null;
+  fallbackImageUrl?: string | null;
   title?: string;
   href?: string;
   onClick?: any;
@@ -16,6 +17,7 @@ interface Props {
 const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixStandardCard(
   {
     imageUrl,
+    fallbackImageUrl,
     title = "",
     href = "#",
     onClick,
@@ -26,6 +28,12 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   },
   ref
 ) {
+  const [src, setSrc] = useState(imageUrl || fallbackImageUrl || null);
+
+  useEffect(() => {
+    setSrc(imageUrl || fallbackImageUrl || null);
+  }, [imageUrl, fallbackImageUrl]);
+
   return (
     <div
       ref={ref}
@@ -43,15 +51,22 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
       >
         <div className="netflix-standard-card-frame">
           <div className="netflix-standard-card-image-wrap">
-            {imageUrl ? (
+            {src ? (
               <img
-                src={imageUrl}
+                src={src}
                 alt=""
                 width="342"
                 height="192"
                 loading="lazy"
                 decoding="async"
                 draggable={false}
+                onError={() => {
+                  if (fallbackImageUrl && src !== fallbackImageUrl) {
+                    setSrc(fallbackImageUrl);
+                  } else {
+                    setSrc(null);
+                  }
+                }}
                 className="standard-card tracked-card netflix-standard-card-image"
               />
             ) : (
