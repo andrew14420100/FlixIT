@@ -52,52 +52,21 @@ function ErrorPage() {
 }
 
 const router = createBrowserRouter([
-  // Main Public Routes
   {
     path: "/",
     element: <MainLayout />,
     errorElement: <ErrorPage />,
     children: [
-      {
-        path: MAIN_PATH.root,
-        element: <Navigate to={`/${MAIN_PATH.browse}`} />,
-      },
-      {
-        path: MAIN_PATH.browse,
-        lazy: () => import("src/pages/HomePage"),
-      },
-      {
-        path: `${MAIN_PATH.browse}/genre/movie`,
-        lazy: () => import("src/pages/HomePage"),
-      },
-      {
-        path: `${MAIN_PATH.browse}/genre/tv`,
-        lazy: () => import("src/pages/HomePage"),
-      },
-      {
-        path: `${MAIN_PATH.browse}/latest`,
-        lazy: () => import("src/pages/HomePage"),
-      },
-      {
-        path: `${MAIN_PATH.browse}/trending`,
-        lazy: () => import("src/pages/HomePage"),
-      },
-      {
-        path: "my-list",
-        lazy: () => import("src/pages/MyListPage"),
-      },
-      {
-        path: "film",
-        lazy: () => import("src/pages/FilmPage"),
-      },
-      {
-        path: "serie-tv",
-        lazy: () => import("src/pages/SeriePage"),
-      },
-      {
-        path: "archivio",
-        lazy: () => import("src/pages/ArchivePage"),
-      },
+      { path: MAIN_PATH.root, element: <Navigate to={`/${MAIN_PATH.browse}`} /> },
+      { path: MAIN_PATH.browse, lazy: () => import("src/pages/HomePage") },
+      { path: `${MAIN_PATH.browse}/genre/movie`, lazy: () => import("src/pages/HomePage") },
+      { path: `${MAIN_PATH.browse}/genre/tv`, lazy: () => import("src/pages/HomePage") },
+      { path: `${MAIN_PATH.browse}/latest`, lazy: () => import("src/pages/HomePage") },
+      { path: `${MAIN_PATH.browse}/trending`, lazy: () => import("src/pages/HomePage") },
+      { path: "my-list", lazy: () => import("src/pages/MyListPage") },
+      { path: "film", lazy: () => import("src/pages/FilmPage") },
+      { path: "serie-tv", lazy: () => import("src/pages/SeriePage") },
+      { path: "archivio", lazy: () => import("src/pages/ArchivePage") },
       { path: "cinema", lazy: () => import("src/pages/CinemaHubPage") },
       { path: "serie", lazy: () => import("src/pages/SerieHubPage") },
       { path: "p/:slug", lazy: () => import("src/pages/PremiumPage") },
@@ -109,79 +78,35 @@ const router = createBrowserRouter([
         path: p.slice(1),
         element: <ComingSoonPage />,
       })),
-      {
-        path: `${MAIN_PATH.browse}/:mediaType/:id`,
-        lazy: () => import("src/pages/DetailPage"),
-      },
+      { path: `${MAIN_PATH.browse}/:mediaType/:id`, lazy: () => import("src/pages/DetailPage") },
       {
         path: MAIN_PATH.genreExplore,
-        children: [
-          {
-            path: ":genreId",
-            lazy: () => import("src/pages/GenreExplore"),
-          },
-        ],
+        children: [{ path: ":genreId", lazy: () => import("src/pages/GenreExplore") }],
       },
-      {
-        path: `${MAIN_PATH.watch}/:mediaType/:id`,
-        lazy: () => import("src/pages/WatchPage"),
-      },
-      {
-        path: MAIN_PATH.watch,
-        lazy: () => import("src/pages/WatchPage"),
-      },
-      {
-        path: "account",
-        lazy: () => import("src/pages/AccountPage"),
-      },
+      { path: `${MAIN_PATH.watch}/:mediaType/:id`, lazy: () => import("src/pages/WatchPage") },
+      { path: MAIN_PATH.watch, lazy: () => import("src/pages/WatchPage") },
+      { path: "account", lazy: () => import("src/pages/AccountPage") },
     ],
   },
-
-  // Admin Login (standalone, no layout)
   {
     path: "/admin/login",
     lazy: adminPage("AdminLoginShell"),
     errorElement: <ErrorPage />,
   },
-
-  // Admin Protected Routes
   {
     path: "/admin",
     lazy: adminPage("AdminShell"),
     errorElement: <ErrorPage />,
     children: [
-      {
-        index: true,
-        element: <Navigate to="/admin/dashboard" replace />,
-      },
-      {
-        path: "dashboard",
-        lazy: adminPage("DashboardPage"),
-      },
-      {
-        path: "contents",
-        lazy: adminPage("ContentsPage"),
-      },
-      {
-        path: "hero",
-        lazy: adminPage("HeroPage"),
-      },
-      {
-        path: "sections",
-        lazy: adminPage("SectionsPage"),
-      },
-      {
-        path: "menu",
-        lazy: adminPage("MenuPage"),
-      },
-      {
-        path: "settings",
-        lazy: adminPage("SettingsPage"),
-      },
-      {
-        path: "logs",
-        lazy: adminPage("LogsPage"),
-      },
+      { index: true, element: <Navigate to="/admin/dashboard" replace /> },
+      { path: "dashboard", lazy: adminPage("DashboardPage") },
+      { path: "contents", lazy: adminPage("ContentsPage") },
+      { path: "hero", lazy: adminPage("HeroPage") },
+      { path: "sections", lazy: adminPage("SectionsPage") },
+      { path: "menu", lazy: adminPage("MenuPage") },
+      { path: "settings", lazy: adminPage("SettingsPage") },
+      { path: "artwork", lazy: adminPage("ArtworkPage") },
+      { path: "logs", lazy: adminPage("LogsPage") },
       { path: "users", lazy: adminPage("UsersPage") },
       { path: "tickets", lazy: adminPage("TicketsPage") },
       { path: "plans", lazy: adminPage("PlansPage") },
@@ -190,12 +115,7 @@ const router = createBrowserRouter([
       { path: "payments", lazy: adminPage("PaymentsPage") },
     ],
   },
-
-  // Catch-all 404
-  {
-    path: "*",
-    element: <ErrorPage />,
-  },
+  { path: "*", element: <ErrorPage /> },
 ]);
 
 export default router;
