@@ -7,7 +7,7 @@ interface UseCDNImageOptions {
   tmdbId: number;
   posterPath?: string | null;
   backdropPath?: string | null;
-  useDetailBackdrop?: boolean;  // Usa detail_backdrop invece di backdrop
+  useDetailBackdrop?: boolean;
 }
 
 interface UseCDNImageReturn {
@@ -19,9 +19,9 @@ interface UseCDNImageReturn {
 }
 
 /**
- * Hook per ottenere le URL delle immagini con priorità CDN
- * Se l'immagine è disponibile sulla CDN di Streaming Community, usa quella
- * Altrimenti fa fallback a TMDB
+ * Shared high-quality image URL helper. Existing CDN mappings remain the fast
+ * first choice; TMDB fallbacks now keep enough native resolution for retina
+ * cards and use the original source for Hero/Detail backdrops.
  */
 export function useCDNImage({
   tmdbId,
@@ -35,20 +35,20 @@ export function useCDNImage({
   const hasCDN = useMemo(() => hasCDNMapping(tmdbId), [tmdbId]);
 
   const getPosterUrl = useMemo(() => {
-    return (size: string = 'w500') => {
+    return (size: string = 'w780') => {
       return getImageUrl(tmdbId, 'poster', posterPath || null, tmdbBaseUrl, size);
     };
   }, [tmdbId, posterPath, tmdbBaseUrl]);
 
   const getBackdropUrl = useMemo(() => {
-    return (size: string = 'w780') => {
+    return (size: string = 'original') => {
       const backdropType = useDetailBackdrop ? 'detail_backdrop' : 'backdrop';
       return getImageUrl(tmdbId, backdropType, backdropPath || null, tmdbBaseUrl, size);
     };
   }, [tmdbId, backdropPath, tmdbBaseUrl, useDetailBackdrop]);
 
-  const posterUrl = useMemo(() => getPosterUrl('w500'), [getPosterUrl]);
-  const backdropUrl = useMemo(() => getBackdropUrl('w780'), [getBackdropUrl]);
+  const posterUrl = useMemo(() => getPosterUrl('w780'), [getPosterUrl]);
+  const backdropUrl = useMemo(() => getBackdropUrl('original'), [getBackdropUrl]);
 
   return {
     posterUrl,
@@ -59,10 +59,7 @@ export function useCDNImage({
   };
 }
 
-/**
- * Funzione helper per ottenere l'URL dell'immagine senza hook
- * Utile per componenti che non possono usare hooks
- */
+/** Helper for components that cannot use hooks. */
 export function getMediaImageUrl(
   tmdbId: number,
   type: 'poster' | 'backdrop' | 'detail_backdrop',
@@ -70,17 +67,16 @@ export function getMediaImageUrl(
   tmdbBaseUrl: string = 'https://image.tmdb.org/t/p/',
   size: string = 'w500'
 ): string {
-  // Prima controlla se c'è un mapping CDN
   const cdnUrl = getCDNImageUrl(tmdbId, type);
   if (cdnUrl) {
     return cdnUrl;
   }
-  
-  // Fallback a TMDB
+
   if (tmdbPath) {
-    return `${tmdbBaseUrl}${size}${tmdbPath}`;
+    const effectiveSize = type === 'detail_backdrop' ? 'original' : size;
+    return `${tmdbBaseUrl}${effectiveSize}${tmdbPath}`;
   }
-  
+
   return '/placeholder.jpg';
 }
 
