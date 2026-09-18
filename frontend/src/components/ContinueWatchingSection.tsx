@@ -1,6 +1,5 @@
 // @ts-nocheck
 import { useEffect, useMemo } from "react";
-import Box from "@mui/material/Box";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { useHomeDedupe, itemKey } from "src/store/homeDedupe";
 import HomepageSlider from "./HomepageSlider";
@@ -20,7 +19,6 @@ export default function ContinueWatchingSection() {
         .filter((item) => {
           const duration = Number(item?.duration || 0);
           const progress = Number(item?.progress || 0);
-          // Completed titles belong to "Guarda di nuovo", not "Continua a guardare".
           return !duration || progress / duration < 0.95;
         })
         .map((item) => ({
@@ -64,16 +62,16 @@ export default function ContinueWatchingSection() {
 
   if (sliderItems.length === 0) return null;
 
+  const title = username
+    ? `Continua a guardare per ${username}`
+    : "Continua a guardare";
+
   return (
-    <Box
-      id="continua"
-      data-testid="continue-watching-section"
-      sx={{ position: "relative", zIndex: 10 }}
-    >
-      <HomepageSlider
-        title={`${username}, continua a guardare:`}
-        items={sliderItems}
-      />
-    </Box>
+    <HomepageSlider
+      rowId="continua"
+      title={title}
+      items={sliderItems}
+      compactSpacing
+    />
   );
 }
