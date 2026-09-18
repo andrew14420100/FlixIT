@@ -16,9 +16,7 @@
   transform-style: preserve-3d;
 }
 
-/* One geometry for the entire Hero. The previous root used a shorter em-based
-   height while backdrop/video layers used 56.25em, so rows could drift into the
-   billboard differently at different viewport widths. */
+/* Keep one stable Hero geometry so backdrop and trailer never push rows around. */
 .billboard {
   height: clamp(560px, 42vw, 760px) !important;
   min-height: 0 !important;
@@ -32,16 +30,31 @@
   max-height: 100% !important;
 }
 
-/* Keep some Netflix-style overlap, but lower Continue Watching and therefore
-   every section below it. */
+/* The previous pass pushed Continue Watching too far down. Bring the row stack
+   back into the lower Hero fade while retaining a small amount of breathing room. */
 .sliders {
-  margin-top: -3vh !important;
-  padding-top: 24px !important;
+  margin-top: -10vh !important;
+  padding-top: 12px !important;
 }
 
 #continua.slider-row {
-  margin-top: 30px !important;
-  margin-bottom: 28px !important;
+  margin-top: 10px !important;
+  margin-bottom: 20px !important;
+}
+
+/* When the Hero trailer has started the title treatment has already moved down
+   and shrunk. Restore a little logo size without changing its resting position. */
+.billboard:has([data-testid="hero-audio-toggle"]) [data-testid="hero-logo"] {
+  transform: scale(1.12);
+  transform-origin: left bottom;
+  transition: transform 420ms ease;
+}
+
+/* Artwork must never be hidden by stale card animation rules. */
+.netflix-standard-card-image,
+.netflix-ranked-card-poster,
+.previewModal--boxart {
+  visibility: visible !important;
 }
 
 /* Keep compositor ownership during the most animation-heavy interactions. */
@@ -71,13 +84,17 @@
   }
 
   .sliders {
-    margin-top: -1.5vh !important;
-    padding-top: 18px !important;
+    margin-top: -6vh !important;
+    padding-top: 10px !important;
   }
 
   #continua.slider-row {
-    margin-top: 22px !important;
-    margin-bottom: 20px !important;
+    margin-top: 8px !important;
+    margin-bottom: 16px !important;
+  }
+
+  .billboard:has([data-testid="hero-audio-toggle"]) [data-testid="hero-logo"] {
+    transform: scale(1.08);
   }
 }
 
