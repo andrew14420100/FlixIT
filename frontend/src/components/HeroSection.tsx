@@ -23,7 +23,7 @@ import { TMDB_IMG } from "./ExpandedCard";
 
 const DEFAULT_FEATURED_ID = 202208;
 const DEFAULT_FEATURED_TYPE = MEDIA_TYPE.Tv;
-const TRAILER_DELAY_MS = 6000;
+const TRAILER_DELAY_MS = 2500;
 
 const containerVariants = {
   hidden: {},
@@ -71,6 +71,7 @@ const [showVideo, setShowVideo] = useState(false);
 const [videoPlaying, setVideoPlaying] = useState(false);
 const [videoEnded, setVideoEnded] = useState(false);
 const [imageLoaded, setImageLoaded] = useState(false);
+const [infoTarget, setInfoTarget] = useState(false);
 
 const isOffset = useOffSetTop(window.innerHeight * 0.6);
 
@@ -112,18 +113,31 @@ const displayDescription =
   detailData?.overview ||
   "";
 
+// Testo opzionale configurato dall'admin, come il supplemental-msg di StreamingUnity.
+// Esempio: "Stagione 2 disponibile"
+const seasonLabel = heroSettings?.seasonLabel || "";
+
 useEffect(() => {
   setShowVideo(false);
   setVideoEnded(false);
   setVideoPlaying(false);
+  setInfoTarget(false);
 
-  const timer = setTimeout(
+  const trailerTimer = setTimeout(
     () => setShowVideo(true),
     TRAILER_DELAY_MS
   );
 
-  return () => clearTimeout(timer);
-}, [featuredId]);
+  let raf = 0;
+  if (trailerKey) {
+    raf = requestAnimationFrame(() => setInfoTarget(true));
+  }
+
+  return () => {
+    clearTimeout(trailerTimer);
+    if (raf) cancelAnimationFrame(raf);
+  };
+}, [featuredId, trailerKey]);
 
   const handleVideoEnded = useCallback(() => { setVideoEnded(true); setShowVideo(false); setVideoPlaying(false); }, []);
   const handleVideoPlaying = useCallback(() => setVideoPlaying(true), []);
@@ -146,7 +160,36 @@ useEffect(() => {
   return (
     <Box
       data-testid="hero-section"
-      sx={{ position: "relative", zIndex: 1, width: "100%", height: { xs: "78vh", md: "67vh" }, minHeight: { xs: 560, md: 620 }, maxHeight: { md: 760 }, overflow: "hidden", bgcolor: "#141414" }}
+      className="billboard"
+      sx={{
+        position: "relative",
+        zIndex: 1,
+        width: "100%",
+        height: { xs: "34em", sm: "30em", md: "35em" },
+        overflow: "visible",
+        bgcolor: "#0f0f0f",
+        fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
+        fontSize: "1vw",
+        lineHeight: "inherit",
+        color: "#e8e8e8",
+        userSelect: "none",
+        boxSizing: "border-box",
+        "& .su-info-wrap": {
+          width: "36%",
+        },
+        "@media (min-width:1100px) and (max-width:1399px)": {
+          "& .su-info-wrap": { width: "40%" },
+        },
+        "@media (min-width:800px) and (max-width:1099px)": {
+          "& .su-info-wrap": { width: "45%" },
+        },
+        "@media (min-width:500px) and (max-width:799px)": {
+          "& .su-info-wrap": { width: "75%" },
+        },
+        "@media (max-width:499px)": {
+          "& .su-info-wrap": { width: "92%", bottom: "5%", top: "25%" },
+        },
+      }}
     >
       {/* Backdrop */}
       {backdropUrl && (
@@ -159,13 +202,17 @@ useEffect(() => {
           decoding="async"
           data-testid="hero-backdrop"
           sx={{
-            position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center center",
-            opacity: imageLoaded ? 1 : 0, transition: "opacity 1s ease-in-out",
-            animation: "kenBurns 25s ease-in-out infinite alternate",
-            "@keyframes kenBurns": {
-              "0%": { transform: "scale(1) translateX(0)" },
-              "100%": { transform: "scale(1.08) translateX(-1%)" },
-            },
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            width: "100%",
+            height: { xs: "35em", sm: "48em", md: "56.25em" },
+            objectFit: "cover",
+            objectPosition: "top center",
+            opacity: imageLoaded ? (videoActive ? 0 : 1) : 0,
+            transition: "opacity 1.5s ease-in-out",
+            zIndex: 0,
           }}
         />
       )}
@@ -175,75 +222,256 @@ useEffect(() => {
         <Box
           className="hero-video-container"
           data-testid="hero-trailer"
-          sx={{ position: "absolute", inset: 0, zIndex: 3, opacity: videoActive ? 1 : 0, transition: "opacity 1.5s ease-in-out" }}
+          sx={{ position: "absolute", top: 0, left: 0, right: 0, height: { xs: "35em", sm: "48em", md: "56.25em" }, zIndex: 3, overflow: "hidden", opacity: videoActive ? 1 : 0, transition: "opacity 1.5s ease-in-out" }}
         >
           <TrailerPlayer videoKey={trailerKey} muted={muted} playing={!isOffset} loop={false} zoom={1.38} onEnded={handleVideoEnded} onPlaying={handleVideoPlaying} />
         </Box>
       )}
 
-      {/* Gradients */}
-      <Box sx={{ position: "absolute", inset: 0, zIndex: 4, pointerEvents: "none",
-        background: "linear-gradient(to top, #141414 0%, rgba(20,20,20,.96) 6%, rgba(20,20,20,.78) 17%, rgba(20,20,20,.46) 31%, rgba(20,20,20,.16) 47%, transparent 64%)" }} />
-      <Box sx={{ position: "absolute", inset: 0, zIndex: 4, pointerEvents: "none",
-        background: "linear-gradient(to right, rgba(0,0,0,0.58) 0%, rgba(0,0,0,0.28) 28%, rgba(0,0,0,0.05) 52%, transparent 68%)" }} />
-      <Box sx={{ position: "absolute", top: 0, left: 0, right: 0, height: 160, zIndex: 4, pointerEvents: "none",
-        background: "linear-gradient(to bottom, rgba(20,20,20,0.55) 0%, transparent 100%)" }} />
+      {/* StreamingUnity shadow geometry */}
+      <Box sx={{
+        position: "absolute", top: 0, left: 0, right: 0,
+        height: { xs: "35em", sm: "48em", md: "56.25em" },
+        zIndex: 4, pointerEvents: "none", overflow: "hidden"
+      }}>
+        <Box sx={{
+          position: "absolute", top: 0, left: 0, right: 0, height: "14.7em",
+          backgroundImage: "linear-gradient(to bottom, rgba(0,0,0,.5) 0%, rgba(0,0,0,0) 85%)"
+        }} />
+        <Box sx={{
+          position: "absolute", top: 0, left: 0, right: "26.09%", bottom: 0,
+          display: { xs: "none", sm: "block" },
+          backgroundImage: "linear-gradient(77deg, rgba(0,0,0,.6) 0%, rgba(0,0,0,0) 85%)"
+        }} />
+        <Box sx={{
+          position: "absolute", left: 0, right: 0, bottom: 0,
+          height: { xs: "50%", sm: "14.7em" },
+          backgroundImage: {
+            xs: "linear-gradient(to bottom, rgba(15,15,15,0) 0%, rgba(15,15,15,.75) 50%, #0f0f0f 100%)",
+            sm: "linear-gradient(to bottom, rgba(15,15,15,0) 0%, rgba(15,15,15,.15) 15%, rgba(15,15,15,.35) 29%, rgba(15,15,15,.58) 44%, #141414 68%, #0f0f0f 100%)"
+          }
+        }} />
+      </Box>
 
-      {/* Content */}
+      {/* Content — same structure as StreamingUnity: .info-wrap > .info */}
       <Box sx={{ position: "absolute", inset: 0, zIndex: 10, pointerEvents: "none" }}>
-        <motion.div
-          initial="hidden"
-          animate={detailData ? "visible" : "hidden"}
-          variants={containerVariants}
-          data-testid="hero-content"
-          style={{ position: "absolute", left: "4vw", bottom: "11%", width: "min(760px, 44vw)", display: "flex", flexDirection: "column", gap: "15px", pointerEvents: "auto" }}
-          className="hero-content-block"
+        <Box
+          className="info-wrap"
+          sx={{
+            position: "absolute",
+            top: 0,
+            bottom: "10%",
+            left: "4%",
+            width: "36%",
+            zIndex: 10,
+            pointerEvents: "none",
+            "@media (min-width:1100px) and (max-width:1399px)": { width: "40%" },
+            "@media (min-width:800px) and (max-width:1099px)": { width: "45%" },
+            "@media (min-width:500px) and (max-width:799px)": { width: "75%" },
+            "@media (max-width:499px)": {
+              width: "92%",
+              bottom: "5%",
+              top: "25%",
+            },
+          }}
         >
-          <motion.div variants={itemVariants}>
-            {logoPath ? (
-              <Box component="img" src={logoPath} alt={displayTitle} data-testid="hero-logo"
-                sx={{ width: { xs: "250px", sm: "330px", md: "405px" }, maxWidth: { xs: "78vw", md: "405px" }, maxHeight: { xs: "115px", md: "155px" }, objectFit: "contain", objectPosition: "left",
-                  filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.6))", pointerEvents: "none" }} />
-            ) : (
-              <Typography data-testid="hero-title" sx={{ fontSize: { xs: "2.5rem", sm: "3.5rem", md: "4.5rem", lg: "5.5rem" }, fontWeight: 900,
-                fontFamily: "'Unbounded', 'Inter', sans-serif", lineHeight: 0.9, letterSpacing: "-0.03em", color: "#fff", textShadow: "0 4px 24px rgba(0,0,0,0.5)" }}>
-                {displayTitle}
+          <Box
+            className="info"
+            data-testid="hero-content"
+            sx={{
+              position: "absolute",
+              margin: "1em 0",
+              bottom: 0,
+              pointerEvents: "auto",
+              width: { xs: "100%", sm: "auto" },
+            }}
+          >
+            <Box
+              className="title"
+              sx={{
+                color: "#fff",
+                fontSize: "3em",
+                textShadow: "2px 2px 4px #000",
+                fontWeight: 700,
+                lineHeight: "1em",
+                transformOrigin: "left bottom",
+                transform: infoTarget
+                  ? "scale(0.8) translate3d(0px, 2.5em, 0px)"
+                  : "scale(1) translate3d(0px, 0px, 0px)",
+                transitionProperty: "transform",
+                transitionDuration: "1.3s",
+                transitionDelay: "5s",
+                transitionTimingFunction: "ease",
+                "@media (max-width:499px)": {
+                  display: "flex",
+                  justifyContent: "center",
+                },
+              }}
+            >
+              {logoPath ? (
+                <Box
+                  component="img"
+                  src={logoPath}
+                  alt={displayTitle}
+                  data-testid="hero-logo"
+                  sx={{
+                    display: "block",
+                    width: "auto",
+                    height: "auto",
+                    maxHeight: "3em",
+                    objectFit: "contain",
+                    objectPosition: "left bottom",
+                    pointerEvents: "none",
+                    "@media (min-width:500px) and (max-width:799px)": {
+                      maxWidth: "60%",
+                      maxHeight: "2.75em",
+                    },
+                    "@media (max-width:499px)": {
+                      maxWidth: "70%",
+                    },
+                  }}
+                />
+              ) : (
+                <Typography
+                  data-testid="hero-title"
+                  sx={{
+                    font: "inherit",
+                    fontFamily: "inherit",
+                    fontSize: "1em",
+                    fontWeight: 700,
+                    lineHeight: "1em",
+                    color: "#fff",
+                    textShadow: "inherit",
+                  }}
+                >
+                  {displayTitle}
+                </Typography>
+              )}
+            </Box>
+
+            {seasonLabel && (
+              <Typography
+                className="supplemental-msg"
+                data-testid="hero-season-label"
+                sx={{
+                  opacity: infoTarget ? 0 : 1,
+                  fontSize: "1.3em",
+                  color: "#fff",
+                  mt: "1em",
+                  mb: "-.75em",
+                  fontWeight: 700,
+                  fontFamily: "inherit",
+                  lineHeight: "inherit",
+                  transitionProperty: "opacity",
+                  transitionDuration: ".5s",
+                  transitionDelay: "5s",
+                  transitionTimingFunction: "ease",
+                  "@media (max-width:499px)": {
+                    mb: "-.25em",
+                    textAlign: "center",
+                  },
+                }}
+              >
+                {seasonLabel}
               </Typography>
             )}
-          </motion.div>
 
+            <Box
+              className="genres"
+              sx={{
+                display: "none",
+                "@media (max-width:499px)": {
+                  display: "flex",
+                  width: "fit-content",
+                  maxWidth: "100%",
+                  mt: "1.5em",
+                  mx: "auto",
+                  overflow: "hidden",
+                },
+              }}
+            />
 
+            <Typography
+              className="plot"
+              data-testid="hero-overview"
+              sx={{
+                opacity: infoTarget ? 0 : 1,
+                mt: "1.5em",
+                fontSize: "1.2em",
+                lineHeight: 1.4,
+                fontWeight: 400,
+                fontFamily: "inherit",
+                color: "#fff",
+                textShadow: "2px 2px 4px rgba(0,0,0,.45)",
+                transitionProperty: "opacity",
+                transitionDuration: ".5s",
+                transitionDelay: "5s",
+                transitionTimingFunction: "ease",
+                display: "-webkit-box",
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+                maxWidth: "100%",
+                "@media (max-width:499px)": {
+                  display: "none",
+                },
+              }}
+            >
+              {displayDescription}
+            </Typography>
 
-          <motion.div variants={itemVariants}>
-            <Box sx={{ opacity: 1, maxHeight: "150px", minHeight: { xs: "58px", md: "72px" }, overflow: "hidden" }}>
-              <Typography data-testid="hero-overview" sx={{ fontSize: { xs: "16px", sm: "18px", md: "21px" }, fontWeight: 500, lineHeight: 1.42, color: "#fff",
-                display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", maxWidth: { xs: "88vw", md: "680px" }, textShadow: "0 2px 12px rgba(0,0,0,0.6)" }}>
-                {displayDescription}
-              </Typography>
-            </Box>
-          </motion.div>
-
-          <motion.div variants={itemVariants}>
-            <Stack direction="row" spacing={0} sx={{ mt: { xs: 1, md: "1.752vw" }, gap: { xs: "12px", md: "18px" } }}>
+            <Stack
+              className="info-buttons"
+              direction="row"
+              spacing={0}
+              sx={{
+                mt: { xs: "1.25em", sm: "2em" },
+                gap: 0,
+                alignItems: "center",
+                justifyContent: { xs: "center", sm: "flex-start" },
+              }}
+            >
               <Box component="button" onClick={handlePlay} onMouseEnter={prefetchStream} onFocus={prefetchStream} data-testid="hero-play-button"
-                sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "9px", bgcolor: "#fff", color: "#000", border: "none", borderRadius: "3px",
-                  height: { xs: 44, md: 50 }, minWidth: { xs: 148, md: 178 }, px: { xs: 2.2, md: 2.7 }, py: 0,
-                  fontSize: { xs: "16px", md: "20px" }, fontWeight: 700, lineHeight: 1, fontWeight: 700, cursor: "pointer",
+                sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, bgcolor: "#fff", color: "#000", border: "none", borderRadius: "3px",
+                  height: "auto", minWidth: 0, px: "2em", py: ".5em", mr: "1em", fontFamily: "inherit", fontSize: "1em", fontWeight: 700, lineHeight: "inherit", cursor: "pointer",
                   transition: "background-color 0.2s ease", "&:hover": { bgcolor: "rgba(255,255,255,0.82)" } }}>
-                <PlayArrowIcon sx={{ fontSize: { xs: 29, md: 34 } }} />
-                Riproduci
+                <Box
+                    component="svg"
+                    viewBox="0 0 384 512"
+                    aria-hidden="true"
+                    className="play-icon"
+                    sx={{ width: ".9em", height: "1.2em", mr: ".5em", flex: "0 0 auto", fontSize: "1.5em" }}
+                  >
+                    <path
+                      fill="currentColor"
+                      d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80v352c0 17.4 9.4 33.4 24.5 41.9S58.2 482 73 473l288-176c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41z"
+                    />
+                  </Box>
+                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>Riproduci</Box>
               </Box>
               <Box component="button" onClick={() => navigate(`/browse/${typeSlug}/${featuredId}`)} data-testid="hero-info-button"
-                sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "9px", bgcolor: "rgba(109,109,110,0.55)", color: "#fff", border: "none", borderRadius: "3px",
-                  height: { xs: 44, md: 50 }, minWidth: { xs: 150, md: 188 }, px: { xs: 2.2, md: 2.7 }, py: 0,
-                  fontSize: { xs: "16px", md: "20px" }, fontWeight: 700, lineHeight: 1, fontWeight: 700, cursor: "pointer",
+                sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, bgcolor: "rgba(109,109,110,0.55)", color: "#fff", border: "none", borderRadius: "3px",
+                  height: "auto", minWidth: 0, px: "2em", py: ".5em", mr: "1em", fontFamily: "inherit", fontSize: "1em", fontWeight: 700, lineHeight: "inherit", cursor: "pointer",
                   transition: "background-color 0.2s ease", "&:hover": { bgcolor: "rgba(109,109,110,0.72)" } }}>
-                <InfoOutlinedIcon sx={{ fontSize: { xs: 27, md: 32 } }} />
-                Altre info
+                <Box
+                    component="svg"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                    className="info-icon"
+                    sx={{ width: "1.2em", height: "1.2em", mr: ".5em", flex: "0 0 auto", fontSize: "1.7em" }}
+                  >
+                    <path
+                      fill="currentColor"
+                      d="M11 17h2v-6h-2zm1.713-8.287Q13 8.425 13 8t-.288-.712T12 7t-.712.288T11 8t.288.713T12 9t.713-.288M12 22q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9T2 12t.788-3.9t2.137-3.175T8.1 2.788T12 2t3.9.788t3.175 2.137T21.213 8.1T22 12t-.788 3.9t-2.137 3.175t-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12t-2.325-5.675T12 4T6.325 6.325T4 12t2.325 5.675T12 20m0-8"
+                    />
+                  </Box>
+                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>Altre info</Box>
               </Box>
             </Stack>
-          </motion.div>
-        </motion.div>
+          
+
+          </Box>
+        </Box>
 
         {/* Right side: mute + certification */}
         <Stack direction="row" spacing={1.5} data-testid="hero-controls"

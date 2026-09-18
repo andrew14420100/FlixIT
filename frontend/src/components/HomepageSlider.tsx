@@ -177,7 +177,7 @@ export default function HomepageSlider({
               sx={{
                 fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
                 fontWeight: 700,
-                fontSize: { xs: "18px", sm: "22px", md: "27px" },
+                fontSize: { xs: "18px", sm: "22px", md: "23.3856px" },
                 lineHeight: 1.18,
                 letterSpacing: "-0.018em",
                 textShadow: "0 1px 2px rgba(0,0,0,.35)",

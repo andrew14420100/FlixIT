@@ -1,0 +1,93 @@
+/* Top 10 — ricostruzione dai valori CSS/Computed di StreamingUnity.
+   Nessuna dimensione desktop fissa in px: la card scala con lo slider. */
+
+.top10-row .slider {
+  position: relative;
+  padding-left: 4%;
+  padding-right: 4%;
+  box-sizing: border-box;
+}
+
+.top10-row .show-peek {
+  overflow-x: visible;
+  box-sizing: border-box;
+}
+
+.top10-row .slider-content {
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.top10-row .slider-item {
+  display: inline-block;
+  position: relative;
+  vertical-align: top;
+  padding: 0 .2em;
+  box-sizing: border-box;
+  white-space: normal;
+}
+
+/* Il primo item non riceve un finto offset: lo spostamento visivo del rank 1
+   viene dalla geometria originale del suo SVG/viewBox. */
+.top10-row .box-7x10 {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 0;
+  padding: 35.714% 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  border-width: 0;
+}
+
+.top10-row .top-10-rank-wrap {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: auto;
+  width: 50%;
+  height: 100%;
+  display: block;
+  vertical-align: middle;
+  border: 1px solid transparent;
+  margin: 0 -1px;
+  overflow: visible;
+  transform: scale(1);
+  box-sizing: border-box;
+}
+
+.top10-row .top-10-rank {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.top10-row .top-10-rank path {
+  fill: transparent;
+  stroke: #595959;
+  stroke-width: 4;
+  stroke-linejoin: square;
+}
+
+.top10-row .poster-image {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: auto;
+  width: 50%;
+  height: 100%;
+  max-width: 100%;
+  display: block;
+  object-fit: cover;
+  vertical-align: middle;
+  box-sizing: border-box;
+}
+
+/* Il sorgente StreamingUnity nasconde box-7x10 sotto 800px e usa una card
+   mobile dedicata. Non trasformiamo quindi la desktop card in un formato inventato. */
+@media (max-width: 799px) {
+  .top10-row .box-7x10 { display: none; }
+}

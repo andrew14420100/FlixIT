@@ -19,7 +19,8 @@ const StyledSlider = styled(Slider)(({ theme, padding }) => ({
   display: "flex !important",
   justifyContent: "center",
   overflow: "initial !important",
-  "& > .slick-list": { overflow: "visible" },
+  "& > .slick-list": { overflow: "visible !important" },
+  "& .slick-track": { overflow: "visible" },
   "& .slick-slide": { position: "relative", transition: "z-index 0s 0.3s" },
   "& .slick-slide:hover": { zIndex: "999 !important", transition: "z-index 0s 0s" },
   [theme.breakpoints.up("sm")]: {
@@ -54,13 +55,14 @@ function RankNumber({ n }) {
     <svg
       viewBox={rank.viewBox}
       preserveAspectRatio="xMidYMid meet"
+      width="100%"
+      height="100%"
+      className={`svg-icon svg-icon-rank-${n} top-10-rank`}
       style={{
         display: "block",
         overflow: "visible",
-        flex: "0 0 auto",
-        height: "90%",
-        width: "auto",
-        maxWidth: "none",
+        width: "100%",
+        height: "100%",
       }}
       aria-hidden
     >
@@ -80,7 +82,15 @@ function Top10Card({ item, index }) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
   const mType = item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
-  const { open, entered, align, width, onEnter, onLeave } = useHoverExpand(ref, () => EXPANDED_WIDTH);
+  const {
+    open,
+    entered,
+    display,
+    position,
+    onEnter,
+    onLeave,
+    onOverlayLeave,
+  } = useHoverExpand(ref, () => EXPANDED_WIDTH, { top10: true });
   const posterUrl = item.poster_path ? `${TMDB_IMG}w342${item.poster_path}` : null;
 
   const goPlay = (e) => { e?.stopPropagation(); window.scrollTo(0, 0); navigate(`/${MAIN_PATH.watch}/${item.type}/${item.tmdbId}`); };
@@ -89,46 +99,123 @@ function Top10Card({ item, index }) {
   return (
     <Box
       data-testid={`top10-item-${index + 1}`}
-      sx={{ width: "100%", height: "var(--top10-h)", position: "relative", zIndex: open ? 100 : 1, px: 0.25 }}
+      sx={{
+        width: "100%",
+        position: "relative",
+        zIndex: 1,
+        px: "0.2em",
+        boxSizing: "border-box",
+      }}
     >
-      {/* Number sits on a layer BEHIND the poster, slightly overlapped by it (StreamingCommunity-style) */}
-      <Stack direction="row" alignItems="stretch" justifyContent="center" sx={{ height: "100%" }}>
-        <Box data-testid={`top10-rank-${index + 1}`} sx={{
-          height: "100%",
-          display: "flex",
-          alignItems: "stretch",
-          justifyContent: "flex-end",
-          left: { xs: "-8px", sm: "-10px", md: "-25px" },
+      {/* StreamingUnity .box-7x10: total box = two 7:10 halves */}
+      <Box
+        ref={ref}
+        onMouseEnter={onEnter}
+        onMouseLeave={onLeave}
+        className="box-7x10"
+        sx={{
+          height: 0,
+          overflow: "hidden",
+          padding: "35.714% 0",
           position: "relative",
-          zIndex: 1,
-          transition: "transform 300ms ease, opacity 300ms ease",
-          transform: "none",
-        }}>
+          width: "100%",
+          boxSizing: "border-box",
+        }}
+      >
+        {/* Exact computed rank wrapper: absolute left half */}
+        <Box
+          data-testid={`top10-rank-${index + 1}`}
+          sx={{
+            boxSizing: "border-box",
+            display: "block",
+            verticalAlign: "middle",
+            border: "1px solid transparent",
+            margin: "0 -1px",
+            overflow: "visible",
+            transform: "scale(1)",
+            height: "100%",
+            bottom: 0,
+            left: 0,
+            position: "absolute",
+            right: "auto",
+            top: 0,
+            width: "50%",
+          }}
+        >
           <RankNumber n={index + 1} />
         </Box>
+
+        {/* Keep ORIGINAL hover architecture unchanged, but give poster exact right-half geometry */}
         <div
-          ref={ref}
-          onMouseEnter={onEnter}
-          onMouseLeave={onLeave}
-          style={{ position: "relative", height: "90%", aspectRatio: "2/3", zIndex: 2, cursor: "pointer", flex: "0 0 auto" }}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            right: 0,
+            left: "auto",
+            width: "50%",
+            height: "100%",
+            zIndex: 2,
+            cursor: "pointer",
+            overflow: "visible",
+          }}
         >
           <Box
             onClick={goDetail}
-            sx={{ width: "100%", height: "100%", borderRadius: "4px", overflow: "hidden", bgcolor: "#141414", boxShadow: "-14px 0 30px rgba(0,0,0,0.75), 0 8px 24px rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.06)" }}
+            sx={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              overflow: "hidden",
+              bgcolor: "#141414",
+            }}
           >
             {posterUrl && (
-              <img src={posterUrl} alt={item.title} loading="lazy" draggable={false}
-                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              <img
+                src={posterUrl}
+                alt={item.title}
+                loading="lazy"
+                draggable={false}
+                className="poster-image"
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
+                  left: "auto",
+                  width: "100%",
+                  height: "100%",
+                  maxWidth: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                }}
+              />
             )}
           </Box>
 
-          {open && (
-            <ExpandOverlay align={align} width={width} entered={entered} initialScale={0.6} fade testId={`hover-overlay-top10-${item.tmdbId}`}>
-              <ExpandedCard item={{ ...item, id: item.tmdbId }} mediaType={mType} onPlay={goPlay} onDetail={goDetail} entered={entered} />
-            </ExpandOverlay>
-          )}
         </div>
-      </Stack>
+      </Box>
+
+      {open && (
+        <ExpandOverlay
+          position={position}
+          entered={entered}
+          display={display}
+          fadeImageOut
+          onMouseLeave={onOverlayLeave}
+          testId={`hover-overlay-top10-${item.tmdbId}`}
+        >
+          <ExpandedCard
+            item={{ ...item, id: item.tmdbId }}
+            mediaType={mType}
+            onPlay={goPlay}
+            onDetail={goDetail}
+            display={display}
+            watch={item.watch}
+          />
+        </ExpandOverlay>
+      )}
     </Box>
   );
 }
@@ -153,12 +240,18 @@ export default function Top10Slider({ title, items }) {
   };
 
   return (
-    <Box data-testid="top10-slider" sx={{ position: "relative", zIndex: 1, "&:hover": { zIndex: 20 } }}>
-      <Stack direction="row" alignItems="center" className="row-title" sx={{ mb: 1.5 }}>
-        <Typography variant="h5" sx={{ fontWeight: 700, color: "#fff" }}>{title}</Typography>
+    <Box data-testid="top10-slider" className="slider-row" sx={{
+      position: "relative",
+      zIndex: 1,
+      "&:hover": { zIndex: 20 },
+      fontSize: "1vw",
+      lineHeight: 1.5,
+    }}>
+      <Stack direction="row" alignItems="center" className="row-header" sx={{ mx: "4%", mb: "0.7em" }}>
+        <Typography className="label" sx={{ fontWeight: 700, color: "#e8e8e8", fontSize: "1.4em", lineHeight: 1.5 }}>{title}</Typography>
         <ChevronRightIcon sx={{ color: "rgba(255,255,255,0.6)", ml: 0.5 }} />
       </Stack>
-      <Box sx={{ position: "relative" }}>
+      <Box className="slider" sx={{ position: "relative", px: "4%" }}>
         <CustomNavigation
           isEnd={isEnd}
           arrowWidth={ARROW_MAX_WIDTH}

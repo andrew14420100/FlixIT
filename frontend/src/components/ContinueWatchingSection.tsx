@@ -37,7 +37,7 @@ export default function ContinueWatchingSection() {
 
   return (
     <Box id="continua" data-testid="continue-watching-section" sx={{ position: "relative", zIndex: 10 }}>
-      <HomepageSlider title={`${username}, continua a guardare`} items={sliderItems} />
+      <HomepageSlider title={`${username}, continua a guardare:`} items={sliderItems} />
     </Box>
   );
 }
