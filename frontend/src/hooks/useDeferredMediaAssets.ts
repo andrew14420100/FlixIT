@@ -15,6 +15,10 @@ function supportsHdr() {
  * Rich card data is loaded only after the expanded hover is really open.
  * Provider discovery never runs in the browser: /api/public/trailer reads the
  * already-resolved Mongo cache and may only enqueue an asynchronous refresh.
+ *
+ * If the first response says the resolver is still preparing the trailer, the
+ * open hover polls the lightweight cache endpoint for a few seconds. Closing
+ * the hover disables the query and immediately stops the polling/player.
  */
 export default function useDeferredMediaAssets(video: any, mediaType: any, enabled = false) {
   const typeSlug = mediaType === MEDIA_TYPE.Tv ? "tv" : "movie";
@@ -48,6 +52,11 @@ export default function useDeferredMediaAssets(video: any, mediaType: any, enabl
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
+    refetchInterval: (query: any) => {
+      const trailer = query?.state?.data?.resolved_trailer;
+      if (!enabled || !trailer?.enabled || trailer?.available) return false;
+      return 1800;
+    },
   });
 
   return data || {};
