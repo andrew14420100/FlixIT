@@ -32,6 +32,15 @@ function unique(values: Array<string | null | undefined>) {
   });
 }
 
+function firstArtwork(...values: any[]) {
+  for (const value of values) {
+    if (!value) continue;
+    if (typeof value === "string") return value;
+    if (typeof value?.url === "string") return value.url;
+  }
+  return null;
+}
+
 export default function NetflixRankedCardWithHover({
   item,
   rank,
@@ -71,21 +80,44 @@ export default function NetflixRankedCardWithHover({
     [automaticAssets, deferredAssets]
   );
 
+  const legacyPoster = firstArtwork(
+    item?.poster_path,
+    item?.poster,
+    item?.netflix_ranked_artwork_url,
+    item?.netflixRankedArtworkUrl,
+    item?.netflix_cover_url,
+    item?.contextualArtwork?.artwork,
+    item?.artwork,
+    item?.image,
+    item?.cover_path,
+    item?.cover
+  );
+  const legacyLandscape = firstArtwork(
+    item?.backdrop_path,
+    item?.titled_backdrop_path,
+    item?.titledBackdropPath,
+    item?.netflix_artwork_url,
+    item?.netflixArtworkUrl,
+    item?.netflix_cover_url,
+    item?.contextualArtwork?.artwork,
+    item?.artwork,
+    item?.image
+  );
+
   const posterCandidates = useMemo(
     () => unique([
       tmdbImageUrl(automaticAssets?.poster_path, "original"),
-      tmdbImageUrl(item?.poster_path || item?.poster, "original"),
+      tmdbImageUrl(legacyPoster, "original"),
       tmdbImageUrl(automaticAssets?.backdrop_path, "original"),
       tmdbImageUrl(automaticAssets?.titled_backdrop_path, "original"),
-      tmdbImageUrl(item?.backdrop_path, "original"),
+      tmdbImageUrl(legacyLandscape, "original"),
     ]),
     [
       automaticAssets?.poster_path,
       automaticAssets?.backdrop_path,
       automaticAssets?.titled_backdrop_path,
-      item?.poster_path,
-      item?.poster,
-      item?.backdrop_path,
+      legacyPoster,
+      legacyLandscape,
     ]
   );
 
@@ -199,10 +231,12 @@ export default function NetflixRankedCardWithHover({
               backdrop_path:
                 automaticAssets?.backdrop_path ||
                 automaticAssets?.titled_backdrop_path ||
-                item?.backdrop_path,
+                legacyLandscape ||
+                legacyPoster,
               titled_backdrop_path:
                 automaticAssets?.titled_backdrop_path || item?.titled_backdrop_path,
-              poster_path: automaticAssets?.poster_path || item?.poster_path,
+              poster_path:
+                automaticAssets?.poster_path || legacyPoster || legacyLandscape,
               logo_path: automaticAssets?.logo_path || item?.logo_path,
             }}
             mediaType={mType}
