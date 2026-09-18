@@ -19,13 +19,6 @@ interface Props {
   artworkContext?: string;
 }
 
-/**
- * Standard Netflix row card.
- *
- * Artwork is prepared automatically when the card approaches the viewport.
- * Trailer resolution starts at hover intent, before the mini-modal is visible.
- * Both paths use shared React Query keys, so there is no duplicate metadata call.
- */
 export default function VideoItemWithHover({
   video,
   mediaType,
@@ -40,6 +33,8 @@ export default function VideoItemWithHover({
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
   const id = video?.id || video?.tmdbId || video?.tmdb_id;
 
+  // Start resolving automatic artwork before the card actually becomes visible,
+  // including cards just outside the horizontal viewport of a row.
   useEffect(() => {
     const node = ref.current;
     if (!node || typeof IntersectionObserver === "undefined") {
@@ -53,7 +48,7 @@ export default function VideoItemWithHover({
           observer.disconnect();
         }
       },
-      { rootMargin: "800px 0px" }
+      { rootMargin: "800px 1200px" }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -84,25 +79,26 @@ export default function VideoItemWithHover({
     [automaticAssets, deferredAssets]
   );
 
-  const fallbackImageUrl = useMemo(() => {
-    const path =
-      automaticAssets?.backdrop_path ||
-      automaticAssets?.titled_backdrop_path ||
-      video?.backdrop_path ||
-      video?.titled_backdrop_path ||
-      automaticAssets?.poster_path ||
-      video?.poster_path;
-    return tmdbImageUrl(path, "original");
-  }, [
-    automaticAssets?.backdrop_path,
-    automaticAssets?.titled_backdrop_path,
-    automaticAssets?.poster_path,
-    video?.backdrop_path,
-    video?.titled_backdrop_path,
-    video?.poster_path,
-  ]);
+  // media-assets is the primary source. The original row payload remains only
+  // as a no-blank fallback while the automatic request is still loading.
+  const imageCandidates = useMemo(
+    () => [
+      tmdbImageUrl(automaticAssets?.backdrop_path, "original"),
+      tmdbImageUrl(automaticAssets?.titled_backdrop_path, "original"),
+      tmdbImageUrl(video?.backdrop_path, "original"),
+      tmdbImageUrl(automaticAssets?.poster_path, "original"),
+      tmdbImageUrl(video?.poster_path, "original"),
+    ].filter(Boolean),
+    [
+      automaticAssets?.backdrop_path,
+      automaticAssets?.titled_backdrop_path,
+      automaticAssets?.poster_path,
+      video?.backdrop_path,
+      video?.poster_path,
+    ]
+  );
 
-  const title = video?.title || video?.name || automaticAssets?.title || "";
+  const title = automaticAssets?.title || video?.title || video?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${id}`;
 
   const goPlay = useCallback(
@@ -141,7 +137,7 @@ export default function VideoItemWithHover({
     : null;
 
   const hoverLogoUrl = tmdbImageUrl(
-    assets?.logo_path || automaticAssets?.logo_path || video?.logo_path,
+    automaticAssets?.logo_path || assets?.logo_path || video?.logo_path,
     "original"
   );
 
@@ -149,7 +145,8 @@ export default function VideoItemWithHover({
     <>
       <NetflixStandardCard
         ref={ref}
-        imageUrl={fallbackImageUrl}
+        imageUrl={imageCandidates[0] || null}
+        imageCandidates={imageCandidates.slice(1)}
         fallbackImageUrl={tmdbImageUrl(video?.backdrop_path || video?.poster_path, "original")}
         title={title}
         href={detailHref}
@@ -175,11 +172,13 @@ export default function VideoItemWithHover({
               id,
               preview_video_url: "",
               backdrop_path:
-                assets?.backdrop_path ||
-                assets?.titled_backdrop_path ||
+                automaticAssets?.backdrop_path ||
+                automaticAssets?.titled_backdrop_path ||
                 video?.backdrop_path,
-              poster_path: assets?.poster_path || video?.poster_path,
-              logo_path: assets?.logo_path || video?.logo_path,
+              titled_backdrop_path:
+                automaticAssets?.titled_backdrop_path || video?.titled_backdrop_path,
+              poster_path: automaticAssets?.poster_path || video?.poster_path,
+              logo_path: automaticAssets?.logo_path || video?.logo_path,
             }}
             mediaType={mType}
             onPlay={goPlay}
