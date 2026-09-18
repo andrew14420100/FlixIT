@@ -33,8 +33,6 @@ export default function VideoItemWithHover({
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
   const id = video?.id || video?.tmdbId || video?.tmdb_id;
 
-  // Start resolving automatic artwork before the card actually becomes visible,
-  // including cards just outside the horizontal viewport of a row.
   useEffect(() => {
     const node = ref.current;
     if (!node || typeof IntersectionObserver === "undefined") {
@@ -79,8 +77,6 @@ export default function VideoItemWithHover({
     [automaticAssets, deferredAssets]
   );
 
-  // media-assets is the primary source. The original row payload remains only
-  // as a no-blank fallback while the automatic request is still loading.
   const imageCandidates = useMemo(
     () => [
       tmdbImageUrl(automaticAssets?.backdrop_path, "original"),
@@ -171,6 +167,13 @@ export default function VideoItemWithHover({
               ...assets,
               id,
               preview_video_url: "",
+              // Never let legacy/admin artwork win inside the hover modal.
+              netflix_artwork_url: undefined,
+              netflixArtworkUrl: undefined,
+              netflix_cover_url: undefined,
+              contextualArtwork: undefined,
+              artwork: undefined,
+              image: undefined,
               backdrop_path:
                 automaticAssets?.backdrop_path ||
                 automaticAssets?.titled_backdrop_path ||
