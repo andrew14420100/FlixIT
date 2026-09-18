@@ -55,12 +55,60 @@ export function claimedAbove(rows, index, excludeKey = null) {
   return claimed;
 }
 
+function artworkValue(...values) {
+  for (const value of values) {
+    if (!value) continue;
+    if (typeof value === "string") return value;
+    if (typeof value?.url === "string") return value.url;
+  }
+  return null;
+}
+
+function normalizeArtwork(item) {
+  if (!item) return item;
+  if (item.backdrop_path || item.poster_path) return item;
+
+  const landscape = artworkValue(
+    item.titled_backdrop_path,
+    item.titledBackdropPath,
+    item.netflix_artwork_url,
+    item.netflixArtworkUrl,
+    item.netflix_cover_url,
+    item.contextualArtwork?.artwork,
+    item.artwork,
+    item.image,
+    item.cover_path,
+    item.cover,
+    item.image_url,
+    item.thumbnail_url
+  );
+  const poster = artworkValue(
+    item.netflix_ranked_artwork_url,
+    item.netflixRankedArtworkUrl,
+    item.poster,
+    item.netflix_cover_url,
+    item.cover_path,
+    item.cover,
+    item.image,
+    item.artwork
+  );
+
+  if (!landscape && !poster) return item;
+  return {
+    ...item,
+    backdrop_path: landscape || poster || null,
+    poster_path: poster || landscape || null,
+  };
+}
+
 export function uniqueItems(items) {
   const seen = new Set();
-  return (items || []).filter((item) => {
-    const key = itemKey(item);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return (items || [])
+    .map(normalizeArtwork)
+    .filter((item) => {
+      const key = itemKey(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
