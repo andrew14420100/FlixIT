@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import Slider from "react-slick";
 import { styled, useTheme } from "@mui/material/styles";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -16,41 +17,27 @@ const StyledSlider = styled(Slider)(({ theme, padding }) => ({
   justifyContent: "center",
   overflow: "visible !important",
   transform: "translate3d(0,0,0)",
-
   "& > .slick-list": {
     overflow: "visible",
     transform: "translate3d(0,0,0)",
     backfaceVisibility: "hidden",
   },
-
   "& .slick-track": {
     willChange: "transform",
     backfaceVisibility: "hidden",
   },
-
   "& .slick-slide": {
     position: "relative",
     zIndex: 1,
     backfaceVisibility: "hidden",
   },
-
-  "& .slick-slide > div": {
-    height: "100%",
-  },
-
+  "& .slick-slide > div": { height: "100%" },
   [theme.breakpoints.up("sm")]: {
-    "& > .slick-list": {
-      width: `calc(100% - ${2 * padding}px)`,
-    },
-    "& .slick-list > .slick-track": {
-      margin: "0 !important",
-    },
+    "& > .slick-list": { width: `calc(100% - ${2 * padding}px)` },
+    "& .slick-list > .slick-track": { margin: "0 !important" },
   },
-
   [theme.breakpoints.down("sm")]: {
-    "& > .slick-list": {
-      width: `calc(100% - ${padding}px)`,
-    },
+    "& > .slick-list": { width: `calc(100% - ${padding}px)` },
   },
 }));
 
@@ -58,11 +45,20 @@ export default function Top10Slider({ title, items }) {
   const sliderRef = useRef<Slider>(null);
   const theme = useTheme();
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-  const [isEnd, setIsEnd] = useState(false);
   const [isSliding, setIsSliding] = useState(false);
+
+  const up1536 = useMediaQuery("(min-width:1536px)");
+  const up1200 = useMediaQuery("(min-width:1200px)");
+  const up900 = useMediaQuery("(min-width:900px)");
+  const up600 = useMediaQuery("(min-width:600px)");
+  const tiles = up1536 ? 6 : up1200 ? 5 : up900 ? 4 : up600 ? 3 : 2;
 
   const list = (items || []).slice(0, 10);
   if (!list.length) return null;
+
+  const isEnd =
+    list.length <= tiles ||
+    activeSlideIndex >= Math.max(0, list.length - tiles);
 
   const settings = {
     speed: 750,
@@ -84,7 +80,6 @@ export default function Top10Slider({ title, items }) {
     },
     afterChange: (index) => {
       setActiveSlideIndex(index);
-      setIsEnd(index + 6 >= list.length);
       setIsSliding(false);
     },
     responsive: [
@@ -126,23 +121,10 @@ export default function Top10Slider({ title, items }) {
         >
           {title}
         </Typography>
-
-        <ChevronRightIcon
-          sx={{
-            color: "rgba(255,255,255,0.6)",
-            ml: 0.5,
-          }}
-        />
+        <ChevronRightIcon sx={{ color: "rgba(255,255,255,0.6)", ml: 0.5 }} />
       </Stack>
 
-      <Box
-        className="slider"
-        sx={{
-          position: "relative",
-          px: "4%",
-          overflow: "visible",
-        }}
-      >
+      <Box className="slider" sx={{ position: "relative", px: "4%", overflow: "visible" }}>
         <CustomNavigation
           isEnd={isEnd}
           arrowWidth={ARROW_MAX_WIDTH}
