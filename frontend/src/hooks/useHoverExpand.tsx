@@ -21,11 +21,9 @@ type AnchorData = {
 
 /**
  * Netflix-style hover intent + expansion.
- *
  * Every card expands from its own geometric centre. There is no first-card,
- * left-edge or permanent right bias. We clamp only the final open modal when it
- * would actually leave the viewport, and the closed transform is calculated so
- * the scaled modal lands exactly on the source card.
+ * left-edge or permanent right bias. The final open modal is clamped only when
+ * it would really leave the viewport.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -71,40 +69,51 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     closeTimerRef.current = setTimeout(finishClose, CLOSE_DURATION_MS + 20);
   }, [open, closing, clearOpenTimer, clearCloseTimer, finishClose]);
 
-  const openFrom = useCallback((element: HTMLElement | null) => {
-    if (!element || typeof window === "undefined") return;
+  const openFrom = useCallback(
+    (element: HTMLElement | null) => {
+      if (!element || typeof window === "undefined") return;
+      clearTimers();
+      setIntent(true);
+      setClosing(false);
 
-    clearTimers();
-    setIntent(true);
-    setClosing(false);
+      openTimerRef.current = setTimeout(() => {
+        if (!element.isConnected) return;
+        const rect = element.getBoundingClientRect();
+        setPosition({
+          cardRect: rect,
+          modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
+        });
+        setOpen(true);
+      }, OPEN_DELAY_MS);
+    },
+    [clearTimers]
+  );
 
-    openTimerRef.current = setTimeout(() => {
-      if (!element.isConnected) return;
-      const rect = element.getBoundingClientRect();
-      setPosition({
-        cardRect: rect,
-        modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
-      });
-      setOpen(true);
-    }, OPEN_DELAY_MS);
-  }, [clearTimers]);
+  const onEnter = useCallback(
+    (event?: any) => {
+      openFrom((event?.currentTarget || ref.current) as HTMLElement | null);
+    },
+    [openFrom, ref]
+  );
 
-  const onEnter = useCallback((event?: any) => {
-    openFrom((event?.currentTarget || ref.current) as HTMLElement | null);
-  }, [openFrom, ref]);
+  const onLeave = useCallback(
+    (event?: any) => {
+      clearOpenTimer();
+      const related = event?.relatedTarget as Element | null;
+      if (related?.closest?.(".previewModal--container")) return;
+      requestClose();
+    },
+    [clearOpenTimer, requestClose]
+  );
 
-  const onLeave = useCallback((event?: any) => {
-    clearOpenTimer();
-    const related = event?.relatedTarget as Element | null;
-    if (related?.closest?.(".previewModal--container")) return;
-    requestClose();
-  }, [clearOpenTimer, requestClose]);
-
-  const onOverlayLeave = useCallback((event?: any) => {
-    const related = event?.relatedTarget as Node | null;
-    if (related && ref.current?.contains?.(related)) return;
-    requestClose();
-  }, [requestClose, ref]);
+  const onOverlayLeave = useCallback(
+    (event?: any) => {
+      const related = event?.relatedTarget as Node | null;
+      if (related && ref.current?.contains?.(related)) return;
+      requestClose();
+    },
+    [requestClose, ref]
+  );
 
   useEffect(() => clearTimers, [clearTimers]);
 
@@ -164,23 +173,33 @@ export function ExpandOverlay({
       const node = modalRef.current;
       if (!node) return;
 
+      // Measurement must happen at scale(1). Measuring a pre-scaled node was
+      // the source of the old rightward drift because the geometry was based on
+      // the card-sized rectangle instead of the real expanded modal.
       const modalRect = node.getBoundingClientRect();
       const card = position.cardRect as DOMRect;
       const scale = 1 / SCALE_FACTOR;
 
       const desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
       const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
-      const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - modalRect.width - VIEWPORT_GUTTER);
-      const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - modalRect.height - VIEWPORT_GUTTER);
+      const maxLeft = Math.max(
+        VIEWPORT_GUTTER,
+        window.innerWidth - modalRect.width - VIEWPORT_GUTTER
+      );
+      const maxTop = Math.max(
+        VIEWPORT_GUTTER,
+        window.innerHeight - modalRect.height - VIEWPORT_GUTTER
+      );
 
-      const left = Math.round(Math.min(Math.max(desiredLeft, VIEWPORT_GUTTER), maxLeft));
-      const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
+      const left = Math.round(
+        Math.min(Math.max(desiredLeft, VIEWPORT_GUTTER), maxLeft)
+      );
+      const top = Math.round(
+        Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
+      );
 
-      // After scaling around the modal centre, this is the visible top-left.
       const scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
       const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
-
-      // Move that scaled rectangle onto the exact original card rectangle.
       const resetX = Math.round(card.left - scaledLeft);
       const resetY = Math.round(card.top - scaledTop);
 
@@ -210,7 +229,9 @@ export function ExpandOverlay({
   const left = geometry?.left ?? fallbackLeft;
   const top = geometry?.top ?? card.top;
 
-  let transform = `translate3d(0,0,0) scale(${1 / SCALE_FACTOR})`;
+  // Phase "measure" is deliberately unscaled and invisible so
+  // getBoundingClientRect() returns the true expanded dimensions.
+  let transform = "translate3d(0,0,0) scale(1)";
   let opacity = 0;
   let transition = "none";
 
