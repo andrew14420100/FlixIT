@@ -42,27 +42,39 @@ export default function CleanTrailer({ videoKey, poster, testId = "clean-trailer
 
   useEffect(() => {
     let cancelled = false;
+    let timer = 0;
+    let attempts = 0;
     const identity = routeIdentity();
+
     const load = async () => {
+      attempts += 1;
       try {
         if (identity) {
           const res = await fetch(`/api/public/trailer/${identity.mediaType}/${identity.id}?hdr=${hdrSupported() ? "true" : "false"}`, { cache: "no-store" });
           if (res.ok) {
             const data = await res.json();
             if (cancelled) return;
-            setResolverEnabled(!!data?.enabled);
-            setResolvedUrl(data?.enabled && data?.available ? (data?.trailer_url || data?.trailer_key || null) : null);
+            const enabled = !!data?.enabled;
+            const url = enabled && data?.available ? (data?.trailer_url || data?.trailer_key || null) : null;
+            setResolverEnabled(enabled);
+            setResolvedUrl(url);
+            if (enabled && !url && attempts < 7) timer = window.setTimeout(load, 1800);
             return;
           }
         }
         const cfg = await fetch("/api/public/trailer-config", { cache: "no-store" }).then((r) => r.ok ? r.json() : { enabled: false });
         if (!cancelled) setResolverEnabled(!!cfg?.enabled);
       } catch {
-        if (!cancelled) setResolverEnabled(false);
+        if (!cancelled && attempts < 4) timer = window.setTimeout(load, 2000);
+        else if (!cancelled) setResolverEnabled(false);
       }
     };
+
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, [videoKey]);
 
   useEffect(() => {
