@@ -30,7 +30,7 @@ const INITIAL_ROWS = 4;
 const ROWS_PER_LOAD = 3;
 const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
 const ROW_ITEM_LIMIT = 60;
-const HOME_CACHE_PREFIX = "flix-home-v6";
+const HOME_CACHE_PREFIX = "flix-home-v7";
 
 function readPersistedCache(key) {
   if (typeof window === "undefined") return null;
@@ -219,9 +219,9 @@ function rowScore(item, type, originalIndex) {
 }
 
 function rankDailyItems(items, type) {
-  const valid = uniqueItems(items).filter(
-    (item) => item && (item.backdrop_path || item.poster_path)
-  );
+  // Artwork is resolved automatically per TMDB id by each card. Do not remove
+  // titles solely because the section payload omitted poster/backdrop fields.
+  const valid = uniqueItems(items).filter((item) => item && itemKey(item));
 
   if (type === "top10") return valid;
 
@@ -318,9 +318,6 @@ function buildExtraSections(templates, adminSections, preferences, userId) {
     });
   }
 
-  // Automatic rows are ordered per profile. Taste signals dominate genre rows;
-  // a small deterministic profile bias prevents every account from seeing the
-  // exact same sequence while keeping it stable across refreshes for 24 hours.
   return result.sort((a, b) => {
     const aSignature = sectionSignature(a);
     const bSignature = sectionSignature(b);
@@ -373,7 +370,7 @@ function SectionRow({ section, index, onSettled }) {
   const initialCache = useMemo(() => readFreshPersistedCache(cacheKey), [cacheKey]);
 
   const { data, isPending } = useQuery({
-    queryKey: ["home-row-v6", sectionSignature(section), url],
+    queryKey: ["home-row-v7", sectionSignature(section), url],
     queryFn: async () => {
       const incoming = await fetchSectionPayload(section, url);
       const snapshot = buildDailySnapshot(incoming, type);
@@ -450,7 +447,7 @@ export function Component() {
   );
 
   const { data: feed = null } = useQuery({
-    queryKey: ["home-feed-v6", userId, preferenceSignature],
+    queryKey: ["home-feed-v7", userId, preferenceSignature],
     queryFn: async () => {
       const [secData, tplData] = await Promise.all([
         freshFetchJson("/api/public/sections", { sections: [] }),
