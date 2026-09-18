@@ -1,0 +1,243 @@
+"""Shared trailer types, matching and ranking rules.
+
+The multi-provider trailer pipeline is intentionally independent from the main
+movie/episode player.  It rejects YouTube in the new resolver, never upscales,
+and only considers native >=1080p candidates unless an admin explicitly sets a
+manual URL.
+"""
+from __future__ import annotations
+
+import hashlib
+import re
+import unicodedata
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Optional
+from urllib.parse import urlparse
+
+BLOCKED_HOST_SUFFIXES = (
+    "youtube.com",
+    "youtu.be",
+    "youtube-nocookie.com",
+)
+MIN_TRAILER_HEIGHT = 1080
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def normalize_title(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower().replace("&", " e ")
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def extract_year(value: Any) -> Optional[int]:
+    match = re.search(r"(?:19|20)\d{2}", str(value or ""))
+    return int(match.group(0)) if match else None
+
+
+def is_blocked_url(value: Optional[str]) -> bool:
+    if not value:
+        return False
+    try:
+        host = (urlparse(value).hostname or "").lower().strip(".")
+    except Exception:
+        return True
+    return any(host == suffix or host.endswith(f".{suffix}") for suffix in BLOCKED_HOST_SUFFIXES)
+
+
+def type_rank(value: str) -> int:
+    text = normalize_title(value)
+    if "official trailer" in text and "final" not in text:
+        return 5
+    if "final trailer" in text:
+        return 4
+    if "official teaser" in text:
+        return 3
+    if "teaser" in text:
+        return 2
+    if "clip" in text:
+        return 1
+    if "trailer" in text:
+        return 4
+    return 0
+
+
+def language_rank(value: Optional[str]) -> int:
+    lang = str(value or "").lower().replace("_", "-")
+    if lang == "it" or lang.startswith("it-"):
+        return 3
+    if lang == "en" or lang.startswith("en-"):
+        return 2
+    if lang:
+        return 1
+    return 0
+
+
+def codec_rank(value: Optional[str]) -> int:
+    codec = str(value or "").lower()
+    if any(x in codec for x in ("av01", "av1")):
+        return 4
+    if any(x in codec for x in ("hvc1", "hev1", "hevc", "h265")):
+        return 3
+    if any(x in codec for x in ("avc1", "h264", "avc")):
+        return 2
+    if any(x in codec for x in ("vp9", "vp09")):
+        return 2
+    return 1 if codec else 0
+
+
+def confidence_for_identity(identity: dict, title: Any, year: Any, media_type: Optional[str]) -> float:
+    """Conservative title/year/type confidence.
+
+    External IDs are handled by individual providers before this fallback.  A
+    title alone is never considered an automatic high-confidence match.
+    """
+    expected_type = "tv" if identity.get("type") == "tv" else "movie"
+    if media_type and media_type not in (expected_type, "video", "title"):
+        return 0.0
+    expected_titles = {
+        normalize_title(identity.get("title")),
+        normalize_title(identity.get("original_title")),
+    }
+    expected_titles.discard("")
+    got = normalize_title(title)
+    if not got or got not in expected_titles:
+        return 0.0
+    expected_year = extract_year(identity.get("year"))
+    got_year = extract_year(year)
+    if not expected_year or not got_year:
+        return 0.82
+    if expected_year == got_year:
+        return 0.98
+    if abs(expected_year - got_year) == 1:
+        return 0.88
+    return 0.45
+
+
+@dataclass
+class TrailerCandidate:
+    source: str
+    trailer_url: Optional[str] = None
+    manifest_url: Optional[str] = None
+    provider_id: Optional[str] = None
+    provider_page: Optional[str] = None
+    matched_title: Optional[str] = None
+    matched_year: Optional[int] = None
+    media_type: Optional[str] = None
+    title: Optional[str] = None
+    trailer_type: str = "Trailer"
+    official: bool = False
+    width: Optional[int] = None
+    height: Optional[int] = None
+    bitrate: Optional[int] = None
+    codec: Optional[str] = None
+    fps: Optional[float] = None
+    hdr: bool = False
+    dolby_vision: bool = False
+    audio_language: Optional[str] = None
+    audio_codec: Optional[str] = None
+    audio_bitrate: Optional[int] = None
+    subtitles: list[dict] = field(default_factory=list)
+    confidence: float = 0.0
+    verified: bool = False
+    browser_compatible: bool = True
+    compatibility: str = "broad"
+    expires_at: Optional[str] = None
+    requires_remux: bool = False
+    local_cache_key: Optional[str] = None
+    metadata: dict = field(default_factory=dict)
+
+    @property
+    def candidate_id(self) -> str:
+        raw = "|".join(
+            [
+                self.source,
+                str(self.provider_id or ""),
+                str(self.trailer_url or self.manifest_url or ""),
+                str(self.width or ""),
+                str(self.height or ""),
+                str(self.audio_language or ""),
+                str(self.trailer_type or ""),
+            ]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+    def to_dict(self) -> dict:
+        out = asdict(self)
+        out["candidate_id"] = self.candidate_id
+        out["resolution"] = self.height
+        return out
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TrailerCandidate":
+        allowed = set(cls.__dataclass_fields__)
+        return cls(**{k: v for k, v in (data or {}).items() if k in allowed})
+
+
+def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = False) -> bool:
+    url = candidate.trailer_url or candidate.manifest_url
+    if not url or is_blocked_url(url):
+        return False
+    if allow_manual:
+        return True
+    if candidate.confidence < 0.90:
+        return False
+    if not candidate.verified:
+        return False
+    if int(candidate.height or 0) < MIN_TRAILER_HEIGHT:
+        return False
+    if not candidate.browser_compatible and not candidate.requires_remux:
+        return False
+    return True
+
+
+def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
+    """Quality is dominant; language only breaks ties at the same native height."""
+    height = int(candidate.height or 0)
+    hdr_score = 1 if (hdr_supported and candidate.hdr) else 0
+    # If HDR is not supported, SDR should win at equal native resolution.
+    if not hdr_supported and candidate.hdr:
+        hdr_score = -1
+    return (
+        height,
+        language_rank(candidate.audio_language),
+        type_rank(candidate.trailer_type),
+        1 if candidate.official else 0,
+        round(float(candidate.confidence or 0), 4),
+        int(candidate.bitrate or 0),
+        hdr_score,
+        codec_rank(candidate.codec),
+        int(candidate.audio_bitrate or 0),
+        float(candidate.fps or 0),
+    )
+
+
+def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
+    usable = [c for c in candidates if candidate_is_usable(c)]
+    if not hdr_supported:
+        sdr = [c for c in usable if not c.hdr and not c.dolby_vision]
+        # Prefer a same-resolution SDR fallback when HDR playback support is uncertain.
+        if sdr:
+            usable = sdr
+    if not usable:
+        return None
+    return max(usable, key=lambda c: candidate_sort_key(c, hdr_supported=hdr_supported))
+
+
+def perfect_candidate(candidate: TrailerCandidate) -> bool:
+    return bool(
+        candidate.verified
+        and candidate.browser_compatible
+        and int(candidate.height or 0) >= 2160
+        and language_rank(candidate.audio_language) == 3
+        and candidate.official
+        and type_rank(candidate.trailer_type) >= 5
+        and float(candidate.confidence or 0) >= 0.97
+        and int(candidate.bitrate or 0) > 0
+        and not is_blocked_url(candidate.trailer_url or candidate.manifest_url)
+    )
