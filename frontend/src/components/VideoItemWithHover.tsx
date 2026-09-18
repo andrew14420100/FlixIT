@@ -100,6 +100,12 @@ export default function VideoItemWithHover({
 
   const assets = useDeferredMediaAssets(video, mType, open);
   const resolved = useNetflixArtwork(video, mType, resolvedContext, nearViewport);
+  const logoOverride = useNetflixArtwork(video, mType, "logo", open);
+  const manualLogo =
+    logoOverride?.artwork?.source === "manual" &&
+    /logo/i.test(String(logoOverride?.artwork?.type || ""))
+      ? logoOverride.artwork
+      : null;
 
   const existingNetflixArtwork =
     video.netflix_artwork_url ||
@@ -128,12 +134,10 @@ export default function VideoItemWithHover({
       event?.preventDefault?.();
       event?.stopPropagation?.();
       window.scrollTo(0, 0);
-
       const ep =
         watch && typeSlug === "tv"
           ? `?s=${watch.season || 1}&e=${watch.episode || 1}`
           : "";
-
       navigate(`/${MAIN_PATH.watch}/${typeSlug}/${id}${ep}`);
     },
     [navigate, typeSlug, id, watch]
@@ -186,7 +190,11 @@ export default function VideoItemWithHover({
               ...assets,
               id,
               netflix_artwork_url: resolved?.artwork?.url || existingNetflixArtwork,
-              logo_path: resolved?.logo?.url || assets?.logo_path || video?.logo_path,
+              logo_path:
+                manualLogo?.url ||
+                resolved?.logo?.url ||
+                assets?.logo_path ||
+                video?.logo_path,
             }}
             mediaType={mType}
             onPlay={goPlay}
