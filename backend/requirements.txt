@@ -47,7 +47,7 @@ iniconfig==2.3.0
 isort==8.0.1
 Jinja2==3.1.6
 jiter==0.13.0
-jmespath==1.1.0
+jmespath==1.0.1
 jq==1.11.0
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
@@ -86,6 +86,7 @@ PyJWT==2.12.1
 pymongo==4.5.0
 pyparsing==3.3.2
 pytest==9.0.3
+pytest-xdist==3.8.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-jose==3.5.0
