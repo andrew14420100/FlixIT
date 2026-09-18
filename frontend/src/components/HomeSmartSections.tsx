@@ -12,11 +12,11 @@ import {
 } from "src/store/homeDedupe";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const CACHE_PREFIX = "flix-home-smart-v5";
+const CACHE_PREFIX = "flix-home-smart-v6";
 const WATCH_AGAIN_DAYS = 28;
 const RECENT_DAYS = 14;
 const MAX_HISTORY = 12;
-const MAX_ROW_ITEMS = 16;
+const MAX_ROW_ITEMS = 36;
 
 const toMediaType = (type) =>
   type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
@@ -66,6 +66,13 @@ function readCache(key) {
   }
 }
 
+function readFreshCache(key) {
+  const value = readCache(key);
+  if (!value) return null;
+  if (Date.now() - Number(value.savedAt || 0) >= DAY_MS) return null;
+  return value;
+}
+
 function writeCache(key, data) {
   if (typeof window === "undefined") return;
   try {
@@ -90,11 +97,15 @@ async function fetchJson(url, fallback = null) {
 async function genrePool(genreId, mediaType) {
   if (!genreId) return [];
   const slug = toSlug(mediaType);
-  const data = await fetchJson(
-    `/api/public/tmdb/genre/${genreId}/${slug}`,
-    { items: [] }
+  const pages = await Promise.all(
+    [1, 2, 3].map((page) =>
+      fetchJson(
+        `/api/public/tmdb/genre/${genreId}/${slug}?page=${page}`,
+        { items: [] }
+      )
+    )
   );
-  return normalize(data?.items || [], slug);
+  return normalize(pages.flatMap((part) => part?.items || []), slug);
 }
 
 function removeTaken(items, taken) {
@@ -123,7 +134,7 @@ export default function HomeSmartSections() {
   const [loadDetails] = useLazyGetAppendedVideosQuery();
   const requestRef = useRef(0);
   const key = cacheKey();
-  const initial = useMemo(() => readCache(key)?.data || {}, [key]);
+  const initial = useMemo(() => readFreshCache(key)?.data || {}, [key]);
 
   const [becauseItems, setBecauseItems] = useState(initial.becauseItems || []);
   const [becauseTitle, setBecauseTitle] = useState(initial.becauseTitle || "");
@@ -184,9 +195,9 @@ export default function HomeSmartSections() {
   }, []);
 
   const refresh = useCallback(
-    async (force = false) => {
-      const cached = readCache(key);
-      if (!force && cached?.savedAt && Date.now() - cached.savedAt < DAY_MS) {
+    async () => {
+      const cached = readFreshCache(key);
+      if (cached) {
         applyState(cached.data);
         return;
       }
@@ -208,7 +219,7 @@ export default function HomeSmartSections() {
         becauseTitle: "",
         genreItems: [],
         genreTitle: "",
-        myListItems: normalize(listData?.items || []),
+        myListItems: normalize(listData?.items || []).slice(0, MAX_ROW_ITEMS),
       };
 
       if (recentHistory.length) {
@@ -308,18 +319,12 @@ export default function HomeSmartSections() {
     [key, recentHistory, loadDetails, applyState]
   );
 
+  // A stale daily snapshot is recalculated only when this page mounts/reloads.
+  // No 24h timer mutates an already-open homepage underneath the user.
   useEffect(() => {
-    refresh(false);
+    refresh();
   }, [historyKey, refresh]);
 
-  useEffect(() => {
-    const timer = window.setInterval(() => refresh(true), DAY_MS);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
-
-  // Stage-wise page allocation: each lower row excludes all content selected by
-  // rows above it. This mirrors the page-level diversity principle and, unlike
-  // the previous implementation, never re-adds duplicates to fill a carousel.
   const visibleBecause = useMemo(() => {
     const taken = claimedAbove(rows, -40, "smart-because-watched");
     return removeTaken(becauseItems, taken);
