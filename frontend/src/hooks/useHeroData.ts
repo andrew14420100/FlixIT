@@ -1,5 +1,6 @@
 // @ts-nocheck
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 interface HeroSettings {
   contentId: string;
@@ -37,8 +38,6 @@ async function attachResolvedTrailer(base: any) {
     );
     if (!response.ok) return base;
     const trailer = await response.json();
-    // With the new resolver enabled, null really means "no trailer": never fall
-    // back to a legacy YouTube key. When disabled, leave rollback data untouched.
     if (!trailer?.enabled) return base;
     const url = trailer?.available
       ? (trailer?.trailer_url || trailer?.trailer_key || trailer?.manifest_url || null)
@@ -59,9 +58,11 @@ async function attachResolvedTrailer(base: any) {
 export function useHeroData() {
   const profile = heroProfile();
   const viewport = heroViewport();
+  const queryClient = useQueryClient();
+  const queryKey = ['hero-settings', profile, viewport];
 
-  return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings', profile, viewport],
+  const query = useQuery<HeroSettings | null>({
+    queryKey,
     queryFn: async () => {
       try {
         const response = await fetch('/api/public/hero');
@@ -126,4 +127,53 @@ export function useHeroData() {
     refetchOnWindowFocus: false,
     refetchOnMount: false,
   });
+
+  // On a cold first visit the public endpoint may only enqueue the title. Keep
+  // the Hero image visible while polling the local Mongo result for a few
+  // seconds; once the background worker finishes, update this query in place.
+  useEffect(() => {
+    const hero: any = query.data;
+    if (!hero?.contentId || hero?.assets?.trailer_key) return;
+    if (hero?.assets?.resolved_trailer?.enabled === false) return;
+
+    let cancelled = false;
+    let timer = 0;
+    let attempts = 0;
+    const mediaType = hero.mediaType || 'tv';
+
+    const poll = async () => {
+      attempts += 1;
+      try {
+        const response = await fetch(
+          `/api/public/trailer/${mediaType}/${hero.contentId}?hdr=${hdrSupported() ? 'true' : 'false'}`,
+          { cache: 'no-store' }
+        );
+        const trailer = response.ok ? await response.json() : null;
+        if (cancelled) return;
+        const url = trailer?.enabled && trailer?.available
+          ? (trailer?.trailer_url || trailer?.trailer_key || trailer?.manifest_url || null)
+          : null;
+        if (url) {
+          queryClient.setQueryData(queryKey, (old: any) => old ? ({
+            ...old,
+            assets: {
+              ...(old.assets || {}),
+              trailer_key: url,
+              resolved_trailer: trailer,
+            },
+          }) : old);
+          return;
+        }
+      } catch {}
+      if (!cancelled && attempts < 7) timer = window.setTimeout(poll, 1800);
+    };
+
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [query.data?.contentId, query.data?.mediaType, query.data?.assets?.trailer_key, queryClient, profile, viewport]);
+
+  return query;
 }
