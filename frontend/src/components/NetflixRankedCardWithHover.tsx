@@ -1,10 +1,11 @@
 // @ts-nocheck
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
+import useNetflixArtwork from "src/hooks/useNetflixArtwork";
 import ExpandedCard, { TMDB_IMG } from "./ExpandedCard";
 import "./NetflixMiniModalExact.css";
 import NetflixTop10RankSvg from "./NetflixTop10RankSvg";
@@ -54,8 +55,14 @@ export default function NetflixRankedCardWithHover({
     mType,
     open
   );
+  const resolved = useNetflixArtwork(
+    { ...item, id: normalizedId },
+    mType,
+    "top10",
+    true
+  );
 
-  const posterUrl = useMemo(
+  const fallbackPosterUrl = useMemo(
     () =>
       imageSrc(
         item?.netflix_ranked_artwork_url ||
@@ -82,6 +89,13 @@ export default function NetflixRankedCardWithHover({
       item?.backdrop_path,
     ]
   );
+
+  const [posterUrl, setPosterUrl] = useState(
+    resolved?.artwork?.url || fallbackPosterUrl
+  );
+  useEffect(() => {
+    setPosterUrl(resolved?.artwork?.url || fallbackPosterUrl);
+  }, [resolved?.artwork?.url, fallbackPosterUrl]);
 
   const title = item?.title || item?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${normalizedId}`;
@@ -152,6 +166,13 @@ export default function NetflixRankedCardWithHover({
                 draggable={false}
                 loading="lazy"
                 decoding="async"
+                onError={() => {
+                  if (fallbackPosterUrl && posterUrl !== fallbackPosterUrl) {
+                    setPosterUrl(fallbackPosterUrl);
+                  } else {
+                    setPosterUrl("");
+                  }
+                }}
                 className="netflix-ranked-card-poster"
               />
             ) : (
@@ -174,6 +195,9 @@ export default function NetflixRankedCardWithHover({
               ...item,
               ...assets,
               id: normalizedId,
+              netflix_ranked_artwork_url: resolved?.artwork?.url || undefined,
+              netflix_artwork_url: resolved?.artwork?.url || item?.netflix_artwork_url,
+              logo_path: resolved?.logo?.url || assets?.logo_path || item?.logo_path,
             }}
             mediaType={mType}
             onPlay={goPlay}
