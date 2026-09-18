@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import datetime, timezone
 from types import MethodType
 
@@ -15,20 +17,16 @@ def _dt(value):
 
 
 def install_queue_policy(resolver):
-    """Replace catalog seeding with a cache-aware, resumable queue policy.
+    """Install a cache-aware, resumable policy for large catalogues.
 
-    Fresh resolved titles are not re-enqueued on every 15 minute scan. Jobs that
-    are pending/running/retrying are also left untouched so provider work is
-    deduplicated across Home/Top10/categories and across process restarts.
-
-    Important for large catalogues: the scan is not limited *before* fresh rows
-    are skipped.  We keep walking Mongo until `limit` new jobs are actually
-    queued, so an 18k catalogue progresses instead of getting stuck on the same
-    first 200 already-resolved titles forever.
+    Only a small number of workers perform provider work concurrently, but the
+    Mongo queue is kept filled in the background. Fresh resolved titles are
+    skipped, active jobs are deduplicated and scanning continues past already
+    resolved rows so an 18k catalogue cannot get stuck on its first page.
     """
 
     def enqueue_catalog(self, limit: int = 250):
-        wanted = max(1, min(int(limit), 1000))
+        wanted = max(1, min(int(limit), 2000))
         queued = 0
         skipped = 0
         scanned = 0
@@ -105,5 +103,33 @@ def install_queue_policy(resolver):
             "target": wanted,
         }
 
+    async def catalog_loop(self):
+        try:
+            batch = max(50, min(2000, int(os.environ.get("TRAILER_QUEUE_BATCH", "500"))))
+        except Exception:
+            batch = 500
+        try:
+            low_watermark = max(10, min(batch, int(os.environ.get("TRAILER_QUEUE_LOW_WATERMARK", "100"))))
+        except Exception:
+            low_watermark = 100
+
+        while not self._stop.is_set():
+            try:
+                self.cleanup_temp_files()
+                active = self.jobs.count_documents({"status": {"$in": ["pending", "running", "retry"]}})
+                if active < low_watermark:
+                    self.enqueue_catalog(limit=batch)
+            except Exception as exc:
+                if self.logger:
+                    self.logger.warning("Trailer catalog queue scan failed: %s", exc)
+
+            # Queue maintenance is cheap and does not contact providers. Workers
+            # remain constrained by TRAILER_RESOLVER_CONCURRENCY.
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=45)
+            except asyncio.TimeoutError:
+                pass
+
     resolver.enqueue_catalog = MethodType(enqueue_catalog, resolver)
+    resolver._catalog_loop = MethodType(catalog_loop, resolver)
     return resolver
