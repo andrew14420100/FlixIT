@@ -1,0 +1,53 @@
+/* Final motion/interaction overrides for Netflix-style rows. */
+.flix-netflix-preview-portal {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw;
+  height: 100vh;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 99999;
+  isolation: isolate;
+}
+
+.flix-netflix-preview-portal > .previewModal--container {
+  position: absolute !important;
+  pointer-events: auto;
+  transform-style: preserve-3d;
+}
+
+/* Continua a guardare: Netflix places the remove action with the hover controls,
+   after the rating/thumb control, never floating over the cover artwork. */
+.continue-hover-remove {
+  position: absolute !important;
+  top: calc(var(--flix-mini-modal-width, 366px) * .563925 + 16px);
+  left: 148px;
+  z-index: 30;
+  margin: 0 !important;
+}
+
+.continue-hover-remove .small,
+.continue-hover-remove svg {
+  pointer-events: none;
+}
+
+/* Keep compositor ownership during the most animation-heavy interactions. */
+.slider-row .slick-track,
+.slider-row .slick-list,
+.netflix-standard-card-root,
+.netflix-ranked-card-root,
+.previewModal--container {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.slider-row .slick-track {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .previewModal--container,
+  .slider-row .slick-track {
+    transition-duration: 1ms !important;
+  }
+}
