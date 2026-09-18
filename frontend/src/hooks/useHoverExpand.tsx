@@ -6,20 +6,22 @@ import "src/components/NetflixMotionOverrides.css";
 
 /**
  * Netflix-style mini-modal motion.
- * 400ms hover intent, 300ms expansion and 250ms reverse close using the same
- * cubic-bezier used by the reconstructed Netflix mini-modal behavior.
+ *
+ * Hover intent is intentionally short; trailer metadata can prewarm immediately
+ * while the visual expansion still has enough delay to avoid accidental fly-by
+ * hovers.  Expansion is centred on the source card.  Only cards touching a
+ * viewport edge are clamped, and there is no permanent left/right bias.
  */
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
-const OPEN_DELAY_MS = 400;
-const OPEN_DURATION_MS = 300;
-const CLOSE_DURATION_MS = 250;
+const OPEN_DELAY_MS = 260;
+const OPEN_DURATION_MS = 280;
+const CLOSE_DURATION_MS = 220;
 const OPACITY_OPEN_MS = 50;
 const OPACITY_CLOSE_MS = CLOSE_DURATION_MS * 0.6;
-const EDGE_GUARD = 60;
+const VIEWPORT_GUTTER = 8;
 const EASE = "cubic-bezier(.21,0,.07,1)";
-const FLIX_LEFT_BIAS_PX = 42;
-const FLIX_TITLE_OVERLAP_PX = 34;
+const TITLE_OVERLAP_PX = 24;
 
 type AnchorData = {
   titleCardRect: DOMRect;
@@ -31,6 +33,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
   const closeTimerRef = useRef<any>(null);
 
+  const [intent, setIntent] = useState(false);
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
   const [position, setPosition] = useState<AnchorData | null>(null);
@@ -55,6 +58,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   }, [clearOpenTimer, clearCloseTimer]);
 
   const finishClose = useCallback(() => {
+    setIntent(false);
     setOpen(false);
     setClosing(false);
     setPosition(null);
@@ -62,6 +66,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const requestClose = useCallback(() => {
     clearOpenTimer();
+    setIntent(false);
     if (!open || closing) return;
 
     setClosing(true);
@@ -74,6 +79,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       if (!element || typeof window === "undefined") return;
 
       clearTimers();
+      setIntent(true);
       setClosing(false);
 
       openTimerRef.current = setTimeout(() => {
@@ -129,7 +135,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   useEffect(() => clearTimers, [clearTimers]);
 
-  // A scroll gesture belongs to the page, never to the hover preview.
+  // A page scroll owns the gesture; close the preview instead of keeping a
+  // detached portal floating over content that has moved underneath it.
   useEffect(() => {
     if (!open) return;
     const onScrollGesture = () => {
@@ -148,6 +155,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   return {
     open,
+    intent,
     entered: open && !closing,
     display: open,
     closing,
@@ -191,33 +199,31 @@ export function ExpandOverlay({
       const horizontalOverflow = (modalRect.width - card.width) / 2;
       const verticalOverflow = (modalRect.height - card.height) / 2;
 
-      const top = Math.round(card.top - verticalOverflow - FLIX_TITLE_OVERLAP_PX);
-      const left = Math.round(card.left - horizontalOverflow - FLIX_LEFT_BIAS_PX);
-      const originalY = Math.round((modalRect.height / SCALE_FACTOR - card.height) / 2);
+      const wantedLeft = card.left - horizontalOverflow;
+      const maxLeft = Math.max(
+        VIEWPORT_GUTTER,
+        window.innerWidth - modalRect.width - VIEWPORT_GUTTER
+      );
+      const left = Math.round(
+        Math.min(Math.max(wantedLeft, VIEWPORT_GUTTER), maxLeft)
+      );
 
-      const tooCloseRight =
-        window.innerWidth -
-          (card.left + card.width + horizontalOverflow - FLIX_LEFT_BIAS_PX) <
-        EDGE_GUARD;
+      const wantedTop = card.top - verticalOverflow - TITLE_OVERLAP_PX;
+      const top = Math.round(Math.max(VIEWPORT_GUTTER, wantedTop));
 
-      let openX = 0;
-      if (card.left - horizontalOverflow - FLIX_LEFT_BIAS_PX < EDGE_GUARD) {
-        openX = Math.round(horizontalOverflow + FLIX_LEFT_BIAS_PX);
-      } else if (tooCloseRight) {
-        openX = Math.round(-horizontalOverflow + FLIX_LEFT_BIAS_PX);
-      }
-
-      let openY = 0;
-      if (card.top - verticalOverflow - FLIX_TITLE_OVERLAP_PX < EDGE_GUARD) {
-        openY = Math.round(verticalOverflow + FLIX_TITLE_OVERLAP_PX);
-      }
+      // At scale(1/SCALE_FACTOR), translate the modal back onto the exact card
+      // centre. This keeps every non-edge card expanding symmetrically instead
+      // of appearing to grow to the right.
+      const cardCenterX = card.left + card.width / 2;
+      const modalCenterX = left + modalRect.width / 2;
+      const resetX = Math.round(cardCenterX - modalCenterX);
+      const resetY = Math.round((modalRect.height / SCALE_FACTOR - card.height) / 2);
 
       setGeometry({
         top,
         left,
-        originalY,
-        openX,
-        openY,
+        resetX,
+        resetY,
         transformOrigin: "50% 50%",
       });
 
@@ -239,11 +245,17 @@ export function ExpandOverlay({
 
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
   const top = geometry?.top ?? position.titleCardDocTop;
-  const left =
-    geometry?.left ??
+  const fallbackWantedLeft =
     position.titleCardRect.left -
-      (modalWidth - position.titleCardRect.width) / 2 -
-      FLIX_LEFT_BIAS_PX;
+    (modalWidth - position.titleCardRect.width) / 2;
+  const fallbackMaxLeft = Math.max(
+    VIEWPORT_GUTTER,
+    window.innerWidth - modalWidth - VIEWPORT_GUTTER
+  );
+  const left = geometry?.left ?? Math.min(
+    Math.max(fallbackWantedLeft, VIEWPORT_GUTTER),
+    fallbackMaxLeft
+  );
 
   let transform = "translate3d(0,0,0) scale(1)";
   let opacity = 0;
@@ -251,12 +263,12 @@ export function ExpandOverlay({
   let zIndex = 4;
 
   if (phase === "reset" && geometry) {
-    transform = `translate3d(0px, ${geometry.originalY}px, 0) scale(${1 / SCALE_FACTOR})`;
+    transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
     opacity = 0;
   }
 
   if (phase === "open" && geometry) {
-    transform = `translate3d(${geometry.openX}px, ${geometry.openY}px, 0) scale(1)`;
+    transform = "translate3d(0px, 0px, 0) scale(1)";
     opacity = 1;
     transition =
       `transform ${OPEN_DURATION_MS}ms ${EASE}, ` +
@@ -265,9 +277,7 @@ export function ExpandOverlay({
   }
 
   if (phase === "close" && geometry) {
-    // Reverse to the exact reset transform. Keeping top/left fixed removes the
-    // small downward jump the previous close animation produced.
-    transform = `translate3d(0px, ${geometry.originalY}px, 0) scale(${1 / SCALE_FACTOR})`;
+    transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
     opacity = 0;
     transition =
       `transform ${CLOSE_DURATION_MS}ms ${EASE}, ` +
