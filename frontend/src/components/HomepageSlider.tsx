@@ -56,9 +56,8 @@ const StyledSlider = styled(Slider)(
       height: "100%",
     },
 
-    // Do not override the first tile's transform origin. The portal mini-modal
-    // now computes a symmetric centre for every card and clamps only at the
-    // actual viewport edge.
+    // All tiles keep the same geometry. Edge handling belongs exclusively to
+    // the portal hover calculation, not to a special first-card transform.
     [theme.breakpoints.up("sm")]: {},
   })
 );
@@ -111,8 +110,6 @@ export default function HomepageSlider({
   }, [items]);
 
   const isTop10 = /top\s*10/i.test(title);
-  const isContinueRow = rowId === "continua";
-
   const pageCount = Math.max(1, Math.ceil(visibleItems.length / tiles));
   const activePage = Math.min(
     pageCount - 1,
@@ -171,15 +168,11 @@ export default function HomepageSlider({
         bottom: 0,
         width: "100%",
         height: { xs: "auto", md: "237.241px" },
-        mt: isContinueRow
-          ? { xs: "20px", md: "32px" }
-          : compactSpacing
-          ? { xs: "8px", md: "14px" }
+        mt: compactSpacing
+          ? { xs: "10px", md: "16px" }
           : { xs: "32px", md: "57.3007px" },
-        mb: isContinueRow
-          ? { xs: "16px", md: "24px" }
-          : compactSpacing
-          ? { xs: "12px", md: "18px" }
+        mb: compactSpacing
+          ? { xs: "14px", md: "20px" }
           : { xs: "32px", md: "57.3007px" },
         boxSizing: "border-box",
         userSelect: "none",
@@ -316,9 +309,7 @@ export default function HomepageSlider({
               <StyledSlider ref={sliderRef} {...settings} theme={theme}>
                 {visibleItems.map((item, index) => {
                   const key = sliderItemKey(item) || `item-${index}`;
-                  const suppressForLeftHandle =
-                    activeSlideIndex > 0 && index === activeSlideIndex;
-                  const suppressHover = isSliding || suppressForLeftHandle;
+                  const suppressHover = isSliding;
 
                   return (
                     <Box
@@ -327,7 +318,6 @@ export default function HomepageSlider({
                       sx={{
                         px: { xs: "2px", sm: "3px", md: "3.82005px" },
                         boxSizing: "border-box",
-                        "&:first-of-type": { pl: 0 },
                         position: "relative",
                       }}
                     >
