@@ -23,10 +23,24 @@ function isHlsUrl(value: string) {
   return /\.m3u8(?:$|[?#])/i.test(value || "");
 }
 
+function routeIdentity() {
+  if (typeof window === "undefined") return null;
+  const match = window.location.pathname.match(/\/browse\/(movie|tv)\/(\d+)/i);
+  return match ? { mediaType: match[1].toLowerCase(), id: match[2] } : null;
+}
+
+function hdrSupported() {
+  try { return !!window.matchMedia?.("(dynamic-range: high)")?.matches; } catch { return false; }
+}
+
 /**
  * Unified TRAILER player only. Direct MP4/HLS is used by TrailerResolver.
- * The old YouTube iframe remains solely as rollback when the new resolver is
- * disabled server-side. Main movie/episode playback is not involved here.
+ *
+ * DetailPage historically passes a YouTube key to this component. While the
+ * new resolver is enabled we treat that key only as a legacy placeholder and
+ * resolve the current /browse/{type}/{tmdbId} route through the central trailer
+ * endpoint. This makes the Detail hero use the same cached trailer as Home,
+ * hover and the Trailer tab without touching the movie/episode player.
  */
 export default function TrailerPlayer({ videoKey, muted = true, playing = true, loop = true, zoom = 1.35, onEnded, onPlaying, onError }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -34,32 +48,89 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
   const hlsRef = useRef<Hls | null>(null);
   const readyRef = useRef(false);
   const idRef = useRef(`flixit-${String(videoKey).slice(-24)}-${Math.random().toString(36).slice(2, 8)}`);
-  const direct = isDirectUrl(videoKey);
-  const [resolverEnabled, setResolverEnabled] = useState<boolean | null>(direct ? true : null);
+
+  const propDirect = isDirectUrl(videoKey);
+  const [resolverEnabled, setResolverEnabled] = useState<boolean | null>(propDirect ? true : null);
+  const [resolvedRouteUrl, setResolvedRouteUrl] = useState<string | null>(propDirect ? videoKey : null);
 
   useEffect(() => {
-    if (direct) {
+    if (propDirect) {
       setResolverEnabled(true);
+      setResolvedRouteUrl(videoKey);
       return;
     }
+
     let cancelled = false;
-    fetch("/api/public/trailer-config", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { enabled: false }))
-      .then((cfg) => { if (!cancelled) setResolverEnabled(!!cfg?.enabled); })
-      .catch(() => { if (!cancelled) setResolverEnabled(false); });
-    return () => { cancelled = true; };
-  }, [direct]);
+    let timer = 0;
+
+    const resolveCurrentRoute = async () => {
+      try {
+        const cfg = await fetch("/api/public/trailer-config", { cache: "no-store" }).then((r) => r.ok ? r.json() : { enabled: false });
+        if (cancelled) return;
+        const enabled = !!cfg?.enabled;
+        setResolverEnabled(enabled);
+        if (!enabled) {
+          setResolvedRouteUrl(null);
+          return;
+        }
+
+        const identity = routeIdentity();
+        if (!identity) {
+          setResolvedRouteUrl(null);
+          return;
+        }
+
+        let attempts = 0;
+        const fetchResolved = async () => {
+          if (cancelled) return;
+          attempts += 1;
+          try {
+            const response = await fetch(
+              `/api/public/trailer/${identity.mediaType}/${identity.id}?hdr=${hdrSupported() ? "true" : "false"}`,
+              { cache: "no-store" }
+            );
+            const data = response.ok ? await response.json() : null;
+            if (cancelled) return;
+            const url = data?.enabled && data?.available
+              ? (data?.trailer_url || data?.trailer_key || data?.manifest_url || null)
+              : null;
+            setResolvedRouteUrl(url);
+            // First visit may arrive while the background queue is finishing.
+            // Poll briefly, then stop. Normal refreshes use the cached result on
+            // the first request and do not contact external providers.
+            if (!url && attempts < 7) {
+              timer = window.setTimeout(fetchResolved, 1800);
+            }
+          } catch {
+            if (!cancelled && attempts < 4) timer = window.setTimeout(fetchResolved, 2000);
+          }
+        };
+        await fetchResolved();
+      } catch {
+        if (!cancelled) setResolverEnabled(false);
+      }
+    };
+
+    resolveCurrentRoute();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [videoKey, propDirect]);
+
+  const playbackKey = propDirect ? videoKey : (resolverEnabled ? resolvedRouteUrl : videoKey);
+  const direct = isDirectUrl(playbackKey || "");
 
   const ytSrc = useMemo(() => {
-    if (direct || resolverEnabled !== false) return "";
+    if (direct || resolverEnabled !== false || !playbackKey) return "";
     const origin = encodeURIComponent(window.location.origin);
     const params = [
       "autoplay=1", "mute=1", "controls=0", "rel=0", "iv_load_policy=3", "disablekb=1",
       "fs=0", "playsinline=1", "modestbranding=1", "enablejsapi=1", `origin=${origin}`,
     ];
-    if (loop) params.push("loop=1", `playlist=${videoKey}`);
-    return `${YT_ORIGIN}/embed/${videoKey}?${params.join("&")}`;
-  }, [videoKey, loop, direct, resolverEnabled]);
+    if (loop) params.push("loop=1", `playlist=${playbackKey}`);
+    return `${YT_ORIGIN}/embed/${playbackKey}?${params.join("&")}`;
+  }, [playbackKey, loop, direct, resolverEnabled]);
 
   const post = useCallback((func: string, args: any[] = []) => {
     if (!readyRef.current || direct || resolverEnabled !== false) return;
@@ -90,13 +161,13 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
   }, [playing, post, direct]);
 
   useEffect(() => {
-    if (!direct || !videoKey) return;
+    if (!direct || !playbackKey) return;
     const video = videoRef.current;
     if (!video) return;
     hlsRef.current?.destroy();
     hlsRef.current = null;
 
-    if (isHlsUrl(videoKey) && !video.canPlayType("application/vnd.apple.mpegurl") && Hls.isSupported()) {
+    if (isHlsUrl(playbackKey) && !video.canPlayType("application/vnd.apple.mpegurl") && Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         startLevel: -1,
@@ -105,7 +176,7 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
         backBufferLength: 0,
       });
       hlsRef.current = hls;
-      hls.loadSource(videoKey);
+      hls.loadSource(playbackKey);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (hls.levels?.length) {
@@ -132,14 +203,14 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
       };
     }
 
-    video.src = videoKey;
+    video.src = playbackKey;
     if (playing) video.play().catch(() => undefined);
     return () => {
       video.pause();
       video.removeAttribute("src");
       video.load();
     };
-  }, [direct, videoKey, playing, onError]);
+  }, [direct, playbackKey, playing, onError]);
 
   useEffect(() => {
     if (direct || resolverEnabled !== false) return;
@@ -157,7 +228,7 @@ export default function TrailerPlayer({ videoKey, muted = true, playing = true, 
     return () => window.removeEventListener("message", onMessage);
   }, [onEnded, onPlaying, onError, applyAudio, playing, post, direct, resolverEnabled]);
 
-  if (!videoKey) return null;
+  if (!playbackKey) return null;
 
   if (direct) {
     return (
