@@ -63,8 +63,8 @@ export default function ContinueWatchingSection() {
   if (sliderItems.length === 0) return null;
 
   const title = username
-    ? `Continua a guardare per ${username}`
-    : "Continua a guardare";
+    ? `${username}, continua a guardare:`
+    : "Continua a guardare:";
 
   return (
     <HomepageSlider
