@@ -24,9 +24,8 @@ import {
 const INITIAL_ROWS = 4;
 const ROWS_PER_LOAD = 3;
 const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
-// v4 intentionally invalidates the previous daily snapshots: those snapshots
-// could contain the same title in several rows.
-const HOME_CACHE_PREFIX = "flix-home-v4";
+const ROW_ITEM_LIMIT = 60;
+const HOME_CACHE_PREFIX = "flix-home-v5";
 
 function readPersistedCache(key) {
   if (typeof window === "undefined") return null;
@@ -37,6 +36,13 @@ function readPersistedCache(key) {
   } catch {
     return null;
   }
+}
+
+function readFreshPersistedCache(key) {
+  const cached = readPersistedCache(key);
+  if (!cached) return null;
+  if (Date.now() - Number(cached.savedAt || 0) >= DAILY_REFRESH_MS) return null;
+  return cached;
 }
 
 function writePersistedCache(key, data) {
@@ -66,6 +72,12 @@ const freshFetchJson = async (url, fallback) => {
   }
 };
 
+function withPage(url, page) {
+  if (!url) return url;
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}page=${page}`;
+}
+
 export async function loader() {
   await Promise.all([
     store.dispatch(genreSliceEndpoints.getGenres.initiate(MEDIA_TYPE.Movie)),
@@ -82,7 +94,7 @@ export function sectionUrl(section) {
   switch (t) {
     case "trending": return "/api/public/homepage/trending";
     case "latest": return "/api/public/homepage/latest";
-    case "top10": return "/api/public/top10";
+    case "top10": return "/api/player/top10-ratings";
     case "upcoming": return "/api/public/tmdb/upcoming";
     case "new_releases": return "/api/public/new-releases/movie";
     case "new_seasons": return "/api/public/new-releases/tv";
@@ -113,12 +125,12 @@ function sectionSignature(section) {
 function sectionPriority(section) {
   const type = section.section_type || section.apiString;
   const priorities = {
-    trending: 130,
-    latest: 125,
+    trending: 132,
+    top10: 130,
+    latest: 126,
     new_releases: 123,
     new_seasons: 121,
     popular: 116,
-    top10: 114,
     now_playing: 108,
     airing_today: 108,
     on_the_air: 106,
@@ -146,9 +158,6 @@ function freshnessScore(item) {
   if (!releasedAt) return 15;
 
   const days = (Date.now() - releasedAt) / 86400000;
-  // Future releases remain highly relevant only to rows which explicitly ask
-  // for them. For normal rows this still prevents an old classic from beating
-  // every recent title only because of lifetime vote count.
   if (days < 0) return Math.max(20, 92 - Math.abs(days) * 0.3);
   if (days <= 14) return 100;
   if (days <= 30) return 92;
@@ -165,8 +174,6 @@ function fameScore(item) {
   const voteCount = Math.max(0, Number(item?.vote_count || 0));
   const rating = Math.max(0, Math.min(10, Number(item?.vote_average || 0)));
 
-  // Logarithms prevent giant franchises from permanently crowding out fresh
-  // releases while still giving well-known titles a strong signal.
   return (
     Math.min(100, Math.log1p(popularity) * 17) * 0.52 +
     Math.min(100, Math.log1p(voteCount) * 11) * 0.30 +
@@ -175,7 +182,7 @@ function fameScore(item) {
 }
 
 function rowScore(item, type, originalIndex) {
-  const endpointRank = Math.max(0, 100 - originalIndex * 3.5);
+  const endpointRank = Math.max(0, 100 - originalIndex * 2.2);
   const fresh = freshnessScore(item);
   const famous = fameScore(item);
 
@@ -211,7 +218,7 @@ function rankDailyItems(items, type) {
     (item) => item && (item.backdrop_path || item.poster_path)
   );
 
-  // Top 10 is already a meaningful rank supplied by the backend; preserve it.
+  // Site-vote Top 10 already arrives from the backend in exact rank order.
   if (type === "top10") return valid;
 
   return valid
@@ -228,13 +235,62 @@ function buildDailySnapshot(incomingData, type) {
   const ranked = rankDailyItems(incomingData?.items || [], type);
   return {
     ...(incomingData || {}),
-    items: ranked.slice(0, type === "top10" ? 10 : 30),
+    items: ranked.slice(0, type === "top10" ? 10 : ROW_ITEM_LIMIT),
   };
 }
 
-// Generate automatic rows once, without repeated signatures/names. Admin rows
-// keep their chosen order; automatic discovery rows are then ordered so current,
-// fresh and broadly popular catalogues are surfaced before narrow genre rows.
+const PAGED_TYPES = new Set([
+  "genre",
+  "popular",
+  "top_rated",
+  "now_playing",
+  "airing_today",
+  "on_the_air",
+  "upcoming",
+]);
+
+async function fetchSectionPayload(section, url) {
+  const type = section.section_type || section.apiString;
+
+  // "Aggiunti di recente" is intentionally broad: the old endpoint could
+  // shrink to ~5 cards after availability filtering. Merge several pages of
+  // fresh movies and series, then let the daily freshness/fame rank order them.
+  if (type === "latest") {
+    const urls = [
+      "/api/public/homepage/latest",
+      withPage("/api/public/tmdb/now_playing", 1),
+      withPage("/api/public/tmdb/now_playing", 2),
+      withPage("/api/public/tmdb/now_playing", 3),
+      withPage("/api/public/tmdb/on_the_air", 1),
+      withPage("/api/public/tmdb/on_the_air", 2),
+      withPage("/api/public/tmdb/on_the_air", 3),
+    ];
+    const parts = await Promise.all(
+      urls.map((candidate) => freshFetchJson(candidate, { items: [] }))
+    );
+    return {
+      items: uniqueItems(parts.flatMap((part) => part?.items || [])),
+      total: parts.reduce((sum, part) => sum + Number(part?.total || part?.items?.length || 0), 0),
+    };
+  }
+
+  // Netflix-sized rows need more than one API page. Fetch three pages where
+  // the existing FLIX-IT endpoint already supports pagination.
+  if (PAGED_TYPES.has(type)) {
+    const pages = await Promise.all(
+      [1, 2, 3].map((page) =>
+        freshFetchJson(withPage(url, page), { items: [] })
+      )
+    );
+    return {
+      ...(pages[0] || {}),
+      items: uniqueItems(pages.flatMap((part) => part?.items || [])),
+    };
+  }
+
+  return freshFetchJson(url, { items: [] });
+}
+
 function buildExtraSections(templates, adminSections) {
   const used = new Set(adminSections.map(sectionSignature));
   const usedNames = new Set(
@@ -297,12 +353,12 @@ function SectionRow({ section, index, onSettled }) {
   const type = section.section_type || section.apiString;
   const isTop10 = type === "top10";
   const cacheKey = `${HOME_CACHE_PREFIX}:row:${sectionSignature(section)}`;
-  const initialCache = useMemo(() => readPersistedCache(cacheKey), [cacheKey]);
+  const initialCache = useMemo(() => readFreshPersistedCache(cacheKey), [cacheKey]);
 
   const { data, isPending } = useQuery({
-    queryKey: ["home-row", sectionSignature(section), url],
+    queryKey: ["home-row-v5", sectionSignature(section), url],
     queryFn: async () => {
-      const incoming = await freshFetchJson(url, { items: [] });
+      const incoming = await fetchSectionPayload(section, url);
       const snapshot = buildDailySnapshot(incoming, type);
       writePersistedCache(cacheKey, snapshot);
       return snapshot;
@@ -311,9 +367,10 @@ function SectionRow({ section, index, onSettled }) {
     initialDataUpdatedAt: initialCache?.savedAt,
     staleTime: DAILY_REFRESH_MS,
     gcTime: DAILY_REFRESH_MS * 7,
-    refetchInterval: DAILY_REFRESH_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    refetchInterval: false,
     refetchIntervalInBackground: false,
   });
 
@@ -325,11 +382,16 @@ function SectionRow({ section, index, onSettled }) {
     if (isPending) return null;
 
     const ranked = rankDailyItems(data?.items || [], type);
+
+    // Top 10 must always show positions 1-10. It may contain a title already
+    // seen in an upper recommendation row; lower rows will still exclude the
+    // Top 10 titles after this row claims them.
+    if (isTop10) return ranked.slice(0, 10);
+
     const taken = claimedAbove(rows, index, section.key);
-    // Strict page-level diversity: never put a title back merely to fill a row.
     return ranked
       .filter((item) => !taken.has(itemKey(item)))
-      .slice(0, isTop10 ? 10 : 30);
+      .slice(0, ROW_ITEM_LIMIT);
   }, [data, isPending, rows, index, section.key, isTop10, type]);
 
   useEffect(() => {
@@ -361,12 +423,12 @@ export function Component() {
 
   const feedCacheKey = `${HOME_CACHE_PREFIX}:feed`;
   const initialFeedCache = useMemo(
-    () => readPersistedCache(feedCacheKey),
+    () => readFreshPersistedCache(feedCacheKey),
     [feedCacheKey]
   );
 
   const { data: feed = null } = useQuery({
-    queryKey: ["home-feed-v4"],
+    queryKey: ["home-feed-v5"],
     queryFn: async () => {
       const [secData, tplData] = await Promise.all([
         freshFetchJson("/api/public/sections", { sections: [] }),
@@ -386,9 +448,10 @@ export function Component() {
     initialDataUpdatedAt: initialFeedCache?.savedAt,
     staleTime: DAILY_REFRESH_MS,
     gcTime: DAILY_REFRESH_MS * 7,
-    refetchInterval: DAILY_REFRESH_MS,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    refetchInterval: false,
     refetchIntervalInBackground: false,
   });
 
@@ -442,7 +505,7 @@ export function Component() {
       <HeroSection mediaType={currentMediaType} />
 
       <Stack
-        spacing={{ xs: 3.2, md: 4.0 }}
+        spacing={{ xs: 2.5, md: 3.0 }}
         sx={{
           position: "relative",
           zIndex: 12,
