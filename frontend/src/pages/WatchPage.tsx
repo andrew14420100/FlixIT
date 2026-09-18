@@ -2,14 +2,13 @@
 /**
  * WatchPage - native playback.
  *  1. Reads tmdbId / season / episode from the router
- *  2. Resolves the stream from the backend (/api/player/movie/:id or /api/player/tv/:id/:s/:e)
- *     while showing a CircularProgress
- *  3. Renders CustomVideoPlayer (hls.js / native), or "Stream non disponibile" + Indietro
- *  Progress keeps flowing into "Continua a guardare" (localStorage + backend for logged users).
+ *  2. Reuses a stream prefetched by Detail/Hero when available
+ *  3. Resolves from the backend only on a cold cache miss
+ *  4. Renders CustomVideoPlayer and persists Continue Watching progress
  */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Box, IconButton, Typography, Stack, CircularProgress, Button } from "@mui/material";
+import { Box, IconButton, Typography, CircularProgress, Button } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ErrorOutlineIcon from "@mui/icons-material/Error";
 import VideocamOffOutlinedIcon from "@mui/icons-material/VideocamOffOutlined";
@@ -35,16 +34,46 @@ function readLocalProgress(tmdbId) {
   }
 }
 
+function normalizePrefetched(raw, cacheKey) {
+  if (!raw) return null;
+  try {
+    const item = typeof raw === "string" ? JSON.parse(raw) : raw;
+    const data = item?.data || item;
+    const savedAt = Number(item?.savedAt || item?.ts || item?.timestamp || Date.now());
+    if (Date.now() - savedAt > STREAM_CACHE_TTL_MS) return null;
+    if (!data?.stream) return null;
+    return {
+      stream: data.stream,
+      type: data.type || "hls",
+      source: data.source,
+      savedAt,
+      cacheKey,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function readCachedStream(cacheKey) {
   try {
-    const raw = sessionStorage.getItem(STREAM_CACHE_PREFIX + cacheKey);
-    if (!raw) return null;
-    const item = JSON.parse(raw);
-    if (!item?.stream || Date.now() - item.savedAt > STREAM_CACHE_TTL_MS) {
-      sessionStorage.removeItem(STREAM_CACHE_PREFIX + cacheKey);
-      return null;
+    const ownKey = STREAM_CACHE_PREFIX + cacheKey;
+    const own = normalizePrefetched(sessionStorage.getItem(ownKey), ownKey);
+    if (own) return own;
+
+    // DetailPage historically warmed these aliases. Reusing them here turns a
+    // click on Riproduci into an immediate player mount instead of performing
+    // the same resolver round-trip for a second time.
+    const [type, id, season = "0", episode = "0"] = String(cacheKey).split(":");
+    const aliases = [
+      `stream:${type}:${id}:${season}:${episode}`,
+      `stream_${type}_${id}_${season}_${episode}`,
+      `stream-${type}-${id}-${season}-${episode}`,
+    ];
+    for (const key of aliases) {
+      const value = normalizePrefetched(sessionStorage.getItem(key), key);
+      if (value) return value;
     }
-    return item;
+    return null;
   } catch {
     return null;
   }
@@ -85,11 +114,9 @@ function WatchPlayer() {
   const startTimeParam = searchParams.get("t");
   const storageKey = isTv ? `${tmdbId}:s${season}e${episode}` : String(tmdbId);
 
-  // Resume position is resolved independently so it never blocks player startup
   const [startAt, setStartAt] = useState<number | null>(() =>
     startTimeParam !== null ? Math.max(0, parseInt(startTimeParam, 10) || 0) : null
   );
-  // Stream resolution: resolving | ready | unavailable | error
   const [streamState, setStreamState] = useState<{ status: string; stream?: string; type?: string; source?: string; message?: string }>({ status: "resolving" });
   const [title, setTitle] = useState("");
   const [backdrop, setBackdrop] = useState("");
@@ -100,14 +127,14 @@ function WatchPlayer() {
   const playbackRef = useRef({ currentTime: 0, duration: 0, hasEvents: false, lastSaved: 0 });
   const startAtRef = useRef(0);
   const mountedAtRef = useRef(Date.now());
-  const historyLenAtMount = useRef(window.history.length);
+  const playerErrorTimerRef = useRef(null);
 
   const matchesEpisode = useCallback(
     (saved) => !isTv || ((saved.season ?? 1) === Number(season) && (saved.episode ?? 1) === Number(episode)),
     [isTv, season, episode]
   );
 
-  // ---- resume position (local + backend)
+  // Resume position resolves independently and never blocks player startup.
   useEffect(() => {
     if (!tmdbId || startAt !== null) return;
     let cancelled = false;
@@ -136,21 +163,13 @@ function WatchPlayer() {
 
   useEffect(() => { if (startAt !== null) startAtRef.current = startAt; }, [startAt]);
 
-  // ---- stream resolution from the backend
+  // Stream resolution: a valid prefetched/cached stream is authoritative for
+  // this short TTL, so do not issue a duplicate backend resolve in parallel.
   useEffect(() => {
     if (!isValidTmdbId) return;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
-    const url = isTv ? `/api/player/tv/${tmdbId}/${season}/${episode}` : `/api/player/movie/${tmdbId}`;
-    if (playerErrorTimerRef.current) {
-      clearTimeout(playerErrorTimerRef.current);
-      playerErrorTimerRef.current = null;
-    }
     const cacheKey = `${isTv ? "tv" : "movie"}:${tmdbId}:${season}:${episode}`;
     const cached = readCachedStream(cacheKey);
 
-    // Use a very recent resolved stream immediately. This removes the resolver
-    // round-trip when the user returns to the same title/episode.
     if (cached?.stream) {
       setStreamState({
         status: "ready",
@@ -158,9 +177,15 @@ function WatchPlayer() {
         type: cached.type || "hls",
         source: cached.source,
       });
-    } else {
-      setStreamState({ status: "resolving" });
+      // Normalize legacy DetailPage aliases into the canonical Watch cache.
+      cacheStream(cacheKey, cached);
+      return;
     }
+
+    setStreamState({ status: "resolving" });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), STREAM_TIMEOUT_MS);
+    const url = isTv ? `/api/player/tv/${tmdbId}/${season}/${episode}` : `/api/player/movie/${tmdbId}`;
 
     const request = () => fetch(url, {
       signal: controller.signal,
@@ -172,8 +197,6 @@ function WatchPlayer() {
       return data;
     });
 
-    // One resolver request only. Retrying here can duplicate an expensive
-    // backend resolution and make "Guarda" feel slower when the first call fails.
     request()
       .then((data) => {
         if (data?.success && data.stream) {
@@ -195,10 +218,12 @@ function WatchPlayer() {
         else setStreamState({ status: "error", message: e?.message || "Impossibile contattare il server" });
       })
       .finally(() => clearTimeout(timeout));
+
     return () => { clearTimeout(timeout); controller.abort(); };
   }, [tmdbId, isTv, season, episode, attempt, isValidTmdbId]);
 
-  // ---- title / images for "Continua a guardare"
+  // Title/images for Continue Watching; use original artwork for fullscreen
+  // loading/poster surfaces while preserving only the compact TMDB path in data.
   useEffect(() => {
     if (!isValidTmdbId) return;
     fetch(`/api/public/media-assets/${isTv ? "tv" : "movie"}/${tmdbId}`)
@@ -207,7 +232,7 @@ function WatchPlayer() {
         if (!a) return;
         metaRef.current.title = a.title || metaRef.current.title;
         setTitle(a.title || "");
-        const backdropPath = a.titled_backdrop_path || a.backdrop_path || "";
+        const backdropPath = a.backdrop_path || a.titled_backdrop_path || "";
         const posterPath = a.poster_path || "";
         metaRef.current.backdrop_path = backdropPath;
         metaRef.current.poster_path = posterPath;
@@ -215,7 +240,7 @@ function WatchPlayer() {
           setBackdrop(
             /^https?:\/\//i.test(backdropPath)
               ? backdropPath
-              : `https://image.tmdb.org/t/p/w1280${backdropPath}`
+              : `https://image.tmdb.org/t/p/original${backdropPath}`
           );
         }
         if (a.runtime > 0) metaRef.current.duration = a.runtime * 60;
@@ -223,7 +248,6 @@ function WatchPlayer() {
       .catch(() => {});
   }, [tmdbId, isTv, isValidTmdbId]);
 
-  // ---- episode name + next-episode availability
   useEffect(() => {
     if (!tmdbId || !isTv) return;
     fetch(`/api/public/tv/${tmdbId}/season/${season}`)
@@ -237,11 +261,10 @@ function WatchPlayer() {
       .catch(() => {});
   }, [tmdbId, isTv, season, episode, isValidTmdbId]);
 
-  // ---- progress persistence ("Continua a guardare": localStorage + backend when logged in)
   const persist = useCallback(() => {
     if (!isValidTmdbId) return;
     const p = playbackRef.current;
-    if (!p.hasEvents) return; // the native player reports real timeupdate events
+    if (!p.hasEvents) return;
     const elapsed = (Date.now() - mountedAtRef.current) / 1000;
     if (elapsed < MIN_WATCH_SECONDS && p.currentTime < MIN_WATCH_SECONDS) return;
     let progress = p.currentTime;
@@ -313,13 +336,11 @@ function WatchPlayer() {
   }, [persist, navigate]);
 
   const handleGoHome = () => navigate(`/${MAIN_PATH.browse}`);
-  const playerErrorTimerRef = useRef(null);
 
   const handlePlayerError = useCallback((_msg) => {
     // Playback/HLS errors are handled entirely by CustomVideoPlayer.
     // Never switch the WatchPage into its full-screen error state.
   }, []);
-
 
   if (!isValidTmdbId) {
     return (
@@ -338,15 +359,8 @@ function WatchPlayer() {
   }
 
   const subtitle = isTv ? `S${season}:E${episode}${episodeInfo.name ? ` ${episodeInfo.name}` : ""}` : "";
-  // Mount the player as soon as the stream is ready.
-  // Resume resolution runs independently in the background.
   const playerReady = streamState.status === "ready";
   const effectiveStartAt = startAt ?? 0;
-  const posterUrl = metaRef.current.backdrop_path
-    ? (/^https?:\/\//i.test(metaRef.current.backdrop_path)
-        ? metaRef.current.backdrop_path
-        : `https://image.tmdb.org/t/p/w1280${metaRef.current.backdrop_path}`)
-    : undefined;
   const backButton = (
     <Box sx={{ position: "absolute", top: 20, left: 20, zIndex: 100 }}>
       <IconButton onClick={handleGoBack} data-testid="back-button" aria-label="Indietro"
@@ -359,35 +373,33 @@ function WatchPlayer() {
 
   return (
     <Box data-testid="watch-page" sx={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", bgcolor: "#000", zIndex: 9999 }}>
-      {/* Resolving the stream */}
       {streamState.status === "resolving" && (
         <Box data-testid="watch-loading" sx={{ position: "absolute", inset: 0, bgcolor: "#0a0a0a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
           {backdrop && (
-            <Box component="img" src={backdrop} alt="" data-testid="watch-loading-backdrop"
+            <Box component="img" src={backdrop} alt="" data-testid="watch-loading-backdrop" decoding="async"
               sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.35, filter: "blur(2px)", animation: "flixFadeIn 600ms ease both" }} />
           )}
           <Box sx={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(10,10,10,0.95), rgba(10,10,10,0.4))" }} />
           {backButton}
           <CircularProgress sx={{ color: "#e50914", mb: 3, position: "relative" }} size={60} />
-          <Typography variant="h6" sx={{ color: "#fff", mb: 1, position: "relative" }}>Ricerca dello stream in corso...</Typography>
+          <Typography variant="h6" sx={{ color: "#fff", mb: 1, position: "relative" }}>Preparazione riproduzione...</Typography>
           <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.5)", position: "relative" }}>
             {title ? `${title} - ` : ""}{isTv ? `Stagione ${season} - Episodio ${episode}` : "Film"}
           </Typography>
         </Box>
       )}
 
-      {/* Player */}
       {playerReady && (
         <CustomVideoPlayer
           key={`${storageKey}-${streamState.stream}`}
           src={streamState.stream}
           type={streamState.type}
           storageKey={storageKey}
-          startAt={startAt}
+          startAt={effectiveStartAt}
           autoPlay={true}
           title={title || (isTv ? "Serie TV" : "Film")}
           subtitle={subtitle}
-          poster={metaRef.current.backdrop_path ? `https://image.tmdb.org/t/p/w1280${metaRef.current.backdrop_path}` : undefined}
+          poster={metaRef.current.backdrop_path ? (/^https?:\/\//i.test(metaRef.current.backdrop_path) ? metaRef.current.backdrop_path : `https://image.tmdb.org/t/p/original${metaRef.current.backdrop_path}`) : undefined}
           hasNext={isTv && episodeInfo.hasNext}
           onNext={goToNextEpisode}
           onBack={handleGoBack}
@@ -397,7 +409,6 @@ function WatchPlayer() {
         />
       )}
 
-      {/* Stream not available */}
       {streamState.status === "unavailable" && (
         <Box data-testid="stream-unavailable" sx={{ position: "absolute", inset: 0, bgcolor: "#0a0a0a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10, px: 3 }}>
           {backButton}
@@ -407,7 +418,7 @@ function WatchPlayer() {
             {title ? `"${title}"` : "Questo titolo"}{isTv ? ` (S${season}E${episode})` : ""} non ha ancora una sorgente video configurata.
           </Typography>
           <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.4)", mb: 4, textAlign: "center", maxWidth: 520 }}>
-            Un amministratore può aggiungere lo stream da Admin &gt; Contenuti.
+            La sorgente non è disponibile in questo momento.
           </Typography>
           <Button variant="contained" onClick={handleGoBack} startIcon={<ArrowBackIcon />} data-testid="unavailable-back-button"
             sx={{ bgcolor: "#e50914", color: "#fff", px: 4, py: 1.5, borderRadius: 1, fontWeight: 600, "&:hover": { bgcolor: "#c40812" } }}>
@@ -415,8 +426,6 @@ function WatchPlayer() {
           </Button>
         </Box>
       )}
-
-
     </Box>
   );
 }
