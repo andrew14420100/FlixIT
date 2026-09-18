@@ -12,11 +12,14 @@ Chain / order / cache TTL are configured from Admin > Impostazioni.
 Response shape: {"success": true, "stream": "...", "type": "hls"|"mp4", "source": "<provider_id>"}
 or {"success": false, "reason": "not_found"} -> frontend shows "Stream non disponibile".
 """
+import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 
@@ -127,6 +130,168 @@ def count_stream_sources() -> int:
 
 def clear_cache() -> int:
     return registry.clear_cache()
+
+
+# ---------------------------------------------------------------------------
+# Site-vote Top 10
+# ---------------------------------------------------------------------------
+def _rating_candidates(limit: int = 30) -> list:
+    """Rank titles from FLIX-IT user votes, with a small Bayesian prior.
+
+    The prior prevents a title with a single 5-star vote from permanently
+    beating a title with many strong votes. Unrated positions are filled from
+    actual FLIX-IT views so the row still reaches ten cards on a young site.
+    """
+    if _db is None:
+        return []
+
+    ratings = list(_db["user_ratings"].find({}, {"_id": 0, "media_id": 1, "media_type": 1, "rating": 1}))
+    numeric = [float(r.get("rating") or 0) for r in ratings if 1 <= float(r.get("rating") or 0) <= 5]
+    global_mean = sum(numeric) / len(numeric) if numeric else 3.5
+
+    grouped = {}
+    for row in ratings:
+        try:
+            rating = float(row.get("rating") or 0)
+            media_id = int(row.get("media_id"))
+        except (TypeError, ValueError):
+            continue
+        if rating < 1 or rating > 5:
+            continue
+        media_type = "tv" if row.get("media_type") == "tv" else "movie"
+        key = (media_type, media_id)
+        bucket = grouped.setdefault(key, {"sum": 0.0, "votes": 0})
+        bucket["sum"] += rating
+        bucket["votes"] += 1
+
+    ranked = []
+    prior_votes = 3.0
+    for (media_type, media_id), data in grouped.items():
+        votes = int(data["votes"])
+        average = data["sum"] / votes
+        score = (votes / (votes + prior_votes)) * average + (prior_votes / (votes + prior_votes)) * global_mean
+        ranked.append({
+            "tmdbId": media_id,
+            "id": media_id,
+            "type": media_type,
+            "media_type": media_type,
+            "site_rating": round(average, 2),
+            "site_votes": votes,
+            "site_score": round(score, 4),
+        })
+
+    ranked.sort(key=lambda x: (x["site_score"], x["site_votes"], x["site_rating"]), reverse=True)
+
+    seen = {(x["type"], x["tmdbId"]) for x in ranked}
+    if len(ranked) < limit:
+        for view in _db["content_views"].find({}, {"_id": 0}).sort("views", -1).limit(100):
+            try:
+                media_id = int(view.get("tmdbId"))
+            except (TypeError, ValueError):
+                continue
+            media_type = "tv" if view.get("type") == "tv" else "movie"
+            key = (media_type, media_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            ranked.append({
+                "tmdbId": media_id,
+                "id": media_id,
+                "type": media_type,
+                "media_type": media_type,
+                "site_rating": 0,
+                "site_votes": 0,
+                "site_score": 0,
+                "site_views": int(view.get("views") or 0),
+            })
+            if len(ranked) >= limit:
+                break
+
+    return ranked[:limit]
+
+
+async def _tmdb_card(candidate: dict) -> Optional[dict]:
+    key = os.environ.get("TMDB_API_KEY", "")
+    if not key:
+        return None
+
+    media_type = candidate["type"]
+    tmdb_id = candidate["tmdbId"]
+    params = {"language": "it-IT"}
+    headers = {}
+    if key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {key}"
+    else:
+        params["api_key"] = key
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}",
+                params=params,
+                headers=headers,
+            )
+        if response.status_code != 200:
+            return None
+        data = response.json()
+    except Exception as exc:
+        logger.warning("Top10 TMDB lookup failed for %s/%s: %s", media_type, tmdb_id, exc.__class__.__name__)
+        return None
+
+    return {
+        **candidate,
+        **data,
+        "id": tmdb_id,
+        "tmdbId": tmdb_id,
+        "type": media_type,
+        "media_type": media_type,
+        "title": data.get("title") or data.get("name") or "",
+        "name": data.get("name") or data.get("title") or "",
+        "genre_ids": [genre.get("id") for genre in data.get("genres", []) if genre.get("id")],
+    }
+
+
+@router.get("/top10-ratings")
+async def top10_ratings():
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Player non inizializzato")
+
+    candidates = _rating_candidates(30)
+    cards = await asyncio.gather(*[_tmdb_card(item) for item in candidates[:20]])
+    items = [item for item in cards if item and (item.get("backdrop_path") or item.get("poster_path"))]
+
+    # Keep the site-vote order and always try to expose ten cards. If the site
+    # has fewer than ten rated/viewed titles we use available catalogue entries
+    # only as the final filler; they never outrank a site-voted title.
+    if len(items) < 10:
+        seen = {(item.get("type"), item.get("tmdbId")) for item in items}
+        fillers = list(_db["contents"].find({"available": {"$ne": False}}, {"_id": 0, "tmdbId": 1, "type": 1}).sort("createdAt", -1).limit(80))
+        filler_candidates = []
+        for row in fillers:
+            try:
+                media_id = int(row.get("tmdbId"))
+            except (TypeError, ValueError):
+                continue
+            media_type = "tv" if row.get("type") == "tv" else "movie"
+            if (media_type, media_id) in seen:
+                continue
+            seen.add((media_type, media_id))
+            filler_candidates.append({
+                "tmdbId": media_id,
+                "id": media_id,
+                "type": media_type,
+                "media_type": media_type,
+                "site_rating": 0,
+                "site_votes": 0,
+                "site_score": 0,
+            })
+            if len(filler_candidates) >= 10 - len(items):
+                break
+        if filler_candidates:
+            filler_cards = await asyncio.gather(*[_tmdb_card(item) for item in filler_candidates])
+            items.extend([item for item in filler_cards if item and (item.get("backdrop_path") or item.get("poster_path"))])
+
+    return {"items": items[:10], "total": min(10, len(items)), "ranking": "flixit_user_ratings"}
 
 
 # ---------------------------------------------------------------------------
