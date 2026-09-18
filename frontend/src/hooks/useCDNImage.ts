@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useMemo } from 'react';
 import { useGetConfigurationQuery } from 'src/store/slices/configuration';
-import { getImageUrl, getCDNImageUrl, hasCDNMapping } from 'src/config/cdnMapping';
+import { getCDNImageUrl, hasCDNMapping } from 'src/config/cdnMapping';
 
 interface UseCDNImageOptions {
   tmdbId: number;
@@ -18,11 +18,25 @@ interface UseCDNImageReturn {
   getBackdropUrl: (size?: string) => string;
 }
 
-/**
- * Shared high-quality image URL helper. Existing CDN mappings remain the fast
- * first choice; TMDB fallbacks now keep enough native resolution for retina
- * cards and use the original source for Hero/Detail backdrops.
- */
+function directImageUrl(
+  tmdbId: number,
+  type: 'poster' | 'backdrop' | 'detail_backdrop',
+  tmdbPath: string | null | undefined,
+  tmdbBaseUrl: string,
+  size: string
+) {
+  // Automatic TMDB metadata is the normal source of truth. This path needs no
+  // admin match/session and supports original-resolution artwork.
+  if (tmdbPath) {
+    if (/^https?:\/\//i.test(tmdbPath)) return tmdbPath;
+    return `${tmdbBaseUrl}${size}${tmdbPath}`;
+  }
+
+  // Old static CDN mappings remain only as a compatibility fallback when TMDB
+  // has no image path at all. They never replace a valid automatic asset.
+  return getCDNImageUrl(tmdbId, type) || '/placeholder.jpg';
+}
+
 export function useCDNImage({
   tmdbId,
   posterPath,
@@ -35,15 +49,14 @@ export function useCDNImage({
   const hasCDN = useMemo(() => hasCDNMapping(tmdbId), [tmdbId]);
 
   const getPosterUrl = useMemo(() => {
-    return (size: string = 'w780') => {
-      return getImageUrl(tmdbId, 'poster', posterPath || null, tmdbBaseUrl, size);
-    };
+    return (size: string = 'w780') =>
+      directImageUrl(tmdbId, 'poster', posterPath, tmdbBaseUrl, size);
   }, [tmdbId, posterPath, tmdbBaseUrl]);
 
   const getBackdropUrl = useMemo(() => {
     return (size: string = 'original') => {
       const backdropType = useDetailBackdrop ? 'detail_backdrop' : 'backdrop';
-      return getImageUrl(tmdbId, backdropType, backdropPath || null, tmdbBaseUrl, size);
+      return directImageUrl(tmdbId, backdropType, backdropPath, tmdbBaseUrl, size);
     };
   }, [tmdbId, backdropPath, tmdbBaseUrl, useDetailBackdrop]);
 
@@ -59,25 +72,15 @@ export function useCDNImage({
   };
 }
 
-/** Helper for components that cannot use hooks. */
 export function getMediaImageUrl(
   tmdbId: number,
   type: 'poster' | 'backdrop' | 'detail_backdrop',
   tmdbPath: string | null,
   tmdbBaseUrl: string = 'https://image.tmdb.org/t/p/',
-  size: string = 'w500'
+  size: string = 'w780'
 ): string {
-  const cdnUrl = getCDNImageUrl(tmdbId, type);
-  if (cdnUrl) {
-    return cdnUrl;
-  }
-
-  if (tmdbPath) {
-    const effectiveSize = type === 'detail_backdrop' ? 'original' : size;
-    return `${tmdbBaseUrl}${effectiveSize}${tmdbPath}`;
-  }
-
-  return '/placeholder.jpg';
+  const effectiveSize = type === 'poster' ? size : 'original';
+  return directImageUrl(tmdbId, type, tmdbPath, tmdbBaseUrl, effectiveSize);
 }
 
 export default useCDNImage;
