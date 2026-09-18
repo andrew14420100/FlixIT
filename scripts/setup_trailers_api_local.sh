@@ -20,9 +20,9 @@ cd "$TRAILERS_API_DIR"
 
 mkdir -p "$DATA_FOLDER/files"
 
-# Theryston upstream uploads completed trailers to S3.  FLIX-IT keeps them on
-# the same server instead: one extraction, then all page refreshes read the
-# persistent local file through the FastAPI /api/public/theryston-file route.
+# Theryston upstream uploads completed trailers to S3. FLIX-IT keeps them on
+# the same server instead: one extraction, then refreshes read the persistent
+# local file through FastAPI /api/public/theryston-file/....
 cat > "$TRAILERS_API_DIR/src/upload-file.js" <<'EOF'
 import fs from "node:fs";
 import path from "node:path";
@@ -44,6 +44,21 @@ export async function uploadFile(filePath) {
   return `${base}/${encodeURIComponent(key)}`;
 }
 EOF
+
+# IMDb playback files do not always contain an ISO language tag. Upstream
+# discards an otherwise valid trailer when every file lacks that metadata.
+# FLIX-IT verifies resolution/codec itself afterwards, so keep valid trailers
+# even when the audio language tag is absent.
+python3 - <<'PY'
+from pathlib import Path
+p = Path("/app/trailers-api/src/worker.js")
+s = p.read_text()
+old = '''    const servicesResultsWithTrailers = servicesResults.filter(\n      (serviceResult) =>\n        serviceResult.trailerPage &&\n        serviceResult.serviceResult.length &&\n        serviceResult.serviceResult.every((t) => t.langs.length)\n    );'''
+new = '''    const servicesResultsWithTrailers = servicesResults.filter(\n      (serviceResult) =>\n        serviceResult.trailerPage &&\n        serviceResult.serviceResult.length\n    );'''
+if old in s:
+    s = s.replace(old, new)
+p.write_text(s)
+PY
 
 cat > "$TRAILERS_API_DIR/.env" <<EOF
 PORT=3000
