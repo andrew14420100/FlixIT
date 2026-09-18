@@ -5,6 +5,7 @@ APP_ROOT="${APP_ROOT:-/app}"
 TRAILERS_API_DIR="${THERYSTON_TRAILERS_API_DIR:-$APP_ROOT/trailers-api}"
 DATA_FOLDER="${THERYSTON_TRAILERS_DATA_DIR:-$APP_ROOT/trailers-data}"
 BUN_BIN="${BUN_BIN:-/root/.bun/bin/bun}"
+THERYSTON_PORT="${THERYSTON_PORT:-3011}"
 
 if [ ! -x "$BUN_BIN" ]; then
   echo "Bun non trovato in $BUN_BIN" >&2
@@ -40,7 +41,7 @@ export async function uploadFile(filePath) {
   const destination = path.join(filesDir, key);
   await fs.promises.copyFile(filePath, destination);
 
-  const base = (process.env.BASE_FILES_URL || "http://127.0.0.1:3000/files").replace(/\/$/, "");
+  const base = (process.env.BASE_FILES_URL || "http://127.0.0.1:3011/files").replace(/\/$/, "");
   return `${base}/${encodeURIComponent(key)}`;
 }
 EOF
@@ -49,9 +50,10 @@ EOF
 # discards an otherwise valid trailer when every file lacks that metadata.
 # FLIX-IT verifies resolution/codec itself afterwards, so keep valid trailers
 # even when the audio language tag is absent.
-python3 - <<'PY'
+TRAILERS_API_DIR="$TRAILERS_API_DIR" python3 - <<'PY'
+import os
 from pathlib import Path
-p = Path("/app/trailers-api/src/worker.js")
+p = Path(os.environ["TRAILERS_API_DIR"]) / "src" / "worker.js"
 s = p.read_text()
 old = '''    const servicesResultsWithTrailers = servicesResults.filter(\n      (serviceResult) =>\n        serviceResult.trailerPage &&\n        serviceResult.serviceResult.length &&\n        serviceResult.serviceResult.every((t) => t.langs.length)\n    );'''
 new = '''    const servicesResultsWithTrailers = servicesResults.filter(\n      (serviceResult) =>\n        serviceResult.trailerPage &&\n        serviceResult.serviceResult.length\n    );'''
@@ -61,9 +63,9 @@ p.write_text(s)
 PY
 
 cat > "$TRAILERS_API_DIR/.env" <<EOF
-PORT=3000
+PORT=$THERYSTON_PORT
 DATA_FOLDER=$DATA_FOLDER
-BASE_FILES_URL=http://127.0.0.1:3000/files
+BASE_FILES_URL=http://127.0.0.1:$THERYSTON_PORT/files
 EOF
 
 FFMPEG_BIN="$TRAILERS_API_DIR/node_modules/ffmpeg-static/ffmpeg"
@@ -86,7 +88,7 @@ autorestart=true
 startsecs=2
 stopasgroup=true
 killasgroup=true
-environment=HOME="/root",BUN_INSTALL="/root/.bun",PATH="/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",PORT="3000",DATA_FOLDER="$DATA_FOLDER",BASE_FILES_URL="http://127.0.0.1:3000/files"
+environment=HOME="/root",BUN_INSTALL="/root/.bun",PATH="/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",PORT="$THERYSTON_PORT",DATA_FOLDER="$DATA_FOLDER",BASE_FILES_URL="http://127.0.0.1:$THERYSTON_PORT/files"
 stdout_logfile=/var/log/supervisor/trailers-api.out.log
 stderr_logfile=/var/log/supervisor/trailers-api.err.log
 stdout_logfile_maxbytes=10MB
@@ -104,7 +106,7 @@ sleep 2
 echo "--- trailers-api ---"
 supervisorctl status trailers-api || true
 printf "docs HTTP: "
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/docs || true
+curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:$THERYSTON_PORT/docs" || true
 printf "ffmpeg: "
 ffmpeg -version 2>/dev/null | head -1 || true
 printf "ffprobe: "
