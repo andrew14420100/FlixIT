@@ -4,31 +4,29 @@ import { createPortal } from "react-dom";
 import "src/components/NetflixMiniModalExact.css";
 import "src/components/NetflixMotionOverrides.css";
 
-/**
- * Netflix-style mini-modal motion.
- *
- * Hover intent is intentionally short; trailer metadata can prewarm immediately
- * while the visual expansion still has enough delay to avoid accidental fly-by
- * hovers.  Expansion is centred on the source card.  Only cards touching a
- * viewport edge are clamped, and there is no permanent left/right bias.
- */
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
-const OPEN_DELAY_MS = 260;
+const OPEN_DELAY_MS = 300;
 const OPEN_DURATION_MS = 280;
 const CLOSE_DURATION_MS = 220;
-const OPACITY_OPEN_MS = 50;
-const OPACITY_CLOSE_MS = CLOSE_DURATION_MS * 0.6;
-const VIEWPORT_GUTTER = 8;
+const OPACITY_OPEN_MS = 70;
+const OPACITY_CLOSE_MS = 120;
+const VIEWPORT_GUTTER = 4;
 const EASE = "cubic-bezier(.21,0,.07,1)";
-const TITLE_OVERLAP_PX = 24;
 
 type AnchorData = {
-  titleCardRect: DOMRect;
-  titleCardDocTop: number;
+  cardRect: DOMRect;
   modalWidth: number;
 };
 
+/**
+ * Netflix-style hover intent + expansion.
+ *
+ * Every card expands from its own geometric centre. There is no first-card,
+ * left-edge or permanent right bias. We clamp only the final open modal when it
+ * would actually leave the viewport, and the closed transform is calculated so
+ * the scaled modal lands exactly on the source card.
+ */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
   const closeTimerRef = useRef<any>(null);
@@ -68,88 +66,61 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     clearOpenTimer();
     setIntent(false);
     if (!open || closing) return;
-
     setClosing(true);
     clearCloseTimer();
-    closeTimerRef.current = setTimeout(finishClose, CLOSE_DURATION_MS + 16);
+    closeTimerRef.current = setTimeout(finishClose, CLOSE_DURATION_MS + 20);
   }, [open, closing, clearOpenTimer, clearCloseTimer, finishClose]);
 
-  const openFrom = useCallback(
-    (element: HTMLElement | null) => {
-      if (!element || typeof window === "undefined") return;
+  const openFrom = useCallback((element: HTMLElement | null) => {
+    if (!element || typeof window === "undefined") return;
 
-      clearTimers();
-      setIntent(true);
-      setClosing(false);
+    clearTimers();
+    setIntent(true);
+    setClosing(false);
 
-      openTimerRef.current = setTimeout(() => {
-        if (!element.isConnected) return;
-        const rect = element.getBoundingClientRect();
-        const modalWidth = Math.max(
-          Math.round(rect.width * SCALE_FACTOR),
-          MIN_MODAL_WIDTH
-        );
+    openTimerRef.current = setTimeout(() => {
+      if (!element.isConnected) return;
+      const rect = element.getBoundingClientRect();
+      setPosition({
+        cardRect: rect,
+        modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
+      });
+      setOpen(true);
+    }, OPEN_DELAY_MS);
+  }, [clearTimers]);
 
-        setPosition({
-          titleCardRect: rect,
-          titleCardDocTop: rect.top,
-          modalWidth,
-        });
-        setOpen(true);
-      }, OPEN_DELAY_MS);
-    },
-    [clearTimers]
-  );
+  const onEnter = useCallback((event?: any) => {
+    openFrom((event?.currentTarget || ref.current) as HTMLElement | null);
+  }, [openFrom, ref]);
 
-  const onEnter = useCallback(
-    (event?: any) => {
-      openFrom((event?.currentTarget || ref.current) as HTMLElement | null);
-    },
-    [openFrom, ref]
-  );
+  const onLeave = useCallback((event?: any) => {
+    clearOpenTimer();
+    const related = event?.relatedTarget as Element | null;
+    if (related?.closest?.(".previewModal--container")) return;
+    requestClose();
+  }, [clearOpenTimer, requestClose]);
 
-  const onLeave = useCallback(
-    (event?: any) => {
-      clearOpenTimer();
-      const related = event?.relatedTarget as Element | null;
-      if (
-        related &&
-        typeof related.closest === "function" &&
-        related.closest(".previewModal--container")
-      ) {
-        return;
-      }
-      requestClose();
-    },
-    [clearOpenTimer, requestClose]
-  );
-
-  const onOverlayLeave = useCallback(
-    (event?: any) => {
-      const related = event?.relatedTarget as Node | null;
-      if (related && ref.current?.contains?.(related)) return;
-      requestClose();
-    },
-    [requestClose, ref]
-  );
+  const onOverlayLeave = useCallback((event?: any) => {
+    const related = event?.relatedTarget as Node | null;
+    if (related && ref.current?.contains?.(related)) return;
+    requestClose();
+  }, [requestClose, ref]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
-  // A page scroll owns the gesture; close the preview instead of keeping a
-  // detached portal floating over content that has moved underneath it.
   useEffect(() => {
     if (!open) return;
-    const onScrollGesture = () => {
+    const closeForScroll = () => {
       clearTimers();
       finishClose();
     };
-    window.addEventListener("scroll", onScrollGesture, { passive: true });
-    window.addEventListener("wheel", onScrollGesture, { passive: true });
-    window.addEventListener("touchmove", onScrollGesture, { passive: true });
+    window.addEventListener("scroll", closeForScroll, { passive: true });
+    window.addEventListener("wheel", closeForScroll, { passive: true });
+    window.addEventListener("touchmove", closeForScroll, { passive: true });
     return () => {
-      window.removeEventListener("scroll", onScrollGesture);
-      window.removeEventListener("wheel", onScrollGesture);
-      window.removeEventListener("touchmove", onScrollGesture);
+      window.removeEventListener("scroll", closeForScroll);
+      window.removeEventListener("wheel", closeForScroll);
+      window.removeEventListener("touchmove", closeForScroll);
     };
   }, [open, clearTimers, finishClose]);
 
@@ -186,54 +157,41 @@ export function ExpandOverlay({
 
     setGeometry(null);
     setPhase("measure");
+    let frame1 = 0;
+    let frame2 = 0;
 
-    let f1 = 0;
-    let f2 = 0;
-
-    f1 = requestAnimationFrame(() => {
+    frame1 = requestAnimationFrame(() => {
       const node = modalRef.current;
       if (!node) return;
 
       const modalRect = node.getBoundingClientRect();
-      const card = position.titleCardRect as DOMRect;
-      const horizontalOverflow = (modalRect.width - card.width) / 2;
-      const verticalOverflow = (modalRect.height - card.height) / 2;
+      const card = position.cardRect as DOMRect;
+      const scale = 1 / SCALE_FACTOR;
 
-      const wantedLeft = card.left - horizontalOverflow;
-      const maxLeft = Math.max(
-        VIEWPORT_GUTTER,
-        window.innerWidth - modalRect.width - VIEWPORT_GUTTER
-      );
-      const left = Math.round(
-        Math.min(Math.max(wantedLeft, VIEWPORT_GUTTER), maxLeft)
-      );
+      const desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
+      const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
+      const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - modalRect.width - VIEWPORT_GUTTER);
+      const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - modalRect.height - VIEWPORT_GUTTER);
 
-      const wantedTop = card.top - verticalOverflow - TITLE_OVERLAP_PX;
-      const top = Math.round(Math.max(VIEWPORT_GUTTER, wantedTop));
+      const left = Math.round(Math.min(Math.max(desiredLeft, VIEWPORT_GUTTER), maxLeft));
+      const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
 
-      // At scale(1/SCALE_FACTOR), translate the modal back onto the exact card
-      // centre. This keeps every non-edge card expanding symmetrically instead
-      // of appearing to grow to the right.
-      const cardCenterX = card.left + card.width / 2;
-      const modalCenterX = left + modalRect.width / 2;
-      const resetX = Math.round(cardCenterX - modalCenterX);
-      const resetY = Math.round((modalRect.height / SCALE_FACTOR - card.height) / 2);
+      // After scaling around the modal centre, this is the visible top-left.
+      const scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
+      const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
 
-      setGeometry({
-        top,
-        left,
-        resetX,
-        resetY,
-        transformOrigin: "50% 50%",
-      });
+      // Move that scaled rectangle onto the exact original card rectangle.
+      const resetX = Math.round(card.left - scaledLeft);
+      const resetY = Math.round(card.top - scaledTop);
 
+      setGeometry({ left, top, resetX, resetY });
       setPhase("reset");
-      f2 = requestAnimationFrame(() => setPhase("open"));
+      frame2 = requestAnimationFrame(() => setPhase("open"));
     });
 
     return () => {
-      if (f1) cancelAnimationFrame(f1);
-      if (f2) cancelAnimationFrame(f2);
+      if (frame1) cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
     };
   }, [position]);
 
@@ -243,53 +201,34 @@ export function ExpandOverlay({
 
   if (!position || typeof document === "undefined") return null;
 
+  const card = position.cardRect as DOMRect;
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
-  const top = geometry?.top ?? position.titleCardDocTop;
-  const fallbackWantedLeft =
-    position.titleCardRect.left -
-    (modalWidth - position.titleCardRect.width) / 2;
-  const fallbackMaxLeft = Math.max(
-    VIEWPORT_GUTTER,
-    window.innerWidth - modalWidth - VIEWPORT_GUTTER
+  const fallbackLeft = Math.min(
+    Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
+    Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
   );
-  const left = geometry?.left ?? Math.min(
-    Math.max(fallbackWantedLeft, VIEWPORT_GUTTER),
-    fallbackMaxLeft
-  );
+  const left = geometry?.left ?? fallbackLeft;
+  const top = geometry?.top ?? card.top;
 
-  let transform = "translate3d(0,0,0) scale(1)";
+  let transform = `translate3d(0,0,0) scale(${1 / SCALE_FACTOR})`;
   let opacity = 0;
   let transition = "none";
-  let zIndex = 4;
 
   if (phase === "reset" && geometry) {
     transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
-    opacity = 0;
-  }
-
-  if (phase === "open" && geometry) {
-    transform = "translate3d(0px, 0px, 0) scale(1)";
+  } else if (phase === "open" && geometry) {
+    transform = "translate3d(0,0,0) scale(1)";
     opacity = 1;
-    transition =
-      `transform ${OPEN_DURATION_MS}ms ${EASE}, ` +
-      `opacity ${OPACITY_OPEN_MS}ms linear`;
-    zIndex = 3;
-  }
-
-  if (phase === "close" && geometry) {
+    transition = `transform ${OPEN_DURATION_MS}ms ${EASE}, opacity ${OPACITY_OPEN_MS}ms linear`;
+  } else if (phase === "close" && geometry) {
     transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
     opacity = 0;
-    transition =
-      `transform ${CLOSE_DURATION_MS}ms ${EASE}, ` +
-      `opacity ${OPACITY_CLOSE_MS}ms linear`;
-    zIndex = 4;
+    transition = `transform ${CLOSE_DURATION_MS}ms ${EASE}, opacity ${OPACITY_CLOSE_MS}ms linear`;
   }
 
   const handleOverlayClick = (event: any) => {
     const target = event?.target as HTMLElement | null;
-    if (target?.closest?.("button, a, [role='button'], input, select, textarea")) {
-      return;
-    }
+    if (target?.closest?.("button, a, [role='button'], input, select, textarea")) return;
     onClick?.(event);
   };
 
@@ -309,11 +248,11 @@ export function ExpandOverlay({
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
           width: `${modalWidth}px`,
-          transformOrigin: geometry?.transformOrigin || "50% 50%",
+          transformOrigin: "50% 50%",
           top: `${Math.round(top)}px`,
           left: `${Math.round(left)}px`,
           transform,
-          zIndex,
+          zIndex: 4,
           opacity,
           transition,
           pointerEvents: phase === "measure" ? "none" : "auto",
