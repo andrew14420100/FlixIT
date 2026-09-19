@@ -3,7 +3,8 @@
 Visual source policy:
 1. Netflix artwork from the already-configured authenticated artwork resolver.
 2. Apple/iTunes public storefront artwork (Italy) when Netflix has no suitable asset.
-3. IMDb primary artwork as a final official-source fallback.
+3. Prime Video public-page artwork when a strict title/year match is available.
+4. IMDb primary artwork as a final official-source fallback.
 
 TMDB is used only for title/year/external-id identity. TMDB image URLs and relative
 TMDB image paths are never returned by this module.
@@ -17,11 +18,20 @@ from typing import Any, Callable, Optional
 
 import httpx
 
+from services.trailers.base import confidence_for_identity
 from services.trailers.providers.apple_tv import AppleTVTrailerProvider
-from services.trailers.providers.common import client as provider_client
+from services.trailers.providers.common import (
+    client as provider_client,
+    google_site_search,
+    meta,
+)
+from services.trailers.providers.prime_video import (
+    _hydration as prime_hydration,
+    _page_identity as prime_page_identity,
+)
 
 CACHE_TTL = timedelta(days=7)
-SOURCE_VERSION = "official-artwork-v1"
+SOURCE_VERSION = "official-artwork-v2"
 IMDB_GRAPHQL_URL = "https://api.graphql.imdb.com/"
 IMDB_QUERY = r'''
 query Artwork($id: ID!) {
@@ -75,20 +85,8 @@ def _apple_template(node: Any, *, width: int, height: int) -> Optional[str]:
     out = raw
     for key, value in replacements.items():
         out = out.replace(key, value)
-    # Apple occasionally adds extra numeric placeholders. Use the long edge
-    # rather than leaving an invalid template in the browser.
     out = re.sub(r"\{[^}]+\}", str(max(width, height)), out)
     return _safe_url(out)
-
-
-def _walk(node: Any):
-    if isinstance(node, dict):
-        yield node
-        for value in node.values():
-            yield from _walk(value)
-    elif isinstance(node, list):
-        for value in node:
-            yield from _walk(value)
 
 
 def _logo_from_apple_images(images: Any) -> Optional[str]:
@@ -248,12 +246,62 @@ class OfficialArtworkResolver:
                     "landscape_url": landscape,
                     "poster_url": poster,
                     "logo_url": logo,
-                    # Apple coverArt commonly carries the title treatment inside
-                    # the actual artwork. The UI must not synthesize text over it.
                     "embedded_title_treatment": True,
                 }
         except Exception:
             return {}
+
+    async def _prime(self, identity: dict) -> dict:
+        """Use only public Prime Video page artwork after strict title/year match."""
+        query = f"{identity.get('title') or identity.get('original_title')} {identity.get('year') or ''}".strip()
+        if not query:
+            return {}
+        try:
+            results = await google_site_search(query, "primevideo.com", 5)
+        except Exception:
+            return {}
+        try:
+            async with provider_client() as http:
+                for result in results:
+                    page_url = str(result.get("link") or "").strip()
+                    if not page_url:
+                        continue
+                    try:
+                        page = await http.get(page_url)
+                    except Exception:
+                        continue
+                    if page.status_code != 200:
+                        continue
+                    hydration = prime_hydration(page.text)
+                    matched_title, matched_year = prime_page_identity(page.text, hydration)
+                    confidence = confidence_for_identity(
+                        identity,
+                        matched_title,
+                        matched_year,
+                        identity.get("type"),
+                    )
+                    if confidence < 0.90:
+                        continue
+                    artwork = (
+                        meta(page.text, "og:image")
+                        or meta(page.text, "twitter:image")
+                        or meta(page.text, "image")
+                    )
+                    artwork = _safe_url(artwork)
+                    if not artwork:
+                        continue
+                    return {
+                        "source": "prime_video",
+                        "provider_page": page_url,
+                        "confidence": round(float(confidence), 4),
+                        "poster_url": artwork,
+                        "landscape_url": artwork,
+                        "logo_url": None,
+                        "embedded_title_treatment": True,
+                    }
+        except Exception:
+            return {}
+        return {}
 
     async def _imdb(self, identity: dict) -> dict:
         imdb_id = str((identity.get("external_ids") or {}).get("imdb_id") or "").strip()
@@ -317,19 +365,11 @@ class OfficialArtworkResolver:
             if cached is not None:
                 return cached
 
-        apple = await self._apple(identity)
-        fallback = apple
+        fallback = await self._apple(identity)
         if not fallback or (not fallback.get("poster_url") and not fallback.get("landscape_url")):
-            imdb = await self._imdb(identity)
-            fallback = fallback or imdb
-            if fallback and imdb:
-                fallback = {
-                    **imdb,
-                    **{k: v for k, v in fallback.items() if v is not None},
-                    "poster_url": fallback.get("poster_url") or imdb.get("poster_url"),
-                    "landscape_url": fallback.get("landscape_url") or imdb.get("landscape_url"),
-                    "logo_url": fallback.get("logo_url") or imdb.get("logo_url"),
-                }
+            fallback = await self._prime(identity)
+        if not fallback or (not fallback.get("poster_url") and not fallback.get("landscape_url")):
+            fallback = await self._imdb(identity)
 
         self.cache.update_one(
             {"type": media_type, "tmdbId": tmdb_id},
@@ -377,10 +417,8 @@ class OfficialArtworkResolver:
                 "netflix": netflix,
                 "fallback": fallback,
                 "source": "netflix" if (netflix.get("landscape_url") or netflix.get("poster_url")) else fallback.get("source"),
-                "embedded_title_treatment": bool(
-                    not logo and fallback.get("embedded_title_treatment")
-                ),
-                "policy": "netflix_then_apple_then_imdb_no_tmdb_images",
+                "embedded_title_treatment": bool(not logo and fallback.get("embedded_title_treatment")),
+                "policy": "netflix_then_apple_then_prime_then_imdb_no_tmdb_images",
                 "version": SOURCE_VERSION,
             }
 
