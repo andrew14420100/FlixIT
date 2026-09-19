@@ -102,7 +102,6 @@ export default function NetflixRankedCardWithHover({
     [automaticAssets, deferredAssets]
   );
 
-  // Only explicitly Netflix-labelled fields belong in the Netflix tier.
   const existingNetflixPoster = firstNonTmdbArtwork(
     item?.netflix_ranked_artwork_url,
     item?.netflixRankedArtworkUrl,
@@ -140,16 +139,37 @@ export default function NetflixRankedCardWithHover({
   const rankedResolved = nonTmdbArtwork(rankedArtwork?.artwork?.url);
   const hoverResolved = nonTmdbArtwork(hoverArtwork?.artwork?.url);
 
+  // The shared automatic hook already enforces Netflix -> existing mapped CDN
+  // -> saved non-TMDB. Include its resolved values in the actual card candidates;
+  // previously they were fetched but ignored by this component.
+  const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
+  const automaticBackdrop = firstNonTmdbArtwork(
+    automaticAssets?.netflix_artwork_url,
+    automaticAssets?.backdrop_path,
+    automaticAssets?.titled_backdrop_path
+  );
+
   const posterCandidates = useMemo(
     () => unique([
       rankedResolved,
+      automaticPoster,
       existingNetflixPoster,
       mappedPoster,
       legacyPoster,
+      automaticBackdrop,
       mappedBackdrop,
       legacyLandscape,
     ]),
-    [rankedResolved, existingNetflixPoster, mappedPoster, legacyPoster, mappedBackdrop, legacyLandscape]
+    [
+      rankedResolved,
+      automaticPoster,
+      existingNetflixPoster,
+      mappedPoster,
+      legacyPoster,
+      automaticBackdrop,
+      mappedBackdrop,
+      legacyLandscape,
+    ]
   );
 
   const [posterIndex, setPosterIndex] = useState(0);
@@ -197,16 +217,16 @@ export default function NetflixRankedCardWithHover({
   const hoverLogoUrl = firstNonTmdbArtwork(
     hoverArtwork?.logo?.url,
     rankedArtwork?.logo?.url,
+    automaticAssets?.netflix_logo_url,
+    automaticAssets?.logo_path,
     item?.logo_path,
     item?.logo,
     item?.title_logo_path
   );
 
-  // Horizontal hover priority: Netflix -> historical mapped CDN -> saved
-  // non-TMDB artwork. Ranked tile priority: Netflix portrait -> mapped poster.
   const hoverBackdrop =
-    hoverResolved || mappedBackdrop || legacyLandscape || existingNetflixPoster || rankedResolved || mappedPoster || legacyPoster;
-  const hoverPoster = rankedResolved || existingNetflixPoster || mappedPoster || legacyPoster || hoverBackdrop;
+    hoverResolved || automaticBackdrop || mappedBackdrop || legacyLandscape || existingNetflixPoster || rankedResolved || automaticPoster || mappedPoster || legacyPoster;
+  const hoverPoster = rankedResolved || automaticPoster || existingNetflixPoster || mappedPoster || legacyPoster || hoverBackdrop;
 
   return (
     <>
