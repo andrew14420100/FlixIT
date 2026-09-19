@@ -1,14 +1,53 @@
 "use strict";
 
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 
 const host = process.env.PROVIDER_HOST || "127.0.0.1";
 const port = Number.parseInt(process.env.PROVIDER_PORT || "9000", 10);
+const providerTimeoutMs = Math.max(
+  1000,
+  Number.parseInt(process.env.OMNI_PROVIDER_TIMEOUT_MS || "10000", 10) || 10000
+);
 
-// Sintel (2010), Blender Foundation open movie.
-// IMDb: tt1727587 | TMDB: 45745
-// The default HLS master is a public adaptive Sintel test asset that exposes
-// UHD/4K renditions for player quality-selection tests.
+const providersDir = path.join(__dirname, "providers");
+const loadedProviders = [];
+const skippedProviders = [];
+
+function loadProviders() {
+  loadedProviders.length = 0;
+  skippedProviders.length = 0;
+
+  fs.mkdirSync(providersDir, { recursive: true });
+  const files = fs.readdirSync(providersDir).filter((file) => file.endsWith(".js"));
+
+  for (const file of files) {
+    const fullPath = path.join(providersDir, file);
+    try {
+      delete require.cache[require.resolve(fullPath)];
+      const mod = require(fullPath);
+      if (mod && typeof mod.getStreams === "function") {
+        loadedProviders.push({
+          name: String(mod.name || path.basename(file, ".js")),
+          file,
+          getStreams: mod.getStreams.bind(mod),
+        });
+        console.log(`[flixit-provider] loaded provider: ${mod.name || file}`);
+      } else {
+        skippedProviders.push({ file, reason: "missing getStreams(type, id) export" });
+        console.warn(`[flixit-provider] skipped ${file}: missing getStreams(type, id)`);
+      }
+    } catch (error) {
+      skippedProviders.push({ file, reason: error?.message || String(error) });
+      console.error(`[flixit-provider] failed to load ${file}: ${error?.message || error}`);
+    }
+  }
+}
+
+loadProviders();
+
+// Public/open test movie retained for end-to-end validation.
 const testId = String(process.env.PROVIDER_TEST_ID || "tt1727587").trim();
 const testTitle = String(process.env.PROVIDER_TEST_TITLE || "Sintel (2010) - 4K test movie").trim();
 const testUrl = String(
@@ -17,10 +56,10 @@ const testUrl = String(
 ).trim();
 
 const manifest = {
-  id: "org.flixit.local-test-provider",
-  version: "1.1.0",
-  name: "FlixIT Local Test Provider",
-  description: "Authorized local Stremio-compatible provider used only for end-to-end movie and 4K testing",
+  id: "org.flixit.local-provider-manager",
+  version: "2.0.0",
+  name: "FlixIT Local Provider Manager",
+  description: "Generic local Stremio-compatible provider manager for authorized HTTP providers",
   resources: ["stream"],
   types: ["movie", "series"],
   catalogs: []
@@ -36,49 +75,98 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
-function streamResponse(path) {
-  const match = path.match(/^\/stream\/(movie|series)\/([^/]+)\.json$/);
+function normalizeStreams(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((stream) => {
+    if (!stream || typeof stream !== "object") return false;
+    const url = String(stream.url || "").trim();
+    return /^https?:\/\//i.test(url);
+  });
+}
+
+async function withTimeout(promise, ms) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function fetchLocalProviderStreams(type, id) {
+  const jobs = loadedProviders.map(async (provider) => {
+    try {
+      const result = await withTimeout(provider.getStreams(type, id), providerTimeoutMs);
+      return normalizeStreams(result);
+    } catch (error) {
+      console.error(`[flixit-provider] ${provider.name} failed: ${error?.message || error}`);
+      return [];
+    }
+  });
+
+  const settled = await Promise.allSettled(jobs);
+  return settled.flatMap((entry) =>
+    entry.status === "fulfilled" && Array.isArray(entry.value) ? entry.value : []
+  );
+}
+
+async function streamResponse(requestPath) {
+  const match = requestPath.match(/^\/stream\/(movie|series)\/([^/]+)\.json$/);
   if (!match) return null;
 
   const [, type, id] = match;
+  const streams = await fetchLocalProviderStreams(type, id);
+
+  if (streams.length > 0) return { streams };
 
   if (type === "movie" && id === testId && testUrl) {
     return {
       streams: [
         {
-          name: "FlixIT Local Provider",
+          name: "FlixIT Local Test",
           title: testTitle,
-          url: testUrl
-        }
-      ]
+          url: testUrl,
+        },
+      ],
     };
   }
 
   return { streams: [] };
 }
 
-const server = http.createServer((req, res) => {
-  const path = (req.url || "/").split("?", 1)[0];
+const server = http.createServer(async (req, res) => {
+  const requestPath = (req.url || "/").split("?", 1)[0];
 
-  if (req.method === "GET" && path === "/manifest.json") {
+  if (req.method === "GET" && requestPath === "/manifest.json") {
     return sendJson(res, 200, manifest);
   }
 
-  if (req.method === "GET" && path === "/health") {
+  if (req.method === "GET" && requestPath === "/health") {
     return sendJson(res, 200, {
       ok: true,
       service: manifest.id,
+      providerManager: {
+        directory: providersDir,
+        loaded: loadedProviders.map((p) => ({ name: p.name, file: p.file })),
+        skipped: skippedProviders,
+        timeoutMs: providerTimeoutMs,
+      },
       testMovie: {
         title: testTitle,
         imdbId: testId,
         tmdbId: 45745,
-        url: testUrl
-      }
+        url: testUrl,
+      },
     });
   }
 
   if (req.method === "GET") {
-    const payload = streamResponse(path);
+    const payload = await streamResponse(requestPath);
     if (payload) return sendJson(res, 200, payload);
   }
 
@@ -86,8 +174,9 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`[flixit-provider] listening on http://${host}:${port}`);
-  console.log(`[flixit-provider] 4K test movie ${testTitle} (${testId})`);
+  console.log(`[flixit-provider] manager listening on http://${host}:${port}`);
+  console.log(`[flixit-provider] loaded providers: ${loadedProviders.length}`);
+  console.log(`[flixit-provider] skipped providers: ${skippedProviders.length}`);
 });
 
 function shutdown(signal) {
