@@ -11,9 +11,13 @@ import {
   uniqueItems,
 } from "src/store/homeDedupe";
 import { writeHomePreferences } from "src/store/homePersonalization";
+import {
+  romeDailyBucket,
+  cacheBelongsToCurrentRomeWindow,
+  msUntilNextRomeRefresh,
+} from "src/utils/dailyRefresh";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const CACHE_PREFIX = "flix-home-smart-v7";
+const CACHE_PREFIX = "flix-home-smart-v8";
 const WATCH_AGAIN_DAYS = 28;
 const RECENT_DAYS = 14;
 const MAX_HISTORY = 12;
@@ -120,25 +124,21 @@ function readCache(key) {
   }
 }
 
-function readFreshCache(key) {
-  const value = readCache(key);
-  if (!value) return null;
-  if (Date.now() - Number(value.savedAt || 0) >= DAY_MS) return null;
-  return value;
-}
-
 function writeCache(key, data) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
+    localStorage.setItem(
+      key,
+      JSON.stringify({ savedAt: Date.now(), bucket: romeDailyBucket(), data })
+    );
   } catch {}
 }
 
 async function fetchJson(url, fallback = null) {
   try {
     const separator = url.includes("?") ? "&" : "?";
-    const day = Math.floor(Date.now() / DAY_MS);
-    const response = await fetch(`${url}${separator}_flix_day=${day}`, {
+    const bucket = romeDailyBucket();
+    const response = await fetch(`${url}${separator}_flix_window=${encodeURIComponent(bucket)}`, {
       cache: "no-store",
       headers: { "Cache-Control": "no-cache" },
     });
@@ -202,7 +202,10 @@ export default function HomeSmartSections() {
   const [loadDetails] = useLazyGetAppendedVideosQuery();
   const requestRef = useRef(0);
   const key = cacheKey();
-  const initial = useMemo(() => readFreshCache(key)?.data || {}, [key]);
+  // Paint the last good personalization snapshot immediately even after 06:00;
+  // a stale snapshot is refreshed silently instead of blanking the Home.
+  const initialCache = useMemo(() => readCache(key), [key]);
+  const initial = initialCache?.data || {};
 
   const [becauseItems, setBecauseItems] = useState(initial.becauseItems || []);
   const [becauseTitle, setBecauseTitle] = useState(initial.becauseTitle || "");
@@ -265,10 +268,10 @@ export default function HomeSmartSections() {
   }, []);
 
   const refresh = useCallback(
-    async () => {
-      const cached = readFreshCache(key);
-      if (cached) {
-        applyState(cached.data);
+    async (force = false) => {
+      const cached = readCache(key);
+      if (cached?.data) applyState(cached.data);
+      if (!force && cached && cacheBelongsToCurrentRomeWindow(cached.savedAt)) {
         return;
       }
 
@@ -396,8 +399,6 @@ export default function HomeSmartSections() {
             ? `${toSlug(favoriteGenre.mediaType) === "tv" ? "Serie" : "Film"} ${favoriteGenre.name}`
             : "";
 
-          // "Novità per te" combines fresh catalogue titles with the user's
-          // strongest taste pool, then ranks freshness + fame + genre affinity.
           next.newForYouItems = rankNewForYou(
             [...freshPool, ...pool],
             favoriteGenreIds
@@ -412,10 +413,16 @@ export default function HomeSmartSections() {
     [key, recentHistory, loadDetails, applyState]
   );
 
-  // Daily snapshots change only after the next page load/reload.
   useEffect(() => {
-    refresh();
+    refresh(false);
   }, [historyKey, refresh]);
+
+  // Keep a long-lived tab aligned with the same 06:00 Europe/Rome window as
+  // catalogue, artwork and trailer maintenance.
+  useEffect(() => {
+    const timer = window.setTimeout(() => refresh(true), msUntilNextRomeRefresh() + 2000);
+    return () => window.clearTimeout(timer);
+  }, [refresh]);
 
   const visibleBecause = useMemo(() => {
     const taken = claimedAbove(rows, -45, "smart-because-watched");
