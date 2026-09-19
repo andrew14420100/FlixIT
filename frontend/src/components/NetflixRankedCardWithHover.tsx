@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
-import useAutomaticMediaAssets, { tmdbImageUrl } from "src/hooks/useAutomaticMediaAssets";
+import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
 import useNetflixArtwork from "src/hooks/useNetflixArtwork";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
@@ -27,6 +27,25 @@ function firstArtwork(...values: any[]) {
     if (!value) continue;
     if (typeof value === "string") return value;
     if (typeof value?.url === "string") return value.url;
+  }
+  return null;
+}
+
+function nonTmdbArtwork(value: any) {
+  const raw = firstArtwork(value);
+  if (!raw) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+  if (text.startsWith("data:") || text.startsWith("blob:")) return text;
+  if (!/^https?:\/\//i.test(text)) return null;
+  if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return null;
+  return text;
+}
+
+function firstNonTmdbArtwork(...values: any[]) {
+  for (const value of values) {
+    const resolved = nonTmdbArtwork(value);
+    if (resolved) return resolved;
   }
   return null;
 }
@@ -55,11 +74,19 @@ export default function NetflixRankedCardWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  const netflixArtwork = useNetflixArtwork(
+  // Top 10 uses the portrait Netflix treatment for the ranked tile and a
+  // separate contextual/home treatment for the expanded hover card.
+  const rankedArtwork = useNetflixArtwork(
     { ...item, id: normalizedId },
     mType,
     "top10",
     true
+  );
+  const hoverArtwork = useNetflixArtwork(
+    { ...item, id: normalizedId },
+    mType,
+    "home",
+    intent || open
   );
 
   const automaticAssets = useAutomaticMediaAssets(
@@ -77,7 +104,7 @@ export default function NetflixRankedCardWithHover({
     [automaticAssets, deferredAssets]
   );
 
-  const existingNetflixPoster = firstArtwork(
+  const existingNetflixPoster = firstNonTmdbArtwork(
     item?.netflix_ranked_artwork_url,
     item?.netflixRankedArtworkUrl,
     item?.netflix_artwork_url,
@@ -88,43 +115,46 @@ export default function NetflixRankedCardWithHover({
     item?.image
   );
 
-  const legacyPoster = firstArtwork(
+  const legacyPoster = firstNonTmdbArtwork(
     item?.poster_path,
     item?.poster,
     item?.cover_path,
     item?.cover
   );
-  const legacyLandscape = firstArtwork(
+  const legacyLandscape = firstNonTmdbArtwork(
     item?.backdrop_path,
     item?.titled_backdrop_path,
-    item?.titledBackdropPath
+    item?.titledBackdropPath,
+    item?.image_url,
+    item?.thumbnail_url
   );
 
   const mappedPoster = normalizedId
     ? getCDNImageUrl(Number(normalizedId), "poster") || getCDNImageUrl(Number(normalizedId), "backdrop")
     : null;
-  const resolvedArtwork = netflixArtwork?.artwork?.url || null;
+  const mappedBackdrop = normalizedId
+    ? getCDNImageUrl(Number(normalizedId), "backdrop") || getCDNImageUrl(Number(normalizedId), "poster")
+    : null;
+
+  const rankedResolved = nonTmdbArtwork(rankedArtwork?.artwork?.url);
+  const hoverResolved = nonTmdbArtwork(hoverArtwork?.artwork?.url);
 
   const posterCandidates = useMemo(
     () => unique([
-      resolvedArtwork,
-      existingNetflixPoster,
-      mappedPoster,
-      tmdbImageUrl(legacyPoster, "original"),
-      tmdbImageUrl(automaticAssets?.poster_path, "original"),
-      tmdbImageUrl(legacyLandscape, "original"),
-      tmdbImageUrl(automaticAssets?.backdrop_path, "original"),
-      tmdbImageUrl(automaticAssets?.titled_backdrop_path, "original"),
-    ]),
-    [
-      resolvedArtwork,
+      rankedResolved,
       existingNetflixPoster,
       mappedPoster,
       legacyPoster,
+      mappedBackdrop,
       legacyLandscape,
-      automaticAssets?.poster_path,
-      automaticAssets?.backdrop_path,
-      automaticAssets?.titled_backdrop_path,
+    ]),
+    [
+      rankedResolved,
+      existingNetflixPoster,
+      mappedPoster,
+      legacyPoster,
+      mappedBackdrop,
+      legacyLandscape,
     ]
   );
 
@@ -170,9 +200,17 @@ export default function NetflixRankedCardWithHover({
        assets?.preview_video_url)
     : null;
 
-  const hoverLogoUrl =
-    netflixArtwork?.logo?.url ||
-    tmdbImageUrl(automaticAssets?.logo_path || assets?.logo_path || item?.logo_path, "original");
+  const hoverLogoUrl = firstNonTmdbArtwork(
+    hoverArtwork?.logo?.url,
+    rankedArtwork?.logo?.url,
+    item?.logo_path,
+    item?.logo,
+    item?.title_logo_path
+  );
+
+  const hoverBackdrop =
+    hoverResolved || legacyLandscape || mappedBackdrop || existingNetflixPoster || rankedResolved || mappedPoster || legacyPoster;
+  const hoverPoster = rankedResolved || existingNetflixPoster || mappedPoster || legacyPoster || hoverBackdrop;
 
   return (
     <>
@@ -225,36 +263,31 @@ export default function NetflixRankedCardWithHover({
               ...assets,
               id: normalizedId,
               preview_video_url: "",
-              netflix_ranked_artwork_url:
-                resolvedArtwork || existingNetflixPoster || mappedPoster || undefined,
-              netflix_artwork_url:
-                resolvedArtwork || existingNetflixPoster || mappedPoster || undefined,
+              netflix_ranked_artwork_url: hoverPoster || undefined,
+              netflix_artwork_url: hoverBackdrop || undefined,
               netflixArtworkUrl: undefined,
               netflix_cover_url: undefined,
               contextualArtwork: undefined,
               artwork: undefined,
               image: undefined,
-              backdrop_path:
-                resolvedArtwork ||
-                existingNetflixPoster ||
-                mappedPoster ||
-                automaticAssets?.backdrop_path ||
-                automaticAssets?.titled_backdrop_path ||
-                legacyLandscape ||
-                legacyPoster,
-              titled_backdrop_path:
-                automaticAssets?.titled_backdrop_path || item?.titled_backdrop_path,
-              poster_path:
-                automaticAssets?.poster_path || legacyPoster || legacyLandscape,
-              logo_path:
-                netflixArtwork?.logo?.url || automaticAssets?.logo_path || item?.logo_path,
+              image_url: undefined,
+              thumbnail_url: undefined,
+              backdrop_path: hoverBackdrop || null,
+              titled_backdrop_path: null,
+              cover_path: null,
+              cover: null,
+              poster_path: hoverPoster || null,
+              poster: null,
+              logo_path: hoverLogoUrl || null,
+              logo: null,
+              title_logo_path: null,
             }}
             mediaType={mType}
             onPlay={goPlay}
             onDetail={goDetail}
             watch={watch}
           />
-          <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} />
+          <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} onOpen={goDetail} />
         </ExpandOverlay>
       ) : null}
     </>
