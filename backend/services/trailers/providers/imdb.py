@@ -4,7 +4,12 @@ import asyncio
 import json
 import re
 
-from ..base import TrailerCandidate, normalize_title
+from ..base import (
+    MAX_TRAILER_HEIGHT,
+    MIN_TRAILER_HEIGHT,
+    TrailerCandidate,
+    normalize_title,
+)
 from ..manifest import _find_media_binary, inspect_hls
 from .common import USER_AGENT, client
 
@@ -53,7 +58,7 @@ def _trailer_type(title: str, content_type: str = "") -> str:
 
 
 def _best_probe_row(node: dict) -> dict | None:
-    """Select one native MP4 rendition per IMDb video before probing."""
+    """Select the highest labelled native MP4 rendition up to 2160p/4K."""
     rows = []
     unknown = []
     for raw in node.get("playbackURLs") or []:
@@ -67,7 +72,7 @@ def _best_probe_row(node: dict) -> dict | None:
         item = {"url": url, "reported_height": height}
         if height is None:
             unknown.append(item)
-        elif height >= 1080:
+        elif MIN_TRAILER_HEIGHT <= height <= MAX_TRAILER_HEIGHT:
             rows.append(item)
 
     if rows:
@@ -80,7 +85,7 @@ def _hls_row(node: dict) -> dict | None:
     """Return IMDb's AUTO HLS master playlist when present.
 
     IMDb exposes the same trailer as progressive MP4 rungs and as an AUTO
-    master playlist.  The manifest is a better quality oracle than old ffprobe
+    master playlist. The manifest is a better quality oracle than old ffprobe
     builds because it explicitly declares native RESOLUTION/BANDWIDTH/CODECS.
     """
     for raw in node.get("playbackURLs") or []:
@@ -192,11 +197,10 @@ async def _probe_imdb_mp4(url: str, timeout: float = 12.0) -> dict | None:
 class IMDbTrailerProvider:
     """Resolve IMDb-hosted trailers directly from IMDb GraphQL.
 
-    TMDB already supplies an IMDb id, so this provider needs no search service.
-    IMDb's AUTO HLS master is used to verify the native resolution/bitrate/codec;
-    when a matching 1080p progressive MP4 exists, that MP4 is preferred for
-    browser playback.  ffprobe remains only as a fallback for titles without a
-    usable HLS master.
+    TMDB supplies only the IMDb identity used for matching; it is not an image
+    source here. IMDb's AUTO HLS master is used to verify native resolution,
+    bitrate and codec. The best rendition is selected from 720p up through
+    2160p/4K; a lower rung remains valid when 4K/2K is not available.
     """
 
     name = "imdb"
@@ -243,9 +247,9 @@ class IMDbTrailerProvider:
                 mp4_row = _best_probe_row(node)
                 hls = _hls_row(node)
 
-                # Preferred verification path: inspect the signed HLS master via
-                # httpx. This avoids old ffprobe TLS/CDN limitations while still
-                # proving native resolution from the provider's own manifest.
+                # Inspect every HLS rendition, but only promote native levels in
+                # the configured 720p..2160p window. This prevents an 8K master
+                # rung from hiding an otherwise valid 4K/2K/1080p alternative.
                 if hls:
                     try:
                         hls_candidates = await inspect_hls(
@@ -264,9 +268,15 @@ class IMDbTrailerProvider:
                     except Exception:
                         hls_candidates = []
 
-                    verified = [c for c in hls_candidates if int(c.height or 0) >= 1080]
+                    verified = [
+                        c for c in hls_candidates
+                        if MIN_TRAILER_HEIGHT <= int(c.height or 0) <= MAX_TRAILER_HEIGHT
+                    ]
                     if verified:
-                        best = max(verified, key=lambda c: (int(c.height or 0), int(c.bitrate or 0)))
+                        best = max(
+                            verified,
+                            key=lambda c: (int(c.height or 0), int(c.bitrate or 0)),
+                        )
                         best.media_type = identity.get("type")
                         best.title = title
                         best.audio_language = best.audio_language or "en"
@@ -277,8 +287,8 @@ class IMDbTrailerProvider:
                             "hls_manifest": hls["url"],
                         }
 
-                        # Prefer the progressive MP4 for playback when its IMDb
-                        # label matches the manifest-verified native height.
+                        # Prefer progressive MP4 only when it is the exact same
+                        # native height as the best verified HLS rendition.
                         if mp4_row and int(mp4_row.get("reported_height") or 0) == int(best.height or 0):
                             best.trailer_url = mp4_row["url"]
                             best.manifest_url = None
@@ -287,13 +297,14 @@ class IMDbTrailerProvider:
                             best.metadata["reported_height"] = mp4_row.get("reported_height")
                         return [best]
 
-                # Fallback for uncommon IMDb entries without a usable AUTO HLS
-                # master. Only a real ffprobe result can promote the MP4.
+                # Fallback for uncommon IMDb entries without a usable AUTO HLS.
+                # Probe the highest labelled MP4 in the same 720p..2160p window.
                 if not mp4_row:
                     return []
                 async with probe_sem:
                     probed = await _probe_imdb_mp4(mp4_row["url"], timeout=12.0)
-                if not probed or int(probed.get("height") or 0) < 1080:
+                height = int((probed or {}).get("height") or 0)
+                if not probed or not (MIN_TRAILER_HEIGHT <= height <= MAX_TRAILER_HEIGHT):
                     return []
 
                 return [
