@@ -60,7 +60,6 @@ export default function NetflixRankedCardWithHover({
   const ref = useRef<HTMLDivElement>(null);
   const [nearViewport, setNearViewport] = useState(false);
   const [posterIndex, setPosterIndex] = useState(0);
-  const [logoFailed, setLogoFailed] = useState(false);
 
   const normalizedId = item?.id || item?.tmdbId || item?.tmdb_id;
   const mType = mediaType ||
@@ -80,7 +79,7 @@ export default function NetflixRankedCardWithHover({
           observer.disconnect();
         }
       },
-      { rootMargin: "280px 480px" }
+      { rootMargin: "220px 360px" }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -104,7 +103,7 @@ export default function NetflixRankedCardWithHover({
   const deferredAssets = useDeferredMediaAssets(
     { ...item, id: normalizedId },
     mType,
-    nearViewport || intent || open
+    intent || open
   );
   const assets = useMemo(
     () => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }),
@@ -112,10 +111,10 @@ export default function NetflixRankedCardWithHover({
   );
 
   const mappedPoster = normalizedId
-    ? getCDNImageUrl(Number(normalizedId), "poster") || getCDNImageUrl(Number(normalizedId), "backdrop")
+    ? getCDNImageUrl(Number(normalizedId), "poster")
     : null;
   const mappedBackdrop = normalizedId
-    ? getCDNImageUrl(Number(normalizedId), "backdrop") || getCDNImageUrl(Number(normalizedId), "poster")
+    ? getCDNImageUrl(Number(normalizedId), "backdrop")
     : null;
 
   const legacyPoster = firstNonTmdbArtwork(
@@ -128,24 +127,22 @@ export default function NetflixRankedCardWithHover({
     item?.cover_path,
     item?.cover
   );
-  const legacyLandscape = firstNonTmdbArtwork(
-    item?.netflix_artwork_url,
-    item?.netflixArtworkUrl,
-    item?.netflix_cover_url,
-    item?.contextualArtwork?.artwork,
-    item?.backdrop_path,
-    item?.titled_backdrop_path,
-    item?.titledBackdropPath,
-    item?.artwork,
-    item?.image,
-    item?.image_url,
-    item?.thumbnail_url
+  const legacyPosterEmbedded = !!(
+    item?.poster_embedded_title_treatment ||
+    item?.has_embedded_poster_title_treatment
   );
+  const safeLegacyPoster = legacyPosterEmbedded ? legacyPoster : null;
 
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
   const automaticBackdrop = firstNonTmdbArtwork(
     automaticAssets?.backdrop_path,
     automaticAssets?.titled_backdrop_path
+  );
+  const hoverBackdrop = firstNonTmdbArtwork(
+    automaticAssets?.hero_backdrop_path,
+    automaticAssets?.detail_backdrop_path,
+    automaticBackdrop,
+    mappedBackdrop
   );
   const logoUrl = firstNonTmdbArtwork(
     automaticAssets?.logo_path,
@@ -159,18 +156,13 @@ export default function NetflixRankedCardWithHover({
     () => unique([
       automaticPoster,
       mappedPoster,
-      legacyPoster,
-      automaticBackdrop,
-      mappedBackdrop,
-      legacyLandscape,
+      safeLegacyPoster,
     ]),
-    [automaticPoster, mappedPoster, legacyPoster, automaticBackdrop, mappedBackdrop, legacyLandscape]
+    [automaticPoster, mappedPoster, safeLegacyPoster]
   );
 
   useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
-  useEffect(() => setLogoFailed(false), [logoUrl]);
   const posterUrl = posterCandidates[posterIndex] || "";
-  const posterEmbedded = !!automaticAssets?.poster_embedded_title_treatment;
 
   const title = automaticAssets?.title || item?.title || item?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${normalizedId}`;
@@ -210,8 +202,24 @@ export default function NetflixRankedCardWithHover({
        assets?.preview_video_url)
     : null;
 
-  const hoverBackdrop = automaticBackdrop || mappedBackdrop || legacyLandscape || automaticPoster || mappedPoster || legacyPoster;
-  const hoverPoster = automaticPoster || mappedPoster || legacyPoster || hoverBackdrop;
+  useEffect(() => {
+    if (!intent || open || !trailerUrl || !/\.m3u8(?:$|\?)/i.test(String(trailerUrl))) return;
+    const controller = new AbortController();
+    fetch(String(trailerUrl), {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*" },
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [intent, open, trailerUrl]);
+
+  const staticReady = !!(
+    automaticAssets?.top10_ready ||
+    mappedPoster ||
+    safeLegacyPoster
+  );
+
+  if (!staticReady || !posterUrl) return null;
 
   return (
     <>
@@ -233,56 +241,15 @@ export default function NetflixRankedCardWithHover({
             <NetflixTop10RankSvg rank={rank} className="netflix-ranked-card-rank-svg" opacity={0.5} />
           </div>
           <div className="netflix-ranked-card-poster-wrap" style={{ position: "absolute", overflow: "hidden" }}>
-            {posterUrl ? (
-              <img
-                src={posterUrl}
-                alt=""
-                draggable={false}
-                loading="lazy"
-                decoding="async"
-                onError={() => setPosterIndex((index) => index + 1)}
-                className="netflix-ranked-card-poster"
-              />
-            ) : (
-              <div className="netflix-ranked-card-placeholder" aria-hidden="true" />
-            )}
-
-            {/* Top 10 must still look like a finished Netflix poster. If the
-                provider poster already includes its title treatment leave it
-                untouched; otherwise compose the real transparent logo. */}
-            {posterUrl && logoUrl && !posterEmbedded && !logoFailed ? (
-              <div
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  left: "8%",
-                  right: "8%",
-                  bottom: "7%",
-                  height: "27%",
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "flex-end",
-                  pointerEvents: "none",
-                  zIndex: 3,
-                }}
-              >
-                <img
-                  src={logoUrl}
-                  alt=""
-                  draggable={false}
-                  decoding="async"
-                  onError={() => setLogoFailed(true)}
-                  style={{
-                    maxWidth: "84%",
-                    maxHeight: "100%",
-                    width: "auto",
-                    height: "auto",
-                    objectFit: "contain",
-                    filter: "drop-shadow(0 2px 5px rgba(0,0,0,.82))",
-                  }}
-                />
-              </div>
-            ) : null}
+            <img
+              src={posterUrl}
+              alt=""
+              draggable={false}
+              loading="lazy"
+              decoding="async"
+              onError={() => setPosterIndex((index) => index + 1)}
+              className="netflix-ranked-card-poster"
+            />
           </div>
         </a>
       </div>
@@ -301,7 +268,7 @@ export default function NetflixRankedCardWithHover({
               ...assets,
               id: normalizedId,
               preview_video_url: "",
-              netflix_ranked_artwork_url: hoverPoster || undefined,
+              netflix_ranked_artwork_url: automaticPoster || mappedPoster || undefined,
               netflix_artwork_url: hoverBackdrop || undefined,
               netflixArtworkUrl: undefined,
               netflix_cover_url: undefined,
@@ -314,7 +281,7 @@ export default function NetflixRankedCardWithHover({
               titled_backdrop_path: null,
               cover_path: null,
               cover: null,
-              poster_path: hoverPoster || null,
+              poster_path: automaticPoster || mappedPoster || null,
               poster: null,
               logo_path: logoUrl || null,
               logo: null,
