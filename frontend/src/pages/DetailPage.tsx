@@ -1,905 +1,652 @@
 // @ts-nocheck
-import { useEffect, useState, useCallback, useRef, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import Box from "@mui/material/Box";
-import Container from "@mui/material/Container";
-import Grid from "@mui/material/Grid";
+import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
+import FormControl from "@mui/material/FormControl";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import IconButton from "@mui/material/IconButton";
-import Chip from "@mui/material/Chip";
-import Select from "@mui/material/Select";
-import MenuItem from "@mui/material/MenuItem";
-import FormControl from "@mui/material/FormControl";
-import CircularProgress from "@mui/material/CircularProgress";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import AddIcon from "@mui/icons-material/Add";
 import CheckIcon from "@mui/icons-material/Check";
-import StarIcon from "@mui/icons-material/Star";
-import StarBorderIcon from "@mui/icons-material/StarBorder";
-import VolumeUpIcon from "@mui/icons-material/VolumeUp";
-import VolumeOffIcon from "@mui/icons-material/VolumeOff";
-import CalendarTodayIcon from "@mui/icons-material/CalendarToday";
-import AccessTimeIcon from "@mui/icons-material/AccessTime";
-import DownloadIcon from "@mui/icons-material/Download";
-import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
-import MovieIcon from "@mui/icons-material/Movie";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
-import EventIcon from "@mui/icons-material/Event";
-import Player from "video.js/dist/types/player";
+import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 
 import {
   useLazyGetAppendedVideosQuery,
-  useGetSimilarVideosQuery,
   useLazyGetTVSeasonDetailsQuery,
-  useLazyGetAllVideosQuery,
+  useLazyGetVideosByMediaTypeAndGenreIdQuery,
 } from "src/store/slices/discover";
-import { useGetConfigurationQuery } from "src/store/slices/configuration";
 import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useAvailableItems } from "src/hooks/useAvailability";
-import MaxLineTypography from "src/components/MaxLineTypography";
-import NetflixIconButton from "src/components/NetflixIconButton";
-import AgeLimitChip from "src/components/AgeLimitChip";
-import QualityChip from "src/components/QualityChip";
-import TrailerPlayer from "src/components/TrailerPlayer";
-import CleanTrailer from "src/components/CleanTrailer";
-import { formatMinuteToReadable, getRandomNumber } from "src/utils/common";
-import { getMediaImageUrl } from "src/hooks/useCDNImage";
 import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
 import useResolvedTrailer from "src/hooks/useResolvedTrailer";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
+import { getMediaImageUrl } from "src/hooks/useCDNImage";
+import TrailerPlayer from "src/components/TrailerPlayer";
+import TrailerAudioButton from "src/components/TrailerAudioButton";
+import VideoItemWithHover from "src/components/VideoItemWithHover";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
-
-const getUserId = () => {
-  let userId = localStorage.getItem("netflix_user_id");
-  if (!userId) {
-    userId = `user_${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem("netflix_user_id", userId);
-  }
-  return userId;
-};
+const HERO_TRAILER_DELAY = 4000;
+const STREAM_PROFILE_TTL = 2 * 60 * 60 * 1000;
 
 export async function loader() {
   return null;
 }
 
-const tabConfig = {
-  movie: [
-    { id: "overview", label: "PANORAMICA" },
-    { id: "details", label: "DETTAGLI" },
-    { id: "trailer", label: "TRAILER" },
-    { id: "download", label: "SCARICA" },
-  ],
-  tv: [
-    { id: "overview", label: "PANORAMICA" },
-    { id: "episodes", label: "EPISODI" },
-    { id: "details", label: "DETTAGLI" },
-    { id: "trailer", label: "TRAILER" },
-  ],
-};
+function getUserId() {
+  let userId = localStorage.getItem("netflix_user_id");
+  if (!userId) {
+    userId = `user_${Math.random().toString(36).slice(2, 11)}`;
+    localStorage.setItem("netflix_user_id", userId);
+  }
+  return userId;
+}
+
+function firstRemote(...values: any[]) {
+  for (const value of values) {
+    const raw = typeof value === "string" ? value : value?.url;
+    if (!raw) continue;
+    const text = String(raw).trim();
+    if (!text) continue;
+    if (text.startsWith("data:") || text.startsWith("blob:")) return text;
+    if (!/^https?:\/\//i.test(text)) continue;
+    if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) continue;
+    return text;
+  }
+  return null;
+}
+
+function yearFrom(detail: any) {
+  const raw = detail?.release_date || detail?.first_air_date || "";
+  return raw ? String(raw).slice(0, 4) : "";
+}
+
+function runtimeText(detail: any, isTV: boolean) {
+  if (isTV) return detail?.number_of_seasons ? `${detail.number_of_seasons} Stagioni` : "Serie TV";
+  const minutes = Number(detail?.runtime || 0);
+  if (!minutes) return "Film";
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return hours ? `${hours}h ${rest ? `${rest}min` : ""}`.trim() : `${minutes}min`;
+}
+
+function secondsText(seconds: number) {
+  const safe = Math.max(0, Math.floor(Number(seconds || 0)));
+  if (safe >= 3600) {
+    const hours = Math.floor(safe / 3600);
+    const minutes = Math.floor((safe % 3600) / 60);
+    return `${hours}h ${minutes ? `${minutes}min` : ""}`.trim();
+  }
+  return `${Math.max(1, Math.ceil(safe / 60))} min`;
+}
+
+function qualityLabelFromHeight(height: number) {
+  if (height >= 2160) return "4K";
+  if (height >= 1440) return "1440p";
+  if (height >= 1080) return "Full HD";
+  if (height >= 720) return "HD";
+  if (height > 0) return `${height}p`;
+  return null;
+}
+
+function qualityFromPayload(payload: any) {
+  const values = [
+    payload?.quality,
+    payload?.quality_label,
+    payload?.resolution,
+    payload?.video_quality,
+    payload?.stream_quality,
+    payload?.stream?.quality,
+    payload?.stream?.resolution,
+  ];
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text) continue;
+    if (/4k|2160/i.test(text)) return "4K";
+    if (/1440/i.test(text)) return "1440p";
+    if (/1080|full\s*hd/i.test(text)) return "Full HD";
+    if (/720|\bhd\b/i.test(text)) return "HD";
+    if (/\d{3,4}p/i.test(text)) return text.match(/\d{3,4}p/i)?.[0] || text;
+  }
+  const height = Number(payload?.height || payload?.video_height || payload?.stream?.height || 0);
+  return qualityLabelFromHeight(height);
+}
+
+async function inspectPlaybackProfile(typeSlug: string, id: number, season?: number, episode?: number) {
+  const suffix = typeSlug === "tv" ? `:${season || 1}:${episode || 1}` : ":0:0";
+  const cacheKey = `flixit-detail-stream-profile:${typeSlug}:${id}${suffix}`;
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null");
+    if (cached && Date.now() - Number(cached.ts || 0) < STREAM_PROFILE_TTL) return cached.value || {};
+  } catch {}
+
+  const path = typeSlug === "tv"
+    ? `${API_URL}/api/player/tv/${id}/${season || 1}/${episode || 1}`
+    : `${API_URL}/api/player/movie/${id}`;
+
+  try {
+    const response = await fetch(path, { cache: "no-store", headers: { Accept: "application/json" } });
+    if (!response.ok) return {};
+    const payload = await response.json();
+    let quality = qualityFromPayload(payload);
+    let audio = payload?.dolby_atmos === true ? "Dolby Atmos" : null;
+    const streamUrl = typeof payload?.stream === "string" ? payload.stream : payload?.stream?.url;
+
+    if (streamUrl && /\.m3u8(?:$|[?#])/i.test(streamUrl)) {
+      try {
+        const manifestResponse = await fetch(streamUrl, {
+          cache: "force-cache",
+          headers: { Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*" },
+        });
+        if (manifestResponse.ok) {
+          const manifest = await manifestResponse.text();
+          const heights = Array.from(manifest.matchAll(/RESOLUTION=\d+x(\d+)/gi))
+            .map((match) => Number(match[1] || 0))
+            .filter(Boolean);
+          if (heights.length) quality = qualityLabelFromHeight(Math.max(...heights)) || quality;
+          if (/\batmos\b|\bjoc\b/i.test(manifest)) audio = "Dolby Atmos";
+          else if (!audio && /ec-3|eac3/i.test(manifest)) audio = "Dolby Digital+";
+        }
+      } catch {}
+    }
+
+    const value = { quality, audio, success: !!payload?.success };
+    try { sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), value })); } catch {}
+    return value;
+  } catch {
+    return {};
+  }
+}
+
+function episodeAbsoluteImage(episode: any, fallback: string | null, id: number) {
+  return firstRemote(
+    episode?.still_url,
+    episode?.image_url,
+    episode?.thumbnail_url,
+    episode?.backdrop_path
+  ) || getMediaImageUrl(id, "backdrop", fallback, "", "original") || fallback || "/placeholder.jpg";
+}
 
 export function Component() {
   const { mediaType, id } = useParams<{ mediaType: string; id: string }>();
   const navigate = useNavigate();
+  const mediaId = Number(id) || 0;
+  const typeSlug = mediaType === "tv" ? "tv" : "movie";
+  const type = typeSlug === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
+  const isTV = typeSlug === "tv";
+
   const [getVideoDetail, { data: detail }] = useLazyGetAppendedVideosQuery();
-  const [getSeasonDetails, { data: seasonData }] = useLazyGetTVSeasonDetailsQuery();
-  const [getAllVideos, { data: allVideosData }] = useLazyGetAllVideosQuery();
-  const { data: configuration } = useGetConfigurationQuery(undefined);
-  const { data: similarVideos } = useGetSimilarVideosQuery(
-    { mediaType: (mediaType as MEDIA_TYPE) ?? MEDIA_TYPE.Movie, id: Number(id) || 0 },
-    { skip: !id }
-  );
-  const similarList = useAvailableItems(similarVideos?.results, mediaType);
+  const [getSeasonDetails] = useLazyGetTVSeasonDetailsQuery();
+  const [getGenrePage] = useLazyGetVideosByMediaTypeAndGenreIdQuery();
 
-  // Detail Page now consumes exactly the same automatic visual source as Home,
-  // Hero and card hover. No image.tmdb.org URL is built here.
   const automaticAssets = useAutomaticMediaAssets(
-    { ...(detail || {}), id: Number(id) || 0, type: mediaType },
-    (mediaType as MEDIA_TYPE) || MEDIA_TYPE.Movie,
-    !!id
+    { ...(detail || {}), id: mediaId, type: typeSlug },
+    type,
+    !!mediaId
   );
-  const resolvedTrailer = useResolvedTrailer(
-    (mediaType as MEDIA_TYPE) || MEDIA_TYPE.Movie,
-    Number(id) || 0,
-    !!id
-  );
-  
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [muted, setMuted] = useState(true);
-  const [showVideo, setShowVideo] = useState(false);
-  const [activeTab, setActiveTab] = useState("overview");
+  const resolvedTrailer = useResolvedTrailer(type, mediaId, !!mediaId);
+  const { items: continueWatchingItems } = useContinueWatching();
+
   const [selectedSeason, setSelectedSeason] = useState(1);
-  const [inMyList, setInMyList] = useState(false);
-  const [userRating, setUserRating] = useState(0);
-  const [hoverRating, setHoverRating] = useState(0);
-  const [trailerPlaying, setTrailerPlaying] = useState(false);
-  const [activeVideoKey, setActiveVideoKey] = useState<string | null>(null);
-  
   const [availableSeasons, setAvailableSeasons] = useState<any[]>([]);
-  const [filteredEpisodes, setFilteredEpisodes] = useState<any[]>([]);
-  const [seasonNotAvailableMsg, setSeasonNotAvailableMsg] = useState<string | null>(null);
-  const [seasonReleaseDate, setSeasonReleaseDate] = useState<string | null>(null);
-  const [isLoadingEpisodes, setIsLoadingEpisodes] = useState(false);
-  
-  const { items: continueWatchingItems, getProgress } = useContinueWatching();
-  
-  const getEpisodeProgress = useCallback((seasonNum: number, episodeNum: number): number => {
-    if (!id) return 0;
-    const watchingItem = continueWatchingItems.find(
-      item => item.tmdb_id === Number(id) && 
-              item.media_type === 'tv' && 
-              item.season === seasonNum && 
-              item.episode === episodeNum
-    );
-    if (!watchingItem) return 0;
-    if (watchingItem.progress > 0 && watchingItem.duration > 0) {
-      return Math.min((watchingItem.progress / watchingItem.duration) * 100, 100);
-    }
-    return 0;
-  }, [id, continueWatchingItems]);
-  
-  const maturityRate = useMemo(() => getRandomNumber(20), []);
-  const matchPercent = useMemo(() => getRandomNumber(100), []);
-  
+  const [episodes, setEpisodes] = useState<any[]>([]);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [inMyList, setInMyList] = useState(false);
+  const [showTrailer, setShowTrailer] = useState(false);
+  const [trailerPlaying, setTrailerPlaying] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [streamProfile, setStreamProfile] = useState<any>({});
+  const [relatedPool, setRelatedPool] = useState<any[]>([]);
+  const episodesRef = useRef<HTMLDivElement | null>(null);
+
+  const progressItem = useMemo(
+    () => continueWatchingItems.find((item: any) => Number(item.tmdb_id) === mediaId && item.media_type === typeSlug),
+    [continueWatchingItems, mediaId, typeSlug]
+  );
+
+  const progressPercent = progressItem?.duration > 0
+    ? Math.min(100, Math.max(0, (progressItem.progress / progressItem.duration) * 100))
+    : 0;
+  const remainingSeconds = progressItem?.duration > 0
+    ? Math.max(0, progressItem.duration - progressItem.progress)
+    : 0;
+
   useEffect(() => {
-    setLogoUrl(null);
-    setShowVideo(false);
-    setActiveTab("overview");
-    setSelectedSeason(1);
-    setAvailableSeasons([]);
-    setFilteredEpisodes([]);
-    setSeasonNotAvailableMsg(null);
-    setSeasonReleaseDate(null);
+    if (!mediaId) return;
+    getVideoDetail({ mediaType: type, id: mediaId });
+  }, [getVideoDetail, mediaId, type]);
+
+  useEffect(() => {
+    setShowTrailer(false);
+    setTrailerPlaying(false);
     setMuted(true);
-  }, [id]);
-
-  const isTVShow = mediaType === MEDIA_TYPE.Tv;
-  const isMovie = mediaType === MEDIA_TYPE.Movie;
-  const tabs = isTVShow ? tabConfig.tv : tabConfig.movie;
+    setStreamProfile({});
+    setRelatedPool([]);
+    setEpisodes([]);
+    setAvailableSeasons([]);
+    setSelectedSeason(1);
+  }, [mediaId, typeSlug]);
 
   useEffect(() => {
-    const checkStatus = async () => {
-      if (!mediaType || !id) return;
-      const userId = getUserId();
-      try {
-        const [listRes, ratingRes] = await Promise.all([
-          fetch(`${API_URL}/api/user/list/check/${userId}/${mediaType}/${id}`),
-          fetch(`${API_URL}/api/user/rating/${userId}/${mediaType}/${id}`)
-        ]);
-        if (listRes.ok) {
-          const data = await listRes.json();
-          setInMyList(data.in_list);
-        }
-        if (ratingRes.ok) {
-          const data = await ratingRes.json();
-          setUserRating(data.rating || 0);
-        }
-      } catch (e) {
-        console.log("Status check failed, using local state");
-      }
+    if (!resolvedTrailer.url) return;
+    const timer = window.setTimeout(() => setShowTrailer(true), HERO_TRAILER_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [resolvedTrailer.url, mediaId]);
+
+  useEffect(() => {
+    if (!mediaId) return;
+    let cancelled = false;
+    const run = async () => {
+      const season = isTV ? Number(progressItem?.season || selectedSeason || 1) : undefined;
+      const episode = isTV ? Number(progressItem?.episode || 1) : undefined;
+      const value = await inspectPlaybackProfile(typeSlug, mediaId, season, episode);
+      if (!cancelled) setStreamProfile(value || {});
     };
-    checkStatus();
-  }, [mediaType, id]);
+    const idle = (window as any).requestIdleCallback
+      ? (window as any).requestIdleCallback(run, { timeout: 1800 })
+      : window.setTimeout(run, 1200);
+    return () => {
+      cancelled = true;
+      if ((window as any).cancelIdleCallback && typeof idle === "number") (window as any).cancelIdleCallback(idle);
+      else window.clearTimeout(idle);
+    };
+  }, [mediaId, typeSlug, isTV, progressItem?.season, progressItem?.episode]);
 
   useEffect(() => {
-    if (mediaType && id) {
-      getVideoDetail({ mediaType: mediaType as MEDIA_TYPE, id: Number(id) });
-      getAllVideos({ mediaType: mediaType as MEDIA_TYPE, id: Number(id) });
-    }
-  }, [mediaType, id, getVideoDetail, getAllVideos]);
+    if (!mediaId) return;
+    const userId = getUserId();
+    fetch(`${API_URL}/api/user/list/check/${userId}/${typeSlug}/${mediaId}`)
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => data && setInMyList(!!data.in_list))
+      .catch(() => {});
+  }, [mediaId, typeSlug]);
 
-  useEffect(() => {
-    if (!mediaType || !id) return;
-    const t = setTimeout(async () => {
-      const isTv = mediaType === MEDIA_TYPE.Tv;
-      const season = isTv ? 1 : 0;
-      const episode = isTv ? 1 : 0;
-      const url = isTv
-        ? `${API_URL}/api/player/tv/${id}/1/1`
-        : `${API_URL}/api/player/movie/${id}`;
-      try {
-        const res = await fetch(url, {
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!data?.success || !data?.stream) return;
-        const payload = { data, ts: Date.now(), timestamp: Date.now() };
-        const keys = isTv
-          ? [
-              `stream:tv:${id}:${season}:${episode}`,
-              `stream_tv_${id}_${season}_${episode}`,
-              `stream-tv-${id}-${season}-${episode}`,
-            ]
-          : [
-              `stream:movie:${id}:0:0`,
-              `stream_movie_${id}_0_0`,
-              `stream-movie-${id}-0-0`,
-            ];
-        keys.forEach((key) => {
-          try {
-            sessionStorage.setItem(key, JSON.stringify(payload));
-          } catch {}
-        });
-      } catch {}
-    }, 800);
-    return () => clearTimeout(t);
-  }, [mediaType, id]);
-
-  const loadSeasonEpisodes = useCallback(async (seasonNum: number) => {
-    setIsLoadingEpisodes(true);
+  const loadSeason = useCallback(async (seasonNumber: number) => {
+    if (!isTV || !mediaId) return;
+    setEpisodesLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/public/tv/${id}/season/${seasonNum}`);
-      if (res.ok) {
-        const data = await res.json();
-        const episodes = data.episodes || [];
-        setFilteredEpisodes(episodes);
-        if (data.is_aired === false) {
-          setSeasonReleaseDate(data.release_date_it || data.release_date || null);
-          setSeasonNotAvailableMsg(data.message || "Stagione non ancora disponibile");
-        } else {
-          setSeasonNotAvailableMsg(null);
-          setSeasonReleaseDate(null);
-        }
+      const response = await fetch(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setEpisodes(Array.isArray(data?.episodes) ? data.episodes : []);
+      } else {
+        const fallback = await getSeasonDetails({ seriesId: mediaId, seasonNumber }).unwrap();
+        setEpisodes(Array.isArray(fallback?.episodes) ? fallback.episodes : []);
       }
-    } catch (e) {
-      console.log("Failed to fetch filtered episodes");
-      setSeasonNotAvailableMsg(null);
-      setSeasonReleaseDate(null);
+    } catch {
+      try {
+        const fallback = await getSeasonDetails({ seriesId: mediaId, seasonNumber }).unwrap();
+        setEpisodes(Array.isArray(fallback?.episodes) ? fallback.episodes : []);
+      } catch {
+        setEpisodes([]);
+      }
     } finally {
-      setIsLoadingEpisodes(false);
+      setEpisodesLoading(false);
     }
-  }, [id]);
+  }, [getSeasonDetails, isTV, mediaId]);
 
   useEffect(() => {
-    if (isTVShow && id && selectedSeason) {
-      getSeasonDetails({ seriesId: Number(id), seasonNumber: selectedSeason });
-      loadSeasonEpisodes(selectedSeason);
-    }
-  }, [isTVShow, id, selectedSeason, getSeasonDetails, loadSeasonEpisodes]);
-  
-  useEffect(() => {
-    if (isTVShow && id) {
-      const fetchSeasons = async () => {
-        try {
-          const res = await fetch(`${API_URL}/api/public/tv/${id}/seasons`);
-          if (res.ok) {
-            const data = await res.json();
-            const seasons = data.seasons || [];
-            setAvailableSeasons(seasons);
-            const firstAvailable = seasons.find((s: any) => s.vixsrc_available);
-            if (firstAvailable) {
-              setSelectedSeason(firstAvailable.season_number);
-              loadSeasonEpisodes(firstAvailable.season_number);
-            } else if (seasons.length > 0) {
-              setSelectedSeason(seasons[0].season_number);
-              loadSeasonEpisodes(seasons[0].season_number);
-            }
-          }
-        } catch (e) {
-          console.log("Failed to fetch seasons from backend");
-          if (detail) {
-            const seasons = (detail as any).seasons?.filter((s: any) => s.season_number > 0) || [];
-            setAvailableSeasons(seasons);
-          }
-        }
-      };
-      fetchSeasons();
-    }
-  }, [isTVShow, id, detail]);
+    if (!isTV || !mediaId) return;
+    let cancelled = false;
+    fetch(`${API_URL}/api/public/tv/${mediaId}/seasons`, { headers: { Accept: "application/json" } })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (cancelled) return;
+        const seasons = Array.isArray(data?.seasons)
+          ? data.seasons.filter((season: any) => Number(season?.season_number || 0) > 0)
+          : (detail?.seasons || []).filter((season: any) => Number(season?.season_number || 0) > 0);
+        setAvailableSeasons(seasons);
+        const progressSeason = Number(progressItem?.season || 0);
+        const preferred = seasons.find((season: any) => Number(season.season_number) === progressSeason)
+          || seasons.find((season: any) => season.vixsrc_available !== false)
+          || seasons[0];
+        const seasonNumber = Number(preferred?.season_number || progressSeason || 1);
+        setSelectedSeason(seasonNumber);
+        loadSeason(seasonNumber);
+      })
+      .catch(() => {
+        const seasons = (detail?.seasons || []).filter((season: any) => Number(season?.season_number || 0) > 0);
+        setAvailableSeasons(seasons);
+        const seasonNumber = Number(progressItem?.season || seasons[0]?.season_number || 1);
+        setSelectedSeason(seasonNumber);
+        loadSeason(seasonNumber);
+      });
+    return () => { cancelled = true; };
+  }, [isTV, mediaId, detail?.seasons, progressItem?.season, loadSeason]);
 
   useEffect(() => {
-    setLogoUrl(automaticAssets?.logo_path || null);
-  }, [automaticAssets?.logo_path]);
+    if (!detail?.genres?.length) return;
+    const primaryGenre = Number(detail.genres[0]?.id || 0);
+    if (!primaryGenre) return;
+    let cancelled = false;
+    Promise.all([
+      getGenrePage({ mediaType: type, genreId: primaryGenre, page: 1 }).unwrap().catch(() => null),
+      getGenrePage({ mediaType: type, genreId: primaryGenre, page: 2 }).unwrap().catch(() => null),
+    ]).then((pages) => {
+      if (cancelled) return;
+      const merged = pages.flatMap((page: any) => page?.results || []);
+      const seen = new Set<number>();
+      const filtered = merged.filter((item: any) => {
+        const itemId = Number(item?.id || item?.tmdbId || 0);
+        if (!itemId || itemId === mediaId || seen.has(itemId)) return false;
+        seen.add(itemId);
+        return Array.isArray(item?.genre_ids) ? item.genre_ids.includes(primaryGenre) : true;
+      }).slice(0, 30);
+      setRelatedPool(filtered);
+    });
+    return () => { cancelled = true; };
+  }, [detail?.genres, getGenrePage, mediaId, type]);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowVideo(true);
-    }, 4000);
-    return () => clearTimeout(timer);
+  const relatedItems = useAvailableItems(relatedPool, typeSlug);
+
+  const title = detail?.title || detail?.name || automaticAssets?.title || "";
+  const logoUrl = firstRemote(automaticAssets?.logo_path, automaticAssets?.logo, detail?.netflix_logo_url);
+  const backdropUrl = firstRemote(
+    automaticAssets?.detail_backdrop_path,
+    automaticAssets?.hero_backdrop_path,
+    automaticAssets?.backdrop_path,
+    detail?.netflix_artwork_url,
+    detail?.backdrop_path
+  );
+  const posterUrl = firstRemote(automaticAssets?.poster_path, detail?.poster_path) || backdropUrl;
+  const genres = (detail?.genres || []).map((genre: any) => genre?.name).filter(Boolean);
+  const director = (detail?.credits?.crew || []).find((person: any) => person?.job === "Director")?.name || "—";
+  const cast = (detail?.credits?.cast || []).slice(0, 4).map((person: any) => person?.name).filter(Boolean);
+  const keywordItems = detail?.keywords?.keywords || detail?.keywords?.results || [];
+  const themes = keywordItems.slice(0, 3).map((item: any) => item?.name).filter(Boolean);
+
+  const qualityBadge = streamProfile?.quality || null;
+  const audioBadge = streamProfile?.audio || null;
+
+  const goPlay = useCallback((season?: number, episode?: number) => {
+    const suffix = isTV ? `?s=${season || progressItem?.season || selectedSeason || 1}&e=${episode || progressItem?.episode || 1}` : "";
+    window.scrollTo(0, 0);
+    navigate(`/${MAIN_PATH.watch}/${typeSlug}/${mediaId}${suffix}`);
+  }, [isTV, navigate, mediaId, progressItem?.episode, progressItem?.season, selectedSeason, typeSlug]);
+
+  const handleToggleList = useCallback(async () => {
+    const userId = getUserId();
+    const next = !inMyList;
+    setInMyList(next);
+    try {
+      const endpoint = next ? "/api/user/list/add" : "/api/user/list/remove";
+      const response = await fetch(`${API_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          media_id: mediaId,
+          media_type: typeSlug,
+          title,
+          poster_path: posterUrl,
+          backdrop_path: backdropUrl,
+        }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (typeof data?.in_list === "boolean") setInMyList(data.in_list);
+      }
+    } catch {
+      setInMyList(next);
+    }
+  }, [backdropUrl, inMyList, mediaId, posterUrl, title, typeSlug]);
+
+  const scrollToEpisodes = useCallback(() => {
+    episodesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  const handleMuteToggle = useCallback(() => setMuted((m) => !m), []);
-
-  const handleToggleList = async () => {
-    const userId = getUserId();
-    const title = getTitle();
-    try {
-      const endpoint = inMyList ? "/api/user/list/remove" : "/api/user/list/add";
-      const res = await fetch(`${API_URL}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          media_id: Number(id),
-          media_type: mediaType,
-          title: title,
-          poster_path: automaticAssets?.poster_path || null,
-          backdrop_path: automaticAssets?.backdrop_path || null
-        })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setInMyList(data.in_list);
-      }
-    } catch (e) {
-      setInMyList(!inMyList);
+  const episodeStatus = useCallback((episodeNumber: number) => {
+    const watchedSeason = Number(progressItem?.season || 0);
+    const watchedEpisode = Number(progressItem?.episode || 0);
+    if (!progressItem || !watchedSeason || !watchedEpisode) {
+      return { kind: episodeNumber === 1 ? "next" : "new", percent: 0 };
     }
-  };
-
-  const handleSetRating = async (rating: number) => {
-    const userId = getUserId();
-    setUserRating(rating);
-    try {
-      await fetch(`${API_URL}/api/user/rating`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          media_id: Number(id),
-          media_type: mediaType,
-          rating: rating
-        })
-      });
-    } catch (e) {
-      console.log("Rating save failed");
-    }
-  };
-
-  // One central resolver: Italian direct trailer first, English direct trailer
-  // second, then no trailer. YouTube ids are never selected on this page.
-  const videoKey = resolvedTrailer?.url || null;
-  const trailerKey = resolvedTrailer?.url || null;
-
-  const getTitle = () => {
-    if (!detail) return "";
-    if ('name' in detail) return detail.name;
-    if ('title' in detail) return detail.title;
-    return "";
-  };
-
-  const getSeasons = () => {
-    if (!detail || !isTVShow) return [];
-    return (detail as any).seasons?.filter((s: any) => s.season_number > 0) || [];
-  };
-  
-  const getEpisodes = () => {
-    return seasonData?.episodes || [];
-  };
-  
-  const formatItalianDate = (dateStr: string | undefined) => {
-    if (!dateStr) return null;
-    try {
-      return new Date(dateStr).toLocaleDateString('it-IT', { 
-        day: 'numeric', 
-        month: 'long', 
-        year: 'numeric' 
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+    if (selectedSeason < watchedSeason) return { kind: "complete", percent: 100 };
+    if (selectedSeason > watchedSeason) return { kind: episodeNumber === 1 ? "next" : "new", percent: 0 };
+    if (episodeNumber < watchedEpisode) return { kind: "complete", percent: 100 };
+    if (episodeNumber === watchedEpisode) return { kind: "progress", percent: progressPercent };
+    if (episodeNumber === watchedEpisode + 1) return { kind: "next", percent: 0 };
+    return { kind: "new", percent: 0 };
+  }, [progressItem, progressPercent, selectedSeason]);
 
   if (!detail) {
     return (
-      <Box data-testid="detail-skeleton" sx={{ minHeight: "100vh", bgcolor: "#0a0a0a" }}>
-        <Box sx={{ position: "relative", height: { xs: "60vh", md: "85vh" }, background: "linear-gradient(to top, #0a0a0a 0%, #141414 60%, #1a1a1a 100%)" }}>
-          <Box sx={{ position: "absolute", left: { xs: 16, md: 40 }, bottom: "22%", width: "min(48%, 640px)", display: "flex", flexDirection: "column", gap: 2 }}>
-            <Box sx={{ height: { xs: 48, md: 84 }, width: "70%", borderRadius: 1, bgcolor: "#1f1f1f", animation: "flixPulse 1.4s ease-in-out infinite" }} />
-            <Box sx={{ height: 14, width: "40%", borderRadius: 1, bgcolor: "#1f1f1f", animation: "flixPulse 1.4s ease-in-out infinite" }} />
-            <Box sx={{ height: 60, width: "100%", borderRadius: 1, bgcolor: "#1a1a1a", animation: "flixPulse 1.4s ease-in-out infinite" }} />
-            <Box sx={{ height: 44, width: 150, borderRadius: 1, bgcolor: "#2a2a2a", animation: "flixPulse 1.4s ease-in-out infinite" }} />
-          </Box>
-        </Box>
+      <Box sx={{ minHeight: "82vh", bgcolor: "#090909", display: "grid", placeItems: "center" }}>
+        <CircularProgress sx={{ color: "#e50914" }} />
       </Box>
     );
   }
 
-  const backdropUrl = automaticAssets?.backdrop_path || automaticAssets?.poster_path || null;
-  const seasons = getSeasons();
-
   return (
-    <Box sx={{ bgcolor: "#0a0a0a", minHeight: "100vh" }}>
-      <Box sx={{ 
-        position: "relative", 
-        width: "100%", 
-        height: { xs: "65vh", md: "80vh" },
-        overflow: "hidden"
-      }}>
+    <Box data-testid="detail-page-redesign" sx={{ bgcolor: "#090909", color: "#fff", minHeight: "100vh", overflowX: "hidden" }}>
+      <Box sx={{ position: "relative", height: "clamp(610px, 47vw, 760px)", overflow: "hidden" }}>
         {backdropUrl ? (
-          <img
-            src={backdropUrl as string}
-            alt={String(getTitle())}
-            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", filter: "brightness(0.6)",
-              opacity: trailerPlaying ? 0 : 1, transition: "opacity 900ms ease" }}
-            data-testid="detail-cover-image"
+          <Box component="img" src={backdropUrl} alt="" sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 24%" }} />
+        ) : null}
+
+        {showTrailer && resolvedTrailer.url ? (
+          <TrailerPlayer
+            key={resolvedTrailer.url}
+            videoKey={resolvedTrailer.url}
+            muted={muted}
+            playing
+            loop
+            zoom={1.08}
+            onPlaying={() => setTrailerPlaying(true)}
+            onError={() => {
+              setShowTrailer(false);
+              setTrailerPlaying(false);
+            }}
           />
         ) : null}
-        {showVideo && videoKey && (
-          <Box sx={{ position: "absolute", inset: 0, opacity: trailerPlaying ? 1 : 0, transition: "opacity 900ms ease" }} data-testid="detail-trailer">
-            <TrailerPlayer videoKey={videoKey} muted={muted} loop zoom={1.38} onPlaying={() => setTrailerPlaying(true)} onEnded={() => setTrailerPlaying(false)} />
-          </Box>
-        )}
 
-        <Box
-          sx={{
-            background: "linear-gradient(90deg, rgba(10,10,10,0.98) 0%, rgba(10,10,10,0.7) 35%, rgba(10,10,10,0.3) 60%, transparent 80%)",
-            position: "absolute",
-            inset: 0,
-            zIndex: 1,
-          }}
-        />
-        <Box
-          sx={{
-            background: "linear-gradient(0deg, #0a0a0a 0%, rgba(10,10,10,0.9) 15%, rgba(10,10,10,0.4) 40%, transparent 60%)",
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: "70%",
-            zIndex: 1,
-          }}
-        />
+        <Box sx={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, rgba(0,0,0,.94) 0%, rgba(0,0,0,.72) 31%, rgba(0,0,0,.18) 63%, rgba(0,0,0,.12) 100%)" }} />
+        <Box sx={{ position: "absolute", inset: 0, background: "linear-gradient(0deg, #090909 0%, rgba(9,9,9,.82) 8%, transparent 35%)" }} />
 
-        <IconButton
-          onClick={() => navigate(-1)}
-          sx={{
-            position: "absolute",
-            top: { xs: 80, md: 100 },
-            left: { xs: 16, md: 48 },
-            bgcolor: "rgba(0,0,0,0.6)",
-            backdropFilter: "blur(12px)",
-            color: "#fff",
-            border: "1px solid rgba(255,255,255,0.2)",
-            transition: "all 0.3s ease",
-            zIndex: 10,
-            width: 44,
-            height: 44,
-            "&:hover": { 
-              bgcolor: "#e50914",
-              transform: "scale(1.1)",
-              borderColor: "transparent"
-            },
-          }}
-          data-testid="back-button"
-        >
-          <ArrowBackIcon />
-        </IconButton>
-
-        {showVideo && videoKey && (
-          <IconButton
-            onClick={handleMuteToggle}
-            sx={{
-              position: "absolute",
-              right: { xs: 16, md: 48 },
-              bottom: { xs: "22%", md: "28%" },
-              width: { xs: 50, md: 58 },
-              height: { xs: 50, md: 58 },
-              borderRadius: '50%',
-              bgcolor: "rgba(0,0,0,0.6)",
-              backdropFilter: "blur(12px)",
-              border: "2px solid rgba(255,255,255,0.4)",
-              color: "#fff",
-              zIndex: 10,
-              transition: "all 0.3s ease",
-              "&:hover": {
-                bgcolor: "rgba(255,255,255,0.2)",
-                borderColor: "#fff",
-                transform: "scale(1.1)"
-              }
-            }}
-            data-testid="audio-toggle-button"
-          >
-            {!muted ? <VolumeUpIcon sx={{ fontSize: { xs: 26, md: 30 } }} /> : <VolumeOffIcon sx={{ fontSize: { xs: 26, md: 30 } }} />}
-          </IconButton>
-        )}
-
-        <Stack
-          spacing={2.5}
-          sx={{
-            position: "absolute",
-            bottom: { xs: "12%", md: "16%" },
-            left: { xs: "4%", md: "48px" },
-            width: { xs: "92%", md: "50%", lg: "45%" },
-            zIndex: 10,
-          }}
-        >
+        <Box sx={{ position: "absolute", left: "4vw", bottom: 96, zIndex: 5, width: "min(590px, 44vw)" }}>
           {logoUrl ? (
-            <Box
-              component="img"
-              src={logoUrl}
-              alt={getTitle()}
-              sx={{
-                maxWidth: "75%",
-                maxHeight: { xs: "90px", md: "150px" },
-                width: "auto",
-                objectFit: "contain",
-                filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.6))",
-                pointerEvents: 'none',
-              }}
-              data-testid="detail-logo"
-            />
-          ) : (
-            <Typography 
-              variant="h2" 
-              sx={{ 
-                fontWeight: 800, 
-                textShadow: "0 4px 24px rgba(0,0,0,0.6)",
-                fontSize: { xs: '2rem', md: '3.5rem' },
-                letterSpacing: '-0.02em',
-                color: "#fff"
-              }}
-            >
-              {getTitle()}
-            </Typography>
-          )}
+            <Box component="img" src={logoUrl} alt={title} sx={{ display: "block", width: "auto", maxWidth: "520px", maxHeight: 190, objectFit: "contain", objectPosition: "left center", mb: 2.2 }} />
+          ) : null}
 
-          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" sx={{ gap: 1 }}>
-            <Typography sx={{ color: "#46d369", fontWeight: 700, fontSize: { xs: '0.9rem', md: '1rem' } }}>
-              {matchPercent}% Corrispondenza
-            </Typography>
-            <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.8)", fontWeight: 500 }}>
-              {detail.release_date?.substring(0, 4) || (detail as any).first_air_date?.substring(0, 4)}
-            </Typography>
-            {isTVShow && seasons.length > 0 && (
-              <Chip label={`${seasons.length} Stagion${seasons.length > 1 ? 'i' : 'e'}`} size="small" sx={{ bgcolor: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: '0.75rem', height: 24, fontWeight: 600 }} />
-            )}
-            <AgeLimitChip label={`${maturityRate}+`} />
-            {detail.runtime && (
-              <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.8)", fontWeight: 500 }}>
-                {formatMinuteToReadable(detail.runtime)}
-              </Typography>
-            )}
-            <QualityChip label="HD" />
+          <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1.6} sx={{ alignItems: "center", mb: 2, color: "rgba(255,255,255,.78)", fontSize: 16 }}>
+            {yearFrom(detail) ? <span>{yearFrom(detail)}</span> : null}
+            <span>•</span>
+            <span>{runtimeText(detail, isTV)}</span>
+            {genres[0] ? <><span>•</span><span>{genres[0]}</span></> : null}
+            {qualityBadge ? <><span>•</span><Box component="span" sx={{ border: "1px solid rgba(255,255,255,.45)", borderRadius: "4px", px: .8, py: .2, fontWeight: 700 }}>{qualityBadge}</Box></> : null}
+            {audioBadge ? <><span>•</span><span>{audioBadge}</span></> : null}
           </Stack>
 
-          <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.9)", lineHeight: 1.7, maxWidth: "95%", display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: { xs: '0.9rem', md: '1rem' } }}>
-            {detail.overview || "Descrizione non disponibile."}
+          <Typography sx={{ fontSize: 18, lineHeight: 1.5, color: "rgba(255,255,255,.9)", maxWidth: 590, textShadow: "0 2px 16px rgba(0,0,0,.75)", mb: 3 }}>
+            {detail?.overview || ""}
           </Typography>
 
-          <Stack direction="row" spacing={2} sx={{ mt: 1 }} alignItems="center">
-            <NetflixIconButton
-              sx={{ bgcolor: "#fff", color: "#000", px: { xs: 3, md: 4 }, py: 1.2, borderRadius: "6px", fontWeight: 700, fontSize: { xs: '0.95rem', md: '1.1rem' }, transition: "all 0.25s ease", boxShadow: '0 4px 20px rgba(255,255,255,0.2)', "&:hover": { bgcolor: "rgba(255,255,255,0.85)", transform: "scale(1.03)" } }}
-              onClick={() => navigate(`/${MAIN_PATH.watch}/${mediaType}/${id}${isTVShow ? '?s=1&e=1' : ''}`)}
-              data-testid="play-button"
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+            <Button
+              data-testid="detail-play"
+              onClick={() => goPlay()}
+              startIcon={<PlayArrowIcon sx={{ fontSize: 32 }} />}
+              sx={{ bgcolor: "#fff", color: "#000", px: 3.2, py: 1.25, fontSize: 18, fontWeight: 800, borderRadius: 1, textTransform: "none", "&:hover": { bgcolor: "rgba(255,255,255,.82)" } }}
             >
-              <PlayArrowIcon sx={{ mr: 0.5, fontSize: 28 }} />
-              {isTVShow ? "Guarda S1 E1" : "Riproduci"}
-            </NetflixIconButton>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: 'rgba(245, 197, 24, 0.2)', color: '#f5c518', borderRadius: '8px', width: 52, height: 44, fontWeight: 800, fontSize: '1rem', border: '2px solid rgba(245, 197, 24, 0.4)' }}>
-              {(detail.vote_average || 0).toFixed(1)}
-            </Box>
-            <NetflixIconButton onClick={handleToggleList} sx={{ bgcolor: inMyList ? "rgba(70, 211, 105, 0.25)" : "rgba(255,255,255,0.1)", border: inMyList ? "2px solid #46d369" : "2px solid rgba(255,255,255,0.4)", width: 44, height: 44, borderRadius: "50%", transition: "all 0.25s ease", "&:hover": { bgcolor: inMyList ? "rgba(70, 211, 105, 0.35)" : "rgba(255,255,255,0.2)", borderColor: inMyList ? "#46d369" : "#fff", transform: "scale(1.1)" } }} data-testid="add-to-list-button">
-              {inMyList ? <CheckIcon sx={{ color: "#46d369" }} /> : <AddIcon sx={{ color: "#fff" }} />}
-            </NetflixIconButton>
-            <Box sx={{ display: 'flex', alignItems: 'center', bgcolor: 'rgba(255,255,255,0.1)', borderRadius: '22px', px: 1.5, py: 0.5, border: '2px solid rgba(255,255,255,0.2)' }} data-testid="star-rating">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <IconButton key={star} size="small" onClick={() => handleSetRating(star)} onMouseEnter={() => setHoverRating(star)} onMouseLeave={() => setHoverRating(0)} sx={{ p: 0.3, transition: 'transform 0.15s ease', '&:hover': { transform: 'scale(1.2)', bgcolor: 'transparent' } }} data-testid={`star-${star}`}>
-                  {(hoverRating || userRating) >= star ? (
-                    <StarIcon sx={{ color: '#f5c518', fontSize: { xs: 20, md: 24 }, filter: 'drop-shadow(0 0 4px rgba(245,197,24,0.5))' }} />
-                  ) : (
-                    <StarBorderIcon sx={{ color: 'rgba(255,255,255,0.5)', fontSize: { xs: 20, md: 24 } }} />
-                  )}
-                </IconButton>
-              ))}
-            </Box>
+              {progressItem ? "Riprendi" : "Riproduci"}
+            </Button>
+            <Button
+              data-testid="detail-my-list"
+              onClick={handleToggleList}
+              startIcon={inMyList ? <CheckIcon /> : <AddIcon />}
+              sx={{ bgcolor: "rgba(70,70,70,.78)", color: "#fff", px: 2.8, py: 1.25, fontSize: 17, fontWeight: 700, borderRadius: 1, textTransform: "none", "&:hover": { bgcolor: "rgba(95,95,95,.9)" } }}
+            >
+              La mia lista
+            </Button>
+            {isTV ? (
+              <Button
+                onClick={scrollToEpisodes}
+                endIcon={<KeyboardArrowDownIcon />}
+                sx={{ color: "#fff", fontSize: 16, fontWeight: 700, textTransform: "none", px: 1.2, "&:hover": { bgcolor: "rgba(255,255,255,.08)" } }}
+              >
+                Episodi
+              </Button>
+            ) : null}
           </Stack>
-        </Stack>
+        </Box>
+
+        {showTrailer && resolvedTrailer.url && trailerPlaying ? (
+          <Box sx={{ position: "absolute", right: "3vw", bottom: 78, zIndex: 7 }}>
+            <TrailerAudioButton muted={muted} onToggle={() => setMuted((value) => !value)} testId="detail-hero-audio-toggle" />
+          </Box>
+        ) : null}
       </Box>
 
-      <Container maxWidth="xl" sx={{ px: { xs: 2, md: 6 }, mt: -2 }}>
-        <Box sx={{ display: 'flex', gap: { xs: 2, md: 4 }, mb: 4, borderBottom: '1px solid rgba(255,255,255,0.15)', overflowX: 'auto', '&::-webkit-scrollbar': { display: 'none' } }}>
-          {tabs.map((tab) => (
-            <Box key={tab.id} onClick={() => setActiveTab(tab.id)} data-testid={`tab-${tab.id}`} sx={{ position: 'relative', px: 1, py: 2, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.25s ease', color: activeTab === tab.id ? '#fff' : 'rgba(255,255,255,0.6)', fontWeight: activeTab === tab.id ? 600 : 400, fontSize: { xs: '0.85rem', md: '0.95rem' }, letterSpacing: '1px', textTransform: 'uppercase', '&:hover': { color: '#fff' }, '&::after': { content: '""', position: 'absolute', bottom: -1, left: 0, right: 0, height: '3px', bgcolor: activeTab === tab.id ? '#46d369' : 'transparent', transition: 'all 0.25s ease', borderRadius: '2px 2px 0 0' } }}>
-              {tab.label}
-            </Box>
-          ))}
-        </Box>
-
-        <Box sx={{ animation: 'fadeInUp 0.4s ease-out', '@keyframes fadeInUp': { '0%': { opacity: 0, transform: 'translateY(20px)' }, '100%': { opacity: 1, transform: 'translateY(0)' } }, minHeight: 400 }}>
-          {activeTab === "overview" && (
-            <Grid container spacing={4}>
-              <Grid item xs={12} md={8}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 3, mb: 4, p: 3, bgcolor: "rgba(255,255,255,0.05)", borderRadius: 3, border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(10px)" }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 2, bgcolor: "rgba(245, 197, 24, 0.15)", border: "1px solid rgba(245, 197, 24, 0.25)" }}>
-                    <StarIcon sx={{ color: "#f5c518", fontSize: 32 }} />
-                  </Box>
-                  <Box>
-                    <Typography variant="h5" fontWeight={700} sx={{ mb: 0.5, color: "#fff" }}>
-                      {detail.vote_average?.toFixed(1)}<span style={{ fontSize: '1rem', color: 'rgba(255,255,255,0.5)' }}>/10</span>
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.6)" }}>
-                      {detail.vote_count?.toLocaleString()} valutazioni
-                    </Typography>
-                  </Box>
-                </Box>
-                {detail.tagline && (
-                  <Box sx={{ mb: 4 }}>
-                    <Typography variant="h6" sx={{ fontStyle: "italic", color: "rgba(255,255,255,0.85)", borderLeft: "4px solid #e50914", pl: 3, py: 1 }}>
-                      "{detail.tagline}"
-                    </Typography>
-                  </Box>
-                )}
-                <Box sx={{ mb: 4 }}>
-                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 700, color: "#fff" }}>Trama</Typography>
-                  <Typography variant="body1" sx={{ lineHeight: 1.9, color: "rgba(255,255,255,0.85)" }}>
-                    {detail.overview || "Descrizione non disponibile."}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="body2" sx={{ lineHeight: 1.8, color: "rgba(255,255,255,0.6)" }}>
-                    <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>Cast: </span>
-                    {(detail as any).credits?.cast?.slice(0, 5).map((c: any) => c.name).join(', ') || 'Non disponibile'}
-                  </Typography>
-                </Box>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <Box sx={{ bgcolor: "rgba(255,255,255,0.03)", borderRadius: 3, p: 3, border: "1px solid rgba(255,255,255,0.08)" }}>
-                  {detail.genres?.length > 0 && (
-                    <Box sx={{ mb: 3 }}>
-                      <Typography variant="caption" sx={{ textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, display: 'block', mb: 1.5, color: "rgba(255,255,255,0.5)" }}>Generi</Typography>
-                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                        {detail.genres.map((genre: any) => (
-                          <Chip key={genre.id} label={genre.name} size="small" sx={{ bgcolor: "rgba(229, 9, 20, 0.2)", color: "#ff8a8a", fontSize: '0.75rem', fontWeight: 600, height: 28, border: '1px solid rgba(229, 9, 20, 0.3)' }} />
-                        ))}
-                      </Stack>
-                    </Box>
-                  )}
-                  {(detail.release_date || (detail as any).first_air_date) && (
-                    <Box sx={{ mb: 2.5 }}>
-                      <Typography variant="caption" sx={{ textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, display: 'block', mb: 1, color: "rgba(255,255,255,0.5)" }}>Data di uscita</Typography>
-                      <Stack direction="row" spacing={1.5} alignItems="center">
-                        <CalendarTodayIcon sx={{ fontSize: 16, color: "rgba(255,255,255,0.5)" }} />
-                        <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
-                          {new Date(detail.release_date || (detail as any).first_air_date).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })}
-                        </Typography>
-                      </Stack>
-                    </Box>
-                  )}
-                  {(detail.runtime || (detail as any).episode_run_time?.[0]) && (
-                    <Box>
-                      <Typography variant="caption" sx={{ textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, display: 'block', mb: 1, color: "rgba(255,255,255,0.5)" }}>Durata</Typography>
-                      <Stack direction="row" spacing={1.5} alignItems="center">
-                        <AccessTimeIcon sx={{ fontSize: 16, color: "rgba(255,255,255,0.5)" }} />
-                        <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.85)", fontWeight: 500 }}>
-                          {formatMinuteToReadable(detail.runtime || (detail as any).episode_run_time?.[0])}
-                        </Typography>
-                      </Stack>
-                    </Box>
-                  )}
-                </Box>
-              </Grid>
-            </Grid>
-          )}
-
-          {activeTab === "episodes" && isTVShow && (
-            <Box>
-              <Box sx={{ mb: 4, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
-                <Typography variant="h5" fontWeight={700} sx={{ color: "#fff" }}>Episodi</Typography>
-                {availableSeasons.length > 0 && (
-                  <FormControl size="small">
-                    <Select value={selectedSeason} onChange={(e) => setSelectedSeason(e.target.value as number)} sx={{ color: '#fff', bgcolor: 'rgba(255,255,255,0.1)', borderRadius: 2, minWidth: 220, '.MuiOutlinedInput-notchedOutline': { border: '1px solid rgba(255,255,255,0.25)' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.5)' }, '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: '#e50914' }, '.MuiSelect-icon': { color: '#fff' } }} data-testid="season-selector">
-                      {availableSeasons.map((season: any) => (
-                        <MenuItem key={season.season_number} value={season.season_number} sx={{ display: 'flex', justifyContent: 'space-between', opacity: season.vixsrc_available ? 1 : 0.6 }}>
-                          <span>Stagione {season.season_number}</span>
-                          {!season.vixsrc_available && !season.is_aired && (
-                            <Chip label="Prossimamente" size="small" sx={{ ml: 1, bgcolor: 'rgba(255,152,0,0.2)', color: '#ff9800', fontSize: '0.65rem', height: 20 }} />
-                          )}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                )}
+      <Box sx={{ px: "4vw", mt: -4, position: "relative", zIndex: 8, pb: 8 }}>
+        {progressItem ? (
+          <Box sx={{ border: "1px solid rgba(255,255,255,.15)", bgcolor: "rgba(18,20,23,.94)", borderRadius: 2, p: 2, mb: 3.5, display: "grid", gridTemplateColumns: "280px 1fr auto", alignItems: "center", gap: 2.5, boxShadow: "0 22px 60px rgba(0,0,0,.36)" }}>
+            <Box sx={{ height: 124, borderRadius: 1.5, overflow: "hidden", position: "relative", bgcolor: "#111" }}>
+              {posterUrl ? <Box component="img" src={posterUrl} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
+              <Box sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", bgcolor: "rgba(0,0,0,.18)" }}>
+                <Box sx={{ width: 48, height: 48, borderRadius: "50%", border: "2px solid #fff", display: "grid", placeItems: "center", bgcolor: "rgba(0,0,0,.4)" }}><PlayArrowIcon /></Box>
               </Box>
-
-              {seasonNotAvailableMsg && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 8, bgcolor: 'rgba(255,152,0,0.08)', borderRadius: 3, border: '1px solid rgba(255,152,0,0.2)' }} data-testid="season-not-available">
-                  <EventIcon sx={{ fontSize: 56, color: '#ff9800', mb: 2 }} />
-                  <Typography variant="h6" sx={{ color: '#fff', mb: 1, fontWeight: 600 }}>Stagione non ancora disponibile</Typography>
-                  <Typography sx={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', maxWidth: 400 }}>
-                    {seasonReleaseDate ? `Questa stagione sarà disponibile il ${seasonReleaseDate}` : seasonNotAvailableMsg}
-                  </Typography>
-                </Box>
-              )}
-
-              {!seasonNotAvailableMsg && (
-                <Stack spacing={2}>
-                  {isLoadingEpisodes && (
-                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                      <CircularProgress size={32} sx={{ color: '#e50914' }} />
-                    </Box>
-                  )}
-                  {!isLoadingEpisodes && filteredEpisodes.map((episode: any) => (
-                    <Box key={episode.episode_number} sx={{ display: 'flex', gap: 3, p: 2.5, bgcolor: 'rgba(255,255,255,0.03)', borderRadius: 3, border: '1px solid rgba(255,255,255,0.08)', transition: 'all 0.3s ease', '&:hover': { bgcolor: 'rgba(255,255,255,0.06)', borderColor: 'rgba(229, 9, 20, 0.3)' } }} data-testid={`episode-${episode.episode_number}`}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 48, color: 'rgba(255,255,255,0.5)', fontSize: '1.5rem', fontWeight: 700 }}>
-                        {episode.episode_number}
-                      </Box>
-                      <Box sx={{ position: 'relative', width: { xs: 120, md: 180 }, minWidth: { xs: 120, md: 180 }, aspectRatio: '16/9', borderRadius: 2, overflow: 'hidden', bgcolor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {/* Do not reintroduce TMDB still images through the episode list. */}
-                        <MovieIcon sx={{ fontSize: 32, color: 'rgba(255,255,255,0.3)' }} />
-                        {(() => {
-                          const progress = getEpisodeProgress(selectedSeason, episode.episode_number);
-                          return progress > 0 ? (
-                            <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 4, bgcolor: 'rgba(100,100,100,0.6)' }}>
-                              <Box sx={{ height: '100%', width: `${progress}%`, bgcolor: '#e50914', transition: 'width 0.3s ease' }} />
-                            </Box>
-                          ) : null;
-                        })()}
-                      </Box>
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }}>
-                          <Box>
-                            <Typography variant="subtitle1" fontWeight={600} sx={{ color: "#fff" }}>{episode.name}</Typography>
-                            {(episode.air_date || episode.air_date_it) && (
-                              <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.5)" }}>{episode.air_date_it || formatItalianDate(episode.air_date)}</Typography>
-                            )}
-                          </Box>
-                          {episode.runtime && (
-                            <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.5)", whiteSpace: 'nowrap', ml: 2 }}>{episode.runtime} min</Typography>
-                          )}
-                        </Stack>
-                        <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.7)", display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.6 }}>
-                          {episode.overview || "Descrizione non disponibile."}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', ml: 2 }}>
-                        <IconButton onClick={() => {
-                          if (!id || !selectedSeason || !episode.episode_number) return;
-                          const existingItem = continueWatchingItems.find(item => item.tmdb_id === Number(id) && item.media_type === 'tv' && item.season === selectedSeason && item.episode === episode.episode_number);
-                          let watchUrl = `/${MAIN_PATH.watch}/tv/${id}?s=${selectedSeason}&e=${episode.episode_number}`;
-                          if (existingItem?.progress && existingItem.progress > 30) watchUrl += `&t=${Math.floor(existingItem.progress)}`;
-                          navigate(watchUrl);
-                        }} sx={{ bgcolor: "rgba(255,255,255,0.1)", border: "2px solid rgba(255,255,255,0.3)", width: 48, height: 48, transition: "all 0.25s ease", "&:hover": { bgcolor: "#e50914", borderColor: "#e50914", transform: "scale(1.1)" } }} data-testid={`play-episode-${episode.episode_number}`}>
-                          <PlayArrowIcon sx={{ color: "#fff", fontSize: 28 }} />
-                        </IconButton>
-                      </Box>
-                    </Box>
-                  ))}
-                  {!isLoadingEpisodes && filteredEpisodes.length === 0 && !seasonNotAvailableMsg && (
-                    <Box sx={{ py: 8, textAlign: 'center', bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 3 }}>
-                      <MovieIcon sx={{ fontSize: 48, color: 'rgba(255,255,255,0.3)', mb: 2 }} />
-                      <Typography sx={{ color: "rgba(255,255,255,0.5)" }}>Gli episodi di questa stagione non sono ancora disponibili</Typography>
-                    </Box>
-                  )}
-                </Stack>
-              )}
             </Box>
-          )}
-
-          {activeTab === "details" && (
-            <Grid container spacing={5}>
-              <Grid item xs={12} md={6}>
-                <Stack spacing={4}>
-                  {detail.spoken_languages?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Lingue disponibili</Typography>
-                      <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.85)" }}>{detail.spoken_languages.map((l: any) => l.name).join(", ")}</Typography>
-                    </Box>
-                  )}
-                  {detail.production_companies?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Produzione</Typography>
-                      <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.85)" }}>{detail.production_companies.map((c: any) => c.name).join(", ")}</Typography>
-                    </Box>
-                  )}
-                  {detail.status && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Stato</Typography>
-                      <Chip label={detail.status} size="small" sx={{ bgcolor: detail.status === 'Released' || detail.status === 'Returning Series' ? 'rgba(70, 211, 105, 0.2)' : 'rgba(255,255,255,0.1)', color: detail.status === 'Released' || detail.status === 'Returning Series' ? '#46d369' : 'rgba(255,255,255,0.8)', fontWeight: 600 }} />
-                    </Box>
-                  )}
-                  {isMovie && detail.budget > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Budget</Typography>
-                      <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.85)", fontWeight: 600 }}>${detail.budget.toLocaleString()}</Typography>
-                    </Box>
-                  )}
-                  {isMovie && detail.revenue > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Incasso</Typography>
-                      <Typography variant="body1" sx={{ color: "#46d369", fontWeight: 600 }}>${detail.revenue.toLocaleString()}</Typography>
-                    </Box>
-                  )}
-                </Stack>
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <Stack spacing={4}>
-                  {isTVShow && (detail as any).networks?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Network</Typography>
-                      <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.85)" }}>{(detail as any).networks.map((n: any) => n.name).join(", ")}</Typography>
-                    </Box>
-                  )}
-                  {isTVShow && (detail as any).created_by?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Creato da</Typography>
-                      <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.85)" }}>{(detail as any).created_by.map((c: any) => c.name).join(", ")}</Typography>
-                    </Box>
-                  )}
-                  {detail.production_countries?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>Paese di produzione</Typography>
-                      <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.85)" }}>{detail.production_countries.map((c: any) => c.name).join(", ")}</Typography>
-                    </Box>
-                  )}
-                  {detail.imdb_id && (
-                    <Box>
-                      <Typography variant="subtitle2" sx={{ mb: 1.5, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>IMDB ID</Typography>
-                      <Typography variant="body1" sx={{ color: '#f5c518', cursor: 'pointer', '&:hover': { textDecoration: 'underline' } }} onClick={() => window.open(`https://www.imdb.com/title/${detail.imdb_id}`, '_blank')}>
-                        {detail.imdb_id}
-                      </Typography>
-                    </Box>
-                  )}
-                </Stack>
-              </Grid>
-            </Grid>
-          )}
-
-          {activeTab === "trailer" && (
             <Box>
-              {trailerKey ? (
-                <Box sx={{ width: '100%', maxWidth: 1000, mx: 'auto' }}>
-                  <CleanTrailer key={trailerKey} videoKey={trailerKey} poster={backdropUrl as string} testId="trailer-tab-player" />
-                </Box>
-              ) : (
-                <Box sx={{ textAlign: 'center', py: 10, bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 3, border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <PlayCircleOutlineIcon sx={{ fontSize: 72, color: 'rgba(255,255,255,0.3)', mb: 2 }} />
-                  <Typography sx={{ color: "rgba(255,255,255,0.5)" }} variant="h6">Nessun trailer disponibile</Typography>
-                </Box>
-              )}
-            </Box>
-          )}
-
-          {activeTab === "download" && isMovie && (
-            <Box sx={{ textAlign: 'center', py: 8, px: 4, bgcolor: 'rgba(255,255,255,0.02)', borderRadius: 3, border: '1px solid rgba(255,255,255,0.08)', maxWidth: 600, mx: 'auto' }}>
-              <Box sx={{ width: 80, height: 80, borderRadius: '50%', bgcolor: 'rgba(229, 9, 20, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', mx: 'auto', mb: 3 }}>
-                <DownloadIcon sx={{ fontSize: 40, color: '#e50914' }} />
+              <Typography sx={{ fontSize: 19, fontWeight: 800, mb: .6 }}>Continua da dove hai interrotto</Typography>
+              <Typography sx={{ fontSize: 17, fontWeight: 700, mb: 1.4 }}>
+                {isTV ? `S${progressItem.season || 1}:E${progressItem.episode || 1}` : title}
+                {isTV && progressItem.title ? ` · ${progressItem.title}` : ""}
+              </Typography>
+              <Box sx={{ width: "min(520px, 100%)", height: 5, bgcolor: "rgba(255,255,255,.22)", borderRadius: 999, overflow: "hidden", mb: .8 }}>
+                <Box sx={{ width: `${progressPercent}%`, height: "100%", bgcolor: "#e50914" }} />
               </Box>
-              <Typography variant="h5" sx={{ mb: 2, fontWeight: 700, color: "#fff" }}>Download disponibile</Typography>
-              <Typography variant="body1" sx={{ color: "rgba(255,255,255,0.6)", mb: 4, maxWidth: 400, mx: 'auto' }}>Scarica "{getTitle()}" per guardarlo offline sui tuoi dispositivi.</Typography>
-              <Stack direction="row" spacing={2} justifyContent="center" flexWrap="wrap" useFlexGap>
-                <NetflixIconButton sx={{ bgcolor: "#e50914", color: "#fff", px: 4, py: 1.5, borderRadius: "8px", fontWeight: 700, fontSize: '1rem', transition: 'all 0.25s ease', "&:hover": { bgcolor: "#c40812", transform: 'scale(1.02)' } }} data-testid="download-hd-button">
-                  <DownloadIcon sx={{ mr: 1 }} />Scarica HD
-                </NetflixIconButton>
-                <NetflixIconButton sx={{ bgcolor: "rgba(255,255,255,0.1)", color: "#fff", px: 4, py: 1.5, borderRadius: "8px", fontWeight: 700, fontSize: '1rem', border: '1px solid rgba(255,255,255,0.25)', transition: 'all 0.25s ease', "&:hover": { bgcolor: "rgba(255,255,255,0.2)", borderColor: 'rgba(255,255,255,0.4)' } }} data-testid="download-sd-button">
-                  <DownloadIcon sx={{ mr: 1 }} />Scarica SD
-                </NetflixIconButton>
-              </Stack>
-              <Typography variant="caption" sx={{ display: 'block', mt: 4, color: "rgba(255,255,255,0.4)" }}>Nota: Il download è simulato in questa demo</Typography>
+              <Typography sx={{ fontSize: 14, color: "rgba(255,255,255,.68)" }}>{secondsText(remainingSeconds)} rimanenti</Typography>
             </Box>
-          )}
-        </Box>
-
-        {similarList.length > 0 && (
-          <Box sx={{ mt: 8, mb: 6 }}>
-            <Typography variant="h5" sx={{ mb: 4, fontWeight: 700, color: "#fff" }}>Titoli correlati</Typography>
-            <Grid container spacing={2}>
-              {similarList.slice(0, 12).map((video: any) => (
-                <Grid item xs={4} sm={3} md={2} key={video.id}>
-                  <Box onClick={() => navigate(`/${MAIN_PATH.browse}/${mediaType}/${video.id}`)} sx={{ cursor: "pointer", borderRadius: 2, overflow: "hidden", transition: "all 0.35s ease", position: 'relative', bgcolor: '#1a1a1a', "&:hover": { transform: "scale(1.08)", zIndex: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.6)', '& .overlay': { opacity: 1 } } }} data-testid={`similar-video-${video.id}`}>
-                    <Box component="img" src={getMediaImageUrl(video.id, video.poster_path ? 'poster' : 'backdrop', video.poster_path || video.backdrop_path, configuration?.images.base_url, video.poster_path ? 'w342' : 'w300')} alt={video.title || video.name} sx={{ width: "100%", aspectRatio: "2/3", objectFit: "cover", display: 'block' }} onError={(e: any) => { e.target.style.display = 'none'; }} />
-                    <Box className="overlay" sx={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.9) 100%)', opacity: 0, transition: 'opacity 0.3s ease', display: 'flex', alignItems: 'flex-end', p: 1.5 }}>
-                      <Stack spacing={0.5} sx={{ width: '100%' }}>
-                        <Typography variant="caption" sx={{ fontWeight: 600, color: '#fff', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.3, fontSize: '0.7rem' }}>{video.title || video.name}</Typography>
-                        <Stack direction="row" spacing={0.5} alignItems="center">
-                          <StarIcon sx={{ fontSize: 12, color: '#f5c518' }} />
-                          <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.7)", fontSize: '0.65rem' }}>{video.vote_average?.toFixed(1)}</Typography>
-                        </Stack>
-                      </Stack>
-                    </Box>
-                  </Box>
-                </Grid>
-              ))}
-            </Grid>
+            <Button onClick={() => goPlay(progressItem.season, progressItem.episode)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "#e50914", color: "#fff", px: 2.6, py: 1.2, fontSize: 16, fontWeight: 800, textTransform: "none", borderRadius: 1, "&:hover": { bgcolor: "#f6121d" } }}>
+              {isTV ? "Riprendi episodio" : "Riprendi"}
+            </Button>
           </Box>
-        )}
-      </Container>
+        ) : null}
+
+        {!isTV ? (
+          <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1.25fr 1fr 1fr", gap: 0, borderTop: "1px solid rgba(255,255,255,.08)", borderBottom: "1px solid rgba(255,255,255,.08)", mb: 5 }}>
+            {[
+              ["Regia", director],
+              ["Cast", cast.length ? cast.join("\n") : "—"],
+              ["Genere", genres.length ? genres.slice(0, 3).join(", ") : "—"],
+              ["Temi", themes.length ? themes.join(", ") : (genres.slice(1, 4).join(", ") || "—")],
+            ].map(([label, value], index) => (
+              <Box key={label} sx={{ py: 2.6, px: index ? 3 : 0, borderLeft: index ? "1px solid rgba(255,255,255,.08)" : "none", minHeight: 130 }}>
+                <Typography sx={{ fontSize: 15, color: "rgba(255,255,255,.56)", mb: .7 }}>{label}</Typography>
+                <Typography sx={{ fontSize: 16, lineHeight: 1.55, whiteSpace: "pre-line", color: "rgba(255,255,255,.9)" }}>{value}</Typography>
+              </Box>
+            ))}
+          </Box>
+        ) : null}
+
+        {isTV ? (
+          <Box ref={episodesRef} id="episodes" sx={{ scrollMarginTop: 90, mb: 5 }}>
+            <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", mb: 1.6 }}>
+              <Stack direction="row" spacing={1.8} sx={{ alignItems: "center" }}>
+                <Typography sx={{ fontSize: 27, fontWeight: 800 }}>Episodi</Typography>
+                <FormControl size="small">
+                  <Select
+                    value={selectedSeason}
+                    onChange={(event) => {
+                      const season = Number(event.target.value);
+                      setSelectedSeason(season);
+                      loadSeason(season);
+                    }}
+                    sx={{ color: "#fff", bgcolor: "#1b1d20", borderRadius: 999, minWidth: 145, fontWeight: 700, ".MuiOutlinedInput-notchedOutline": { border: "none" }, ".MuiSvgIcon-root": { color: "#fff" } }}
+                  >
+                    {(availableSeasons.length ? availableSeasons : [{ season_number: selectedSeason }]).map((season: any) => (
+                      <MenuItem key={season.season_number} value={Number(season.season_number)}>Stagione {season.season_number}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Stack>
+              <Typography sx={{ color: "rgba(255,255,255,.58)", fontSize: 14 }}>{episodes.length} episodi</Typography>
+            </Stack>
+
+            {episodesLoading ? (
+              <Box sx={{ minHeight: 160, display: "grid", placeItems: "center" }}><CircularProgress sx={{ color: "#e50914" }} /></Box>
+            ) : (
+              <Stack spacing={.8}>
+                {episodes.map((episode: any, index: number) => {
+                  const number = Number(episode?.episode_number || index + 1);
+                  const status = episodeStatus(number);
+                  const isCurrent = status.kind === "progress";
+                  const isNext = status.kind === "next";
+                  const image = episodeAbsoluteImage(episode, backdropUrl, mediaId);
+                  const duration = Number(episode?.runtime || 0);
+                  return (
+                    <Box
+                      key={episode?.id || `${selectedSeason}-${number}`}
+                      sx={{
+                        display: "grid",
+                        gridTemplateColumns: "58px 190px 235px 1fr 90px 220px 200px",
+                        alignItems: "center",
+                        minHeight: 94,
+                        border: "1px solid rgba(255,255,255,.09)",
+                        borderLeft: isCurrent ? "4px solid #e50914" : "1px solid rgba(255,255,255,.09)",
+                        borderRadius: 1.5,
+                        overflow: "hidden",
+                        bgcolor: isCurrent ? "rgba(35,40,45,.9)" : "rgba(16,18,20,.72)",
+                        transition: "background-color 180ms ease, transform 180ms ease",
+                        "&:hover": { bgcolor: "rgba(41,45,50,.96)", transform: "translateY(-1px)" },
+                      }}
+                    >
+                      <Typography sx={{ textAlign: "center", fontSize: 19, fontWeight: 800 }}>{number}</Typography>
+                      <Box sx={{ height: 92, overflow: "hidden", bgcolor: "#111" }}>
+                        <Box component="img" src={image} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      </Box>
+                      <Box sx={{ px: 2 }}>
+                        {isNext ? <Typography sx={{ color: "#ff3340", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".06em", mb: .25 }}>Prossimo episodio</Typography> : null}
+                        <Typography sx={{ fontSize: 16, fontWeight: 800 }}>{episode?.name || `Episodio ${number}`}</Typography>
+                      </Box>
+                      <Typography sx={{ px: 2, fontSize: 13.5, lineHeight: 1.4, color: "rgba(255,255,255,.68)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{episode?.overview || ""}</Typography>
+                      <Typography sx={{ fontSize: 13.5, color: "rgba(255,255,255,.7)" }}>{duration ? `${duration} min` : ""}</Typography>
+                      <Box sx={{ pr: 2 }}>
+                        <Box sx={{ height: 5, bgcolor: "rgba(255,255,255,.18)", borderRadius: 999, overflow: "hidden", mb: .55 }}>
+                          <Box sx={{ height: "100%", width: `${status.percent || 0}%`, bgcolor: status.percent ? "#e50914" : "transparent" }} />
+                        </Box>
+                        <Typography sx={{ fontSize: 12, color: "rgba(255,255,255,.6)" }}>{status.kind === "complete" ? "100% visto" : status.kind === "progress" ? `${Math.round(status.percent)}% visto` : ""}</Typography>
+                      </Box>
+                      <Box sx={{ pr: 2, display: "flex", justifyContent: "flex-end" }}>
+                        {status.kind === "complete" ? (
+                          <Box sx={{ px: 1.4, py: .75, borderRadius: 999, bgcolor: "rgba(20,107,61,.42)", color: "#baf6d0", fontSize: 13, fontWeight: 800 }}>Completato</Box>
+                        ) : status.kind === "progress" ? (
+                          <Button onClick={() => goPlay(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(229,9,20,.35)", color: "#fff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(229,9,20,.65)" } }}>Riprendi</Button>
+                        ) : status.kind === "next" ? (
+                          <Button onClick={() => goPlay(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(18,86,148,.52)", color: "#dbeeff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(18,86,148,.8)" } }}>Prossimo episodio</Button>
+                        ) : (
+                          <Button onClick={() => goPlay(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ color: "#fff", textTransform: "none", fontWeight: 800, border: "1px solid rgba(255,255,255,.35)", borderRadius: 999, px: 1.7, "&:hover": { bgcolor: "rgba(255,255,255,.1)" } }}>Riproduci</Button>
+                        )}
+                      </Box>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            )}
+          </Box>
+        ) : null}
+
+        <Box sx={{ mt: 3 }}>
+          <Typography sx={{ fontSize: 25, fontWeight: 800, mb: 1.8 }}>Altri contenuti simili</Typography>
+          <Box sx={{ display: "flex", gap: 1.4, overflowX: "auto", overflowY: "visible", pb: 5, scrollSnapType: "x proximity", "&::-webkit-scrollbar": { height: 5 }, "&::-webkit-scrollbar-thumb": { bgcolor: "rgba(255,255,255,.18)", borderRadius: 999 } }}>
+            {relatedItems.slice(0, 30).map((item: any) => (
+              <Box key={item.id || item.tmdbId} sx={{ flex: "0 0 clamp(235px, 18vw, 305px)", scrollSnapAlign: "start" }}>
+                <VideoItemWithHover video={{ ...item, type: typeSlug, media_type: typeSlug }} mediaType={type} />
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      </Box>
     </Box>
   );
 }
 
-Component.displayName = "DetailPage";
+export default Component;
