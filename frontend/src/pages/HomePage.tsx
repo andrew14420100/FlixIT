@@ -32,13 +32,13 @@ import {
   msUntilNextRomeRefresh,
 } from "src/utils/dailyRefresh";
 
-// Netflix-like loading budget: Hero + two feed rows first, the rest progressively.
 const INITIAL_ROWS = 2;
 const ROWS_PER_LOAD = 2;
 const ROW_ITEM_LIMIT = 42;
 const HOME_CACHE_PREFIX = "flix-home-v9";
 const DYNAMIC_SHARE_DEFAULT = 0.25;
 const DYNAMIC_SHARE_FAST_ROWS = 0.50;
+const FLIXIT_TOP10_URL = "/api/public/flixit-top10?hours=48";
 
 function readPersistedCache(key) {
   if (typeof window === "undefined") return null;
@@ -58,9 +58,7 @@ function writePersistedCache(key, data) {
       key,
       JSON.stringify({ savedAt: Date.now(), bucket: romeDailyBucket(), data })
     );
-  } catch {
-    // A full localStorage must never block the homepage.
-  }
+  } catch {}
 }
 
 const freshFetchJson = async (url, fallback, refreshBucket = romeDailyBucket()) => {
@@ -102,7 +100,7 @@ export function sectionUrl(section) {
   switch (t) {
     case "trending": return "/api/public/homepage/trending";
     case "latest": return "/api/public/homepage/latest";
-    case "top10": return "/api/player/top10-ratings";
+    case "top10": return FLIXIT_TOP10_URL;
     case "upcoming": return "/api/public/tmdb/upcoming";
     case "new_releases": return "/api/public/new-releases/movie";
     case "new_seasons": return "/api/public/new-releases/tv";
@@ -164,7 +162,6 @@ function releaseTimestamp(item) {
 function freshnessScore(item) {
   const releasedAt = releaseTimestamp(item);
   if (!releasedAt) return 15;
-
   const days = (Date.now() - releasedAt) / 86400000;
   if (days < 0) return Math.max(20, 92 - Math.abs(days) * 0.3);
   if (days <= 14) return 100;
@@ -181,7 +178,6 @@ function fameScore(item) {
   const popularity = Math.max(0, Number(item?.popularity || 0));
   const voteCount = Math.max(0, Number(item?.vote_count || 0));
   const rating = Math.max(0, Math.min(10, Number(item?.vote_average || 0)));
-
   return (
     Math.min(100, Math.log1p(popularity) * 17) * 0.52 +
     Math.min(100, Math.log1p(voteCount) * 11) * 0.30 +
@@ -209,16 +205,16 @@ function buildEngagementMap(payload) {
     const key = itemKey(item);
     if (!key) return;
 
+    // The new endpoint already exposes a real recent FlixIT score. Fall back to
+    // robust generic signals so older cached payloads remain usable during SWR.
+    if (Number.isFinite(Number(item?.flixit_score))) {
+      map[key] = Math.max(0, Math.min(100, Number(item.flixit_score)));
+      return;
+    }
+
     const views = Math.max(
       0,
-      Number(
-        item?.views ||
-        item?.view_count ||
-        item?.viewCount ||
-        item?.plays ||
-        item?.play_count ||
-        0
-      )
+      Number(item?.views || item?.view_count || item?.viewCount || item?.plays || 0)
     );
     const completed = Math.max(
       0,
@@ -228,13 +224,10 @@ function buildEngagementMap(payload) {
       0,
       Math.min(10, Number(item?.user_rating || item?.rating || item?.average_rating || 0))
     );
-
     const rankSignal = Math.max(15, 100 - index * 8);
     const viewsSignal = views ? Math.min(100, Math.log1p(views) * 15) : rankSignal;
     const completionSignal = completed ? Math.min(100, Math.log1p(completed) * 18) : 0;
     const ratingSignal = localRating ? localRating * 10 : 0;
-
-    // Real FlixIT activity is deliberately stronger than external popularity.
     map[key] = Math.min(
       100,
       rankSignal * 0.42 +
@@ -260,19 +253,14 @@ function rowScore(item, type, originalIndex, engagementMap = {}) {
     case "airing_today":
     case "on_the_air":
       return local * 0.34 + fresh * 0.36 + famous * 0.18 + endpointRank * 0.12;
-
     case "trending":
       return local * 0.40 + endpointRank * 0.26 + famous * 0.20 + fresh * 0.14;
-
     case "popular":
       return local * 0.42 + famous * 0.28 + endpointRank * 0.18 + fresh * 0.12;
-
     case "top_rated":
       return local * 0.40 + famous * 0.32 + endpointRank * 0.18 + fresh * 0.10;
-
     case "upcoming":
       return local * 0.20 + endpointRank * 0.36 + famous * 0.24 + fresh * 0.20;
-
     case "genre":
     default:
       return local * 0.42 + famous * 0.23 + fresh * 0.20 + endpointRank * 0.15;
@@ -293,11 +281,6 @@ function dynamicShareForType(type) {
     : DYNAMIC_SHARE_DEFAULT;
 }
 
-/**
- * Preserve most of the upstream row order and replace only controlled slots with
- * the strongest current candidates. Genre/general rows are ~75% stable / 25%
- * dynamic; genuinely fast-moving rows may use up to 50% dynamic slots.
- */
 function rankDailyItems(items, type, engagementMap = {}) {
   const valid = uniqueItems(items).filter((item) => item && itemKey(item));
   if (type === "top10" || valid.length <= 3) return valid;
@@ -329,7 +312,6 @@ function rankDailyItems(items, type, engagementMap = {}) {
     const candidate = dynamicSet.has(index) ? dynamicQueue.shift() : stableQueue.shift();
     if (candidate) out.push(candidate);
   }
-
   [...stableQueue, ...dynamicQueue].forEach((item) => {
     if (item && !out.some((existing) => itemKey(existing) === itemKey(item))) out.push(item);
   });
@@ -340,8 +322,6 @@ function buildDailySnapshot(incomingData, type) {
   const valid = uniqueItems(incomingData?.items || []);
   return {
     ...(incomingData || {}),
-    // Keep enough of the original provider pool so hybrid ranking can change a
-    // few slots without having to refetch while the 06:00 snapshot is fresh.
     items: valid.slice(0, type === "top10" ? 10 : Math.max(ROW_ITEM_LIMIT, 80)),
   };
 }
@@ -405,12 +385,9 @@ function buildExtraSections(templates, adminSections, preferences, userId) {
 
   for (const template of templates || []) {
     if (!sectionUrl(template)) continue;
-
     const signature = sectionSignature(template);
     const normalizedName = String(template.name || "").trim().toLowerCase();
-    if (used.has(signature) || (normalizedName && usedNames.has(normalizedName))) {
-      continue;
-    }
+    if (used.has(signature) || (normalizedName && usedNames.has(normalizedName))) continue;
 
     used.add(signature);
     if (normalizedName) usedNames.add(normalizedName);
@@ -438,11 +415,7 @@ function buildExtraSections(templates, adminSections, preferences, userId) {
 
 function RowSkeleton({ title }) {
   return (
-    <Box
-      data-testid="row-skeleton"
-      className="row-title"
-      sx={{ pl: { xs: 2, sm: 3, md: "4vw" } }}
-    >
+    <Box data-testid="row-skeleton" className="row-title" sx={{ pl: { xs: 2, sm: 3, md: "4vw" } }}>
       <Typography variant="h5" sx={{ fontWeight: 700, color: "#fff", mb: 1.5 }}>
         {title}
       </Typography>
@@ -481,8 +454,6 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
       writePersistedCache(cacheKey, snapshot);
       return snapshot;
     },
-    // Stale-while-revalidate: yesterday's valid row paints immediately at 06:00
-    // while the new daily snapshot refreshes silently behind it.
     initialData: initialCache?.data,
     initialDataUpdatedAt: cacheIsCurrent ? initialCache?.savedAt : 0,
     staleTime: DAILY_REFRESH_MS,
@@ -499,7 +470,6 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
 
   const items = useMemo(() => {
     if (isPending && !data) return null;
-
     const ranked = rankDailyItems(data?.items || [], type, engagementMap);
     if (isTop10) return ranked.slice(0, 10);
 
@@ -537,8 +507,6 @@ export function Component() {
   const sentinelRef = useRef(null);
   const resetDedupe = useHomeDedupe((state) => state.reset);
 
-  // Flip the frontend snapshot exactly at the same 06:00 Europe/Rome boundary
-  // used by backend artwork/trailer maintenance, even when a tab stays open.
   useEffect(() => {
     let timer = 0;
     const schedule = () => {
@@ -570,7 +538,7 @@ export function Component() {
     queryKey: ["home-engagement-v9", refreshBucket],
     queryFn: async () => {
       const payload = await freshFetchJson(
-        "/api/player/top10-ratings",
+        FLIXIT_TOP10_URL,
         { items: [] },
         refreshBucket
       );
@@ -616,7 +584,12 @@ export function Component() {
         preferences,
         userId
       );
-      const nextFeed = [...admin, ...automatic];
+      const all = [...admin, ...automatic];
+      // Keep the macro structure stable and pin Top 10 high without otherwise
+      // shuffling administrator-defined vertical section order.
+      const top10 = all.filter((s) => (s.section_type || s.apiString) === "top10");
+      const rest = all.filter((s) => (s.section_type || s.apiString) !== "top10");
+      const nextFeed = [...top10, ...rest];
       writePersistedCache(feedCacheKey, nextFeed);
       return nextFeed;
     },
@@ -637,18 +610,27 @@ export function Component() {
   const onRowSettled = useCallback(() => {
     startTransition(() => setTick((t) => t + 1));
   }, []);
-  const total = feed?.length || 0;
+
+  const top10Section = useMemo(
+    () => (feed || []).find((s) => (s.section_type || s.apiString) === "top10") || null,
+    [feed]
+  );
+  const ordinaryFeed = useMemo(
+    () => (feed || []).filter((s) => (s.section_type || s.apiString) !== "top10"),
+    [feed]
+  );
+  const total = ordinaryFeed.length;
   const hasMore = visibleCount < total;
 
   useEffect(() => {
     if (feed) {
       startTransition(() => {
         setVisibleCount((count) =>
-          Math.min(Math.max(INITIAL_ROWS, count), feed.length || INITIAL_ROWS)
+          Math.min(Math.max(INITIAL_ROWS, count), ordinaryFeed.length || INITIAL_ROWS)
         );
       });
     }
-  }, [feed]);
+  }, [feed, ordinaryFeed.length]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -668,8 +650,8 @@ export function Component() {
   }, [hasMore, total, visibleCount, tick]);
 
   const visibleSections = useMemo(
-    () => (feed || []).slice(0, visibleCount),
-    [feed, visibleCount]
+    () => ordinaryFeed.slice(0, visibleCount),
+    [ordinaryFeed, visibleCount]
   );
 
   return (
@@ -702,6 +684,18 @@ export function Component() {
         data-testid="home-rows"
       >
         <ContinueWatchingSection />
+
+        {top10Section && (
+          <SectionRow
+            key={top10Section.key}
+            section={top10Section}
+            index={-50}
+            onSettled={onRowSettled}
+            refreshBucket={refreshBucket}
+            engagementMap={engagementMap}
+          />
+        )}
+
         <HomeSmartSections />
 
         {visibleSections.map((section, index) => (
