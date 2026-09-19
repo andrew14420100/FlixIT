@@ -201,8 +201,10 @@ export default function NetflixRankedCardWithHover({
     item?.title_logo_path
   );
 
+  // Required priority for a horizontal hover: Netflix -> historical mapped CDN
+  // -> other saved non-TMDB artwork. The ranked tile remains portrait-first.
   const hoverBackdrop =
-    hoverResolved || legacyLandscape || mappedBackdrop || existingNetflixPoster || rankedResolved || mappedPoster || legacyPoster;
+    hoverResolved || mappedBackdrop || legacyLandscape || existingNetflixPoster || rankedResolved || mappedPoster || legacyPoster;
   const hoverPoster = rankedResolved || existingNetflixPoster || mappedPoster || legacyPoster || hoverBackdrop;
 
   return (
