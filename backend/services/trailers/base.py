@@ -2,9 +2,9 @@
 
 The multi-provider trailer pipeline is intentionally independent from the main
 movie/episode player. It rejects YouTube in the native resolver, never upscales,
-and always prefers the highest verified native resolution exposed by providers.
-2160p/4K is the preferred target when available; lower native resolutions remain
-valid fallbacks instead of making the trailer disappear completely.
+and always prefers the highest verified native resolution exposed by providers
+up to 2160p/4K UHD. Lower native resolutions remain valid fallbacks instead of
+making the trailer disappear completely.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ BLOCKED_HOST_SUFFIXES = (
 )
 MIN_TRAILER_HEIGHT = 720
 PREFERRED_TRAILER_HEIGHT = 2160
+MAX_TRAILER_HEIGHT = 2160
 
 
 def now_iso() -> str:
@@ -185,13 +186,18 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
     url = candidate.trailer_url or candidate.manifest_url
     if not url or is_blocked_url(url):
         return False
+    height = int(candidate.height or 0)
+    # A known rendition above 2160p is deliberately not selected. The player
+    # target is native UHD/4K at most; lower native renditions remain fallbacks.
+    if height > MAX_TRAILER_HEIGHT:
+        return False
     if allow_manual:
         return True
     if candidate.confidence < 0.90:
         return False
     if not candidate.verified:
         return False
-    if int(candidate.height or 0) < MIN_TRAILER_HEIGHT:
+    if height < MIN_TRAILER_HEIGHT:
         return False
     if not candidate.browser_compatible and not candidate.requires_remux:
         return False
@@ -221,7 +227,7 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
 
 
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
-    """Pick the maximum native-quality usable candidate without an artificial 1080p ceiling."""
+    """Pick the maximum native-quality usable candidate, capped at 2160p/4K UHD."""
     usable = [c for c in candidates if candidate_is_usable(c)]
     if not usable:
         return None
@@ -229,10 +235,11 @@ def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False
 
 
 def perfect_candidate(candidate: TrailerCandidate) -> bool:
+    height = int(candidate.height or 0)
     return bool(
         candidate.verified
         and candidate.browser_compatible
-        and int(candidate.height or 0) >= PREFERRED_TRAILER_HEIGHT
+        and PREFERRED_TRAILER_HEIGHT <= height <= MAX_TRAILER_HEIGHT
         and language_rank(candidate.audio_language) == 3
         and candidate.official
         and type_rank(candidate.trailer_type) >= 5
