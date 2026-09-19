@@ -102,10 +102,6 @@ def _best_logo(assets: list[dict], _existing=None) -> Optional[dict]:
     if not logos:
         return None
 
-    # Netflix is requested with x-netflix.context.locales=it-IT. When the asset
-    # key explicitly carries a language, never surface an English/foreign title
-    # logo on the Italian UI. Neutral keys are retained only as a fallback for
-    # language-independent artwork.
     italian = [a for a in logos if _logo_locale(a) == "it"]
     neutral = [a for a in logos if _logo_locale(a) == "neutral"]
     logos = italian or neutral
@@ -166,7 +162,10 @@ def _choose(self, doc: dict, *, context: str, viewport: str, profile_id: str, ex
                 if 1.50 <= ratio <= 2.00:
                     exact_shape.append(asset)
 
-    candidates = exact_shape or same_orientation or unknown
+    # Do not blank a tile merely because Netflix returned only the opposite
+    # orientation. Prefer the right shape, then same orientation, then unknown,
+    # and finally crop the best native Netflix visual already available.
+    candidates = exact_shape or same_orientation or unknown or visuals
     if not candidates:
         return None, logo
 
