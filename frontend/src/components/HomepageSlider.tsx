@@ -112,9 +112,9 @@ export default function HomepageSlider({
 
   const isTop10 = /top\s*10/i.test(title);
 
-  // Give the resolver a deep pool so strict title-treatment validation can
-  // still publish ~50 cards. The batch hook resolves the first screen with high
-  // priority and the rest in the background instead of blocking the whole row.
+  // A deep candidate pool lets strict artwork validation still publish about
+  // 50 usable cards. The artwork hook itself prioritises the first screen and
+  // hydrates the rest in the background.
   const artworkCandidates = useMemo(
     () => visibleItems.slice(0, isTop10 ? 10 : ARTWORK_CANDIDATE_LIMIT),
     [visibleItems, isTop10]
@@ -130,6 +130,9 @@ export default function HomepageSlider({
     [artworkCandidates, artworkBatch.data, isTop10]
   );
 
+  // Paint roughly two screens immediately, then prepare the rest during idle
+  // time. This keeps the page light at first paint while still making all ~50
+  // cards available before the user reaches the end of the row.
   const minimumBatch = Math.min(readyItems.length, Math.max(tiles * 2 + 2, 14));
   const [renderedCount, setRenderedCount] = useState(minimumBatch);
 
@@ -140,12 +143,40 @@ export default function HomepageSlider({
     });
   }, [readyItems.length, minimumBatch]);
 
+  useEffect(() => {
+    if (renderedCount >= readyItems.length) return;
+
+    let cancelled = false;
+    let idleId: any = null;
+    let timeoutId: any = null;
+    const grow = () => {
+      if (cancelled) return;
+      setRenderedCount((current) =>
+        Math.min(readyItems.length, current + Math.max(8, tiles * 2))
+      );
+    };
+
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = (window as any).requestIdleCallback(grow, { timeout: 450 });
+    } else if (typeof window !== "undefined") {
+      timeoutId = window.setTimeout(grow, 160);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId !== null && typeof (window as any).cancelIdleCallback === "function") {
+        (window as any).cancelIdleCallback(idleId);
+      }
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, [renderedCount, readyItems.length, tiles]);
+
   const ensureRenderedThrough = useCallback(
     (startIndex: number) => {
       setRenderedCount((current) =>
         Math.min(
           readyItems.length,
-          Math.max(current, Math.max(minimumBatch, startIndex + tiles * 3))
+          Math.max(current, Math.max(minimumBatch, startIndex + tiles * 4))
         )
       );
     },
