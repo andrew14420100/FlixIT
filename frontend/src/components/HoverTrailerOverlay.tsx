@@ -14,6 +14,11 @@ const LOGO_FADE_MS = 300;
  * - after the entrance it stays fully visible for a real 5 seconds;
  * - then it dissolves for 300ms and stays hidden for that trailer session;
  * - when playback ends/fails the underlying artwork + logo returns immediately.
+ *
+ * The trailer deliberately keeps the classic 16:9 video surface instead of
+ * stretching to the full mini-modal player shell. The shell is fractionally
+ * taller, leaving the same thin artwork/merchandising strip visible above the
+ * metadata panel that Netflix shows in the reference hover.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -121,14 +126,11 @@ export default function HoverTrailerOverlay({
         onOpen?.(event);
       }}
       style={{
-        // Fill the exact ExpandedCard player box instead of using a second 16:9
-        // calculation. The player container uses Netflix's slightly different
-        // native ratio; two independent ratios could expose a sub-pixel seam
-        // between the trailer and the metadata panel on some zoom/DPI values.
         position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
+        left: 0,
+        right: 0,
+        top: 0,
+        aspectRatio: "16 / 9",
         overflow: "hidden",
         borderRadius: "6px 6px 0 0",
         background: playing ? "#000" : "transparent",
