@@ -14,18 +14,27 @@ export const initialItemState: PaginatedMovieResult = {
   total_results: 0,
 };
 
+const freshItemState = (): PaginatedMovieResult => ({
+  page: 0,
+  results: [],
+  total_pages: 0,
+  total_results: 0,
+});
+
 const discoverSlice = createSlice({
   name: "discover",
   initialState,
   reducers: {
     setNextPage: (state, action) => {
       const { mediaType, itemKey } = action.payload;
+      if (!state[mediaType]) state[mediaType] = {};
+      if (!state[mediaType][itemKey]) state[mediaType][itemKey] = freshItemState();
       state[mediaType][itemKey].page += 1;
     },
     initiateItem: (state, action) => {
       const { mediaType, itemKey } = action.payload;
       if (!state[mediaType]) state[mediaType] = {};
-      if (!state[mediaType][itemKey]) state[mediaType][itemKey] = initialItemState;
+      if (!state[mediaType][itemKey]) state[mediaType][itemKey] = freshItemState();
     },
   },
   extraReducers(builder) {
@@ -44,9 +53,15 @@ const discoverSlice = createSlice({
           itemKey,
         } = action.payload;
         if (!state[mediaType]) state[mediaType] = {};
-        if (!state[mediaType][itemKey]) state[mediaType][itemKey] = { ...initialItemState };
+        if (!state[mediaType][itemKey]) state[mediaType][itemKey] = freshItemState();
+        const currentResults = Array.isArray(state[mediaType][itemKey].results)
+          ? state[mediaType][itemKey].results
+          : [];
         state[mediaType][itemKey].page = page;
-        state[mediaType][itemKey].results.push(...results);
+        state[mediaType][itemKey].results = [
+          ...currentResults,
+          ...(Array.isArray(results) ? results : []),
+        ];
         state[mediaType][itemKey].total_pages = total_pages;
         state[mediaType][itemKey].total_results = total_results;
       }
@@ -159,9 +174,6 @@ const extendedApi = tmdbApi.injectEndpoints({
       },
       { mediaType: MEDIA_TYPE; id: number }
     >({
-      // DetailPage used to make a separate direct TMDB /images request. Reuse
-      // FLIX-IT's automatic 14-day media-assets cache instead so logos follow
-      // the same no-admin pipeline as cards and Hero.
       queryFn: async ({ mediaType, id }, _api, _extra, baseQuery) => {
         try {
           const type = mediaType === MEDIA_TYPE.Tv ? "tv" : "movie";
