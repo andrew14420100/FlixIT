@@ -17,15 +17,32 @@ if getattr(_core, "TMDB_API_KEY", None):
 
 # Keep the existing Netflix artwork provider, but rank its already exposed
 # assets by native quality: 4K -> 2K -> 1080-class -> 720-class -> best lower.
-# No upscaling and no additional image provider is introduced.
+# No upscaling and no additional image provider is introduced here.
 from services.netflix_artwork_quality import install_netflix_artwork_quality
 
 install_netflix_artwork_quality()
 
+from services.official_artwork import OfficialArtworkResolver
 from services.omni_process import omni_lifespan, omni_status
 
 
 app = _core.app
+
+# One visual resolver is shared by Home, Top 10, Hero and Detail. TMDB is used
+# only to identify a title/year/external id; returned artwork is Netflix, Apple
+# or IMDb and never image.tmdb.org.
+_official_artwork = OfficialArtworkResolver(
+    _core.db,
+    _core.fetch_tmdb_data,
+    lambda: getattr(_core._player, "artwork_resolver", None),
+)
+
+
+@app.get("/api/public/official-artwork/{media_type}/{tmdb_id}", tags=["artwork"])
+async def flixit_official_artwork(media_type: str, tmdb_id: int):
+    media_type = "tv" if media_type == "tv" else "movie"
+    return await _official_artwork.resolve(media_type, int(tmdb_id))
+
 
 # Keep FastAPI/Starlette's original lifespan so every startup/shutdown handler
 # registered by server_core still runs (trailer resolver, catalog warmers, etc.).
