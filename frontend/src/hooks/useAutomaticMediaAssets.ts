@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v1";
+const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v2";
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -114,7 +114,7 @@ export default function useAutomaticMediaAssets(
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "netflix-existing-apple-imdb-no-tmdb-images",
+    image_source_policy: "netflix-existing-apple-prime-imdb-no-tmdb-images",
   }), [
     id,
     typeSlug,
@@ -186,8 +186,8 @@ export default function useAutomaticMediaAssets(
       const officialFallbackLogo = firstNonTmdbArtwork(official?.fallback?.logo_url);
 
       // Required order for visuals:
-      // Netflix -> existing historical mapping -> Apple/iTunes -> IMDb -> saved
-      // non-TMDB asset. No TMDB image is ever promoted into the UI.
+      // Netflix -> existing historical mapping -> Apple/iTunes -> Prime Video
+      // -> IMDb -> saved non-TMDB asset. No TMDB image is promoted into the UI.
       const landscape =
         netflixLandscape ||
         itemNetflixLandscape ||
@@ -223,7 +223,7 @@ export default function useAutomaticMediaAssets(
         official_artwork_source: official?.source || official?.fallback?.source || null,
         embedded_title_treatment: !!official?.embedded_title_treatment,
         image_quality: "max-native",
-        image_source_policy: "netflix-existing-apple-imdb-no-tmdb-images",
+        image_source_policy: "netflix-existing-apple-prime-imdb-no-tmdb-images",
         upscaled: false,
       };
     },
