@@ -1,9 +1,10 @@
 """FlixIT FastAPI entrypoint.
 
 The full application remains in ``server_core.py``. This thin entrypoint adds
-lifecycle management for an optional localhost Node/Stremio runtime without
-changing any existing API routes or player contracts.
+lifecycle management for optional runtimes plus the low-priority daily artwork /
+trailer maintenance policy.
 """
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -15,12 +16,12 @@ from server_core import *  # noqa: F401,F403 - preserve existing imports/contrac
 if getattr(_core, "TMDB_API_KEY", None):
     os.environ.setdefault("TMDB_API_KEY", str(_core.TMDB_API_KEY))
 
-# Keep the existing Netflix artwork provider, but rank its already exposed
-# assets by native quality: 4K -> 2K -> 1080-class -> 720-class -> best lower.
-# No upscaling and no additional image provider is introduced here.
 from services.netflix_artwork_quality import install_netflix_artwork_quality
+from services.trailer_daily_policy import install_trailer_daily_policy
 
+# Install policies before the application lifespan starts its background workers.
 install_netflix_artwork_quality()
+install_trailer_daily_policy()
 
 from services.official_artwork import OfficialArtworkResolver
 from services.omni_process import omni_lifespan, omni_status
@@ -29,13 +30,14 @@ from services.omni_process import omni_lifespan, omni_status
 app = _core.app
 
 # One visual resolver is shared by Home, Top 10, Hero and Detail. TMDB is used
-# only to identify a title/year/external id; returned artwork is Netflix, Apple
-# or IMDb and never image.tmdb.org.
+# only to identify title/year/external ids; returned artwork never uses
+# image.tmdb.org.
 _official_artwork = OfficialArtworkResolver(
     _core.db,
     _core.fetch_tmdb_data,
     lambda: getattr(_core._player, "artwork_resolver", None),
 )
+app.state.official_artwork_resolver = _official_artwork
 
 
 @app.get("/api/public/official-artwork/{media_type}/{tmdb_id}", tags=["artwork"])
@@ -46,15 +48,50 @@ async def flixit_official_artwork(media_type: str, tmdb_id: int):
 
 # Keep FastAPI/Starlette's original lifespan so every startup/shutdown handler
 # registered by server_core still runs (trailer resolver, catalog warmers, etc.).
-# Omni is composed inside that lifecycle instead of replacing it.
 _core_lifespan = app.router.lifespan_context
+
+
+async def _daily_visual_maintenance(stop: asyncio.Event) -> None:
+    """Quietly refresh recently used assets once per day.
+
+    The first pass is delayed so normal Home/API traffic always gets CPU/network
+    priority after a backend restart. The client-side Home feed has its own 24h
+    refetch; clearing the small public response cache makes its next pass observe
+    newly released/upcoming metadata immediately.
+    """
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=60)
+        return
+    except asyncio.TimeoutError:
+        pass
+
+    while not stop.is_set():
+        try:
+            await _official_artwork.refresh_daily(limit=180)
+            clear = getattr(_core, "clear_response_cache", None)
+            if callable(clear):
+                clear()
+        except Exception:
+            # Maintenance is best-effort and must never take down the API.
+            pass
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=24 * 60 * 60)
+        except asyncio.TimeoutError:
+            pass
 
 
 @asynccontextmanager
 async def flixit_lifespan(app):
     async with _core_lifespan(app):
         async with omni_lifespan(app):
-            yield
+            stop = asyncio.Event()
+            maintenance_task = asyncio.create_task(_daily_visual_maintenance(stop))
+            try:
+                yield
+            finally:
+                stop.set()
+                maintenance_task.cancel()
+                await asyncio.gather(maintenance_task, return_exceptions=True)
 
 
 app.router.lifespan_context = flixit_lifespan
