@@ -223,12 +223,14 @@ export default function VideoItemWithHover({
        assets?.preview_video_url)
     : null;
 
-  // The backend now returns a title logo only when the Netflix artwork key is
-  // Italian (or language-neutral). Do not fall back to old generic logos here,
-  // because those can reintroduce English title treatments.
+  // One logo pipeline for static card and hover: Netflix first, then any real
+  // official logo exposed by the unified artwork resolver. Never synthesize the
+  // title as text over the artwork.
   const hoverLogoUrl = firstNonTmdbArtwork(
     netflixArtwork?.logo?.url,
-    automaticAssets?.netflix_logo_url
+    automaticAssets?.netflix_logo_url,
+    automaticAssets?.logo_path,
+    assets?.logo_path
   );
 
   const hoverArtwork =
