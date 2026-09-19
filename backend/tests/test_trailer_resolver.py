@@ -13,7 +13,7 @@ def c(height, lang="en", bitrate=5_000_000, hdr=False, url=None):
         source="test",
         trailer_url=url or f"https://cdn.example.com/{height}-{lang}.mp4",
         height=height,
-        width=3840 if height == 2160 else 2560 if height == 1440 else 1920,
+        width=7680 if height > 2160 else 3840 if height == 2160 else 2560 if height == 1440 else 1920,
         bitrate=bitrate,
         codec="h264",
         audio_language=lang,
@@ -56,6 +56,14 @@ def test_4k_hdr_is_not_hidden_by_lower_resolution_sdr():
     assert pick_best([hdr_4k, sdr_1080], hdr_supported=False).height == 2160
 
 
+def test_4k_is_hard_ceiling_even_if_8k_exists():
+    eight_k = c(4320, "it", 40_000_000, url="https://cdn.example.com/8k.mp4")
+    four_k = c(2160, "it", 18_000_000, url="https://cdn.example.com/4k.mp4")
+    assert candidate_is_usable(eight_k) is False
+    best = pick_best([eight_k, four_k])
+    assert best.height == 2160
+
+
 def test_720_is_valid_fallback_but_480_is_rejected():
     assert candidate_is_usable(c(720, "it")) is True
     assert candidate_is_usable(c(480, "it")) is False
@@ -81,6 +89,7 @@ def test_exact_title_year_type_is_high_confidence():
 
 
 def test_imdb_quality_label_parser():
+    assert _height_from_label("2160p") == 2160
     assert _height_from_label("1080p") == 1080
     assert _height_from_label("720p") == 720
     assert _height_from_label("SD") is None
