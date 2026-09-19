@@ -42,28 +42,33 @@ export default function useResolvedTrailer(
     refetchOnReconnect: false,
     retry: 1,
     refetchInterval: (query: any) => {
-      const data = query?.state?.data;
-      if (!enabled || !data?.enabled || data?.available) return false;
-      // A cold title may need a few seconds for the backend worker, but a title
-      // with no trailer must never leave the Hero polling once per second all
-      // day. Eight cache checks are enough for the foreground; the backend queue
-      // continues independently and a later page visit can pick up the result.
+      const data = query?.state?.data || {};
+      const candidate = data?.trailer_url || data?.trailer_key || data?.manifest_url || null;
+
+      // Support both trailer endpoint contracts:
+      // - legacy/current backend: { trailer_key, source }
+      // - richer resolver response: { enabled, available, trailer_url/... }
+      if (!enabled || data?.enabled === false || data?.available === false || candidate) {
+        return false;
+      }
+
       const updates = Number(query?.state?.dataUpdateCount || 0);
       return updates < 8 ? 1000 : false;
     },
   });
 
   const data: any = query.data || {};
-  const url = data?.enabled && data?.available
-    ? (data?.trailer_url || data?.trailer_key || data?.manifest_url || null)
-    : null;
+  const candidateUrl = data?.trailer_url || data?.trailer_key || data?.manifest_url || null;
+  const resolverEnabled = data?.enabled !== false;
+  const resolverAvailable = data?.available !== false;
+  const url = resolverEnabled && resolverAvailable ? candidateUrl : null;
 
   return {
     ...query,
     data,
     url,
     available: !!url,
-    enabled: !!data?.enabled,
+    enabled: !!enabled && resolverEnabled,
     hdr,
     typeSlug,
   };
