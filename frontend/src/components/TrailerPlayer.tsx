@@ -37,8 +37,13 @@ function routeIdentity() {
  *
  * A direct MP4/HLS URL is played as-is. Any legacy key/sentinel is treated only
  * as a request to resolve the current DetailPage title through FLIX-IT's central
- * trailer endpoint. There is deliberately no YouTube iframe or YouTube fallback.
- * HLS playback prefers the highest native rendition available up to 2160p/4K.
+ * trailer endpoint. HLS playback prefers the highest native rendition available
+ * up to 2160p/4K.
+ *
+ * Playback setup depends only on the media URL. UI state updates (for example
+ * the hover logo disappearing after five seconds) must never tear down and
+ * recreate the video element, otherwise the trailer would appear to stop or
+ * restart at exactly that moment.
  */
 export default function TrailerPlayer({
   videoKey,
@@ -52,6 +57,10 @@ export default function TrailerPlayer({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const playingRef = useRef(playing);
+  const onErrorRef = useRef(onError);
+  const onPlayingRef = useRef(onPlaying);
+  const onEndedRef = useRef(onEnded);
 
   const propDirect = isDirectUrl(videoKey);
   const identity = useMemo(
@@ -67,11 +76,29 @@ export default function TrailerPlayer({
   const direct = isDirectUrl(playbackKey || "");
 
   useEffect(() => {
+    playingRef.current = playing;
+  }, [playing]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
+    onPlayingRef.current = onPlaying;
+  }, [onPlaying]);
+
+  useEffect(() => {
+    onEndedRef.current = onEnded;
+  }, [onEnded]);
+
+  useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     video.muted = !!muted;
   }, [muted]);
 
+  // Play/pause is deliberately separate from media initialization. Toggling
+  // controls must not destroy HLS or reload an MP4 from time zero.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -134,7 +161,7 @@ export default function TrailerPlayer({
             hls.nextLevel = best.index;
           }
         }
-        if (playing) video.play().catch(() => undefined);
+        if (playingRef.current) video.play().catch(() => undefined);
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -151,7 +178,7 @@ export default function TrailerPlayer({
             return;
           } catch {}
         }
-        onError?.(500);
+        onErrorRef.current?.(500);
       });
 
       return () => {
@@ -167,14 +194,14 @@ export default function TrailerPlayer({
     // backend resolver has already rejected known renditions above 2160p.
     video.src = playbackKey;
     video.load();
-    if (playing) video.play().catch(() => undefined);
+    if (playingRef.current) video.play().catch(() => undefined);
 
     return () => {
       video.pause();
       video.removeAttribute("src");
       video.load();
     };
-  }, [direct, playbackKey, playing, onError]);
+  }, [direct, playbackKey]);
 
   if (!playbackKey || !direct) return null;
 
@@ -196,10 +223,10 @@ export default function TrailerPlayer({
         playsInline
         preload="auto"
         disablePictureInPicture
-        onPlaying={onPlaying}
-        onEnded={onEnded}
+        onPlaying={() => onPlayingRef.current?.()}
+        onEnded={() => onEndedRef.current?.()}
         onError={() => {
-          if (!hlsRef.current) onError?.(500);
+          if (!hlsRef.current) onErrorRef.current?.(500);
         }}
         style={{
           position: "absolute",
