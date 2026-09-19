@@ -14,6 +14,8 @@ interface Props {
   onError?: (code: number) => void;
 }
 
+const MAX_TRAILER_HEIGHT = 2160;
+
 function isDirectUrl(value: string) {
   return /^https?:\/\//i.test(value || "") || String(value || "").startsWith("/");
 }
@@ -36,6 +38,7 @@ function routeIdentity() {
  * A direct MP4/HLS URL is played as-is. Any legacy key/sentinel is treated only
  * as a request to resolve the current DetailPage title through FLIX-IT's central
  * trailer endpoint. There is deliberately no YouTube iframe or YouTube fallback.
+ * HLS playback prefers the highest native rendition available up to 2160p/4K.
  */
 export default function TrailerPlayer({
   videoKey,
@@ -94,31 +97,43 @@ export default function TrailerPlayer({
         maxMaxBufferLength: 40,
         backBufferLength: 0,
         startFragPrefetch: true,
-        abrEwmaDefaultEstimate: 6_000_000,
+        abrEwmaDefaultEstimate: 12_000_000,
       });
       hlsRef.current = hls;
       hls.loadSource(playbackKey);
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        // TrailerResolver already filters out sub-1080p results. When an HLS
-        // master contains several valid renditions, start from its best level.
+        // Pick the highest declared native rendition that does not exceed 4K.
+        // The same index is also used as the ABR cap so an 8K rendition present
+        // in the master can never be selected later by adaptation.
         if (hls.levels?.length) {
-          let best = 0;
-          for (let i = 1; i < hls.levels.length; i += 1) {
-            const current = hls.levels[best];
-            const candidate = hls.levels[i];
-            if (
-              (candidate.height || 0) > (current.height || 0) ||
-              ((candidate.height || 0) === (current.height || 0) &&
-                (candidate.bitrate || 0) > (current.bitrate || 0))
-            ) {
-              best = i;
+          const eligible = hls.levels
+            .map((level, index) => ({ level, index }))
+            .filter(({ level }) => {
+              const height = Number(level?.height || 0);
+              return height > 0 && height <= MAX_TRAILER_HEIGHT;
+            });
+
+          if (eligible.length) {
+            let best = eligible[0];
+            for (const candidate of eligible.slice(1)) {
+              const currentHeight = Number(best.level?.height || 0);
+              const candidateHeight = Number(candidate.level?.height || 0);
+              const currentBitrate = Number(best.level?.bitrate || 0);
+              const candidateBitrate = Number(candidate.level?.bitrate || 0);
+              if (
+                candidateHeight > currentHeight ||
+                (candidateHeight === currentHeight && candidateBitrate > currentBitrate)
+              ) {
+                best = candidate;
+              }
             }
+            hls.autoLevelCapping = best.index;
+            hls.startLevel = best.index;
+            hls.currentLevel = best.index;
+            hls.nextLevel = best.index;
           }
-          hls.startLevel = best;
-          hls.currentLevel = best;
-          hls.nextLevel = best;
         }
         if (playing) video.play().catch(() => undefined);
       });
