@@ -1,17 +1,28 @@
 """Low-noise daily policy for the existing multi-provider trailer resolver.
 
-On-demand hover/detail requests keep priority 1 and are untouched. The catalog
-worker only queues missing/expiring entries and performs its broad scan once per
-24 hours instead of forcing every fresh title through all providers every 15 min.
+On-demand hover/detail requests keep priority 1 and are untouched. Broad catalog
+maintenance runs once per day at 06:00 Europe/Rome and only queues missing or
+expiring entries, so background work never competes with interactive hover.
 """
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from services.trailers.resolver import TrailerResolver, _dt, _now
 
 _INSTALLED = False
+ROME_TZ = ZoneInfo("Europe/Rome")
+DAILY_REFRESH_HOUR = 6
+
+
+def _seconds_until_rome_refresh(hour: int = DAILY_REFRESH_HOUR) -> float:
+    now = datetime.now(ROME_TZ)
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return max(1.0, (target - now).total_seconds())
 
 
 def install_trailer_daily_policy() -> None:
@@ -80,30 +91,26 @@ def install_trailer_daily_policy() -> None:
             "scanned": len(targets),
             "queued": queued,
             "skipped_fresh": skipped_fresh,
-            "policy": "daily_missing_or_expiring_only",
+            "policy": "06:00_rome_missing_or_expiring_only",
         }
 
     async def catalog_loop(self: TrailerResolver) -> None:
-        # Interactive browsing gets a long quiet window after every backend
-        # restart. Hover/detail requests resolve immediately with priority 1;
-        # broad maintenance begins only after the site has settled.
-        try:
-            await asyncio.wait_for(self._stop.wait(), timeout=10 * 60)
-            return
-        except asyncio.TimeoutError:
-            pass
-
         while not self._stop.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._stop.wait(),
+                    timeout=_seconds_until_rome_refresh(),
+                )
+                return
+            except asyncio.TimeoutError:
+                pass
+
             try:
                 self.cleanup_temp_files()
                 self.enqueue_catalog(limit=300)
             except Exception as exc:
                 if self.logger:
                     self.logger.warning("Daily trailer catalog scan failed: %s", exc)
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=24 * 60 * 60)
-            except asyncio.TimeoutError:
-                pass
 
     TrailerResolver.metadata_ttl = metadata_ttl
     TrailerResolver.enqueue_catalog = enqueue_catalog
