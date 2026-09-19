@@ -102,9 +102,6 @@ export default function VideoItemWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Card visuals are intentionally non-TMDB. Netflix contextual artwork wins,
-  // then previously imported/legacy remote artwork, then the historical CDN
-  // mapping. Automatic media assets remain available only for metadata/trailers.
   const netflixArtwork = useNetflixArtwork(
     { ...video, id },
     mType,
@@ -167,14 +164,7 @@ export default function VideoItemWithHover({
       mappedPoster,
       legacyPoster,
     ]),
-    [
-      resolvedArtwork,
-      existingNetflixArtwork,
-      mappedBackdrop,
-      legacyLandscape,
-      mappedPoster,
-      legacyPoster,
-    ]
+    [resolvedArtwork, existingNetflixArtwork, mappedBackdrop, legacyLandscape, mappedPoster, legacyPoster]
   );
 
   const title = automaticAssets?.title || video?.title || video?.name || "";
@@ -270,7 +260,10 @@ export default function VideoItemWithHover({
               cover: null,
               poster_path: hoverPoster || null,
               poster: null,
-              logo_path: hoverLogoUrl || null,
+              // When a trailer exists, HoverTrailerOverlay exclusively owns the
+              // title treatment. This prevents the static logo underneath from
+              // reappearing after the five-second fade during the same hover.
+              logo_path: trailerUrl ? null : (hoverLogoUrl || null),
               logo: null,
               title_logo_path: null,
             }}
