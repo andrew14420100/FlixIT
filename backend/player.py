@@ -55,8 +55,8 @@ def init_player(db, get_setting=None, set_setting=None):
     _set_setting = set_setting
     registry.bind(db, get_setting, set_setting)
     registry.register(AdminSourceResolver())
-    registry.register(VixSrcResolver())
     registry.register(StremioAddonResolver())
+    registry.register(VixSrcResolver())
     registry.register(InternetArchiveResolver())
     artwork_resolver = ArtworkResolver(
         db,
