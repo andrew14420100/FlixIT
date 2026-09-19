@@ -7,6 +7,7 @@ interface Props {
   fallbackImageUrl?: string | null;
   imageCandidates?: Array<string | null | undefined>;
   logoUrl?: string | null;
+  embeddedTitleTreatment?: boolean;
   title?: string;
   href?: string;
   onClick?: any;
@@ -31,6 +32,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
     fallbackImageUrl,
     imageCandidates = [],
     logoUrl,
+    embeddedTitleTreatment = false,
     title = "",
     href = "#",
     onClick,
@@ -57,7 +59,10 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   }, [logoUrl]);
 
   const src = candidates[candidateIndex] || null;
-  const showRealLogo = Boolean(logoUrl && !logoFailed);
+  // A provider merchandising image that already contains its own title treatment
+  // must be shown untouched. Otherwise compose the real transparent provider
+  // logo over the artwork; never synthesize the title as text.
+  const showRealLogo = Boolean(src && logoUrl && !logoFailed && !embeddedTitleTreatment);
 
   return (
     <div
@@ -95,7 +100,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
               <div className="netflix-standard-card-placeholder" aria-hidden="true" />
             )}
 
-            {src && showRealLogo ? (
+            {showRealLogo ? (
               <div
                 aria-hidden="true"
                 className="netflix-standard-card-title-treatment"
@@ -132,17 +137,11 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
             ) : null}
 
             {watch && Number(watch.percent || 0) > 0 && (
-              <div
-                className="netflix-standard-card-progress-track"
-                aria-hidden="true"
-              >
+              <div className="netflix-standard-card-progress-track" aria-hidden="true">
                 <div
                   className="netflix-standard-card-progress-value"
                   style={{
-                    width: `${Math.max(
-                      0,
-                      Math.min(100, Number(watch.percent || 0))
-                    )}%`,
+                    width: `${Math.max(0, Math.min(100, Number(watch.percent || 0)))}%`,
                   }}
                 />
               </div>
