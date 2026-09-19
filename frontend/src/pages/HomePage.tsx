@@ -32,12 +32,12 @@ import {
   msUntilNextRomeRefresh,
 } from "src/utils/dailyRefresh";
 
-// All macro rows are mounted immediately so their metadata/artwork batches start
-// together. Individual cards/images remain lazy inside each slider, so this does
-// not mean mounting hundreds of video/card components at once.
-const INITIAL_ROWS = 1000;
-const ROWS_PER_LOAD = 1000;
-const ROW_ITEM_LIMIT = 100;
+// Netflix-like progressive row mounting: only the rows near the viewport start
+// their metadata/artwork work. More rows are mounted shortly before the user
+// reaches them, preventing the Home from launching every section at once.
+const INITIAL_ROWS = 4;
+const ROWS_PER_LOAD = 3;
+const ROW_ITEM_LIMIT = 120;
 const HOME_CACHE_PREFIX = "flix-home-v10";
 const DYNAMIC_SHARE_DEFAULT = 0.25;
 const DYNAMIC_SHARE_FAST_ROWS = 0.50;
@@ -651,7 +651,7 @@ export function Component() {
           });
         }
       },
-      { rootMargin: "650px 0px" }
+      { rootMargin: "1100px 0px" }
     );
     observer.observe(el);
     return () => observer.disconnect();
