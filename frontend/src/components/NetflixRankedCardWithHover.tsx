@@ -74,8 +74,8 @@ export default function NetflixRankedCardWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Top 10 uses the portrait Netflix treatment for the ranked tile and a
-  // separate contextual/home treatment for the expanded hover card.
+  // Ranked tile = portrait Netflix treatment. Hover = separate horizontal
+  // contextual/home treatment, both at the best native quality available.
   const rankedArtwork = useNetflixArtwork(
     { ...item, id: normalizedId },
     mType,
@@ -148,14 +148,7 @@ export default function NetflixRankedCardWithHover({
       mappedBackdrop,
       legacyLandscape,
     ]),
-    [
-      rankedResolved,
-      existingNetflixPoster,
-      mappedPoster,
-      legacyPoster,
-      mappedBackdrop,
-      legacyLandscape,
-    ]
+    [rankedResolved, existingNetflixPoster, mappedPoster, legacyPoster, mappedBackdrop, legacyLandscape]
   );
 
   const [posterIndex, setPosterIndex] = useState(0);
@@ -278,7 +271,9 @@ export default function NetflixRankedCardWithHover({
               cover: null,
               poster_path: hoverPoster || null,
               poster: null,
-              logo_path: hoverLogoUrl || null,
+              // With an active trailer the overlay alone owns the title logo,
+              // so it cannot reappear under the video after the 5s dissolve.
+              logo_path: trailerUrl ? null : (hoverLogoUrl || null),
               logo: null,
               title_logo_path: null,
             }}
