@@ -4,8 +4,17 @@ The full application remains in ``server_core.py``. This thin entrypoint adds
 lifecycle management for an optional localhost Node/Stremio runtime without
 changing any existing API routes or player contracts.
 """
+import os
+
 import server_core as _core
 from server_core import *  # noqa: F401,F403 - preserve existing imports/contracts
+
+# server_core already owns the effective TMDB configuration (including its
+# existing fallback). Publish that effective value to the process environment
+# so secondary services such as services.stremio use the exact same TMDB
+# credentials for TMDB -> IMDb external-id resolution.
+if getattr(_core, "TMDB_API_KEY", None):
+    os.environ.setdefault("TMDB_API_KEY", str(_core.TMDB_API_KEY))
 
 from services.omni_process import omni_lifespan, omni_status
 
