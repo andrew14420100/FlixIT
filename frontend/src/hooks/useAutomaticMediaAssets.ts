@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v3";
+const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v3b";
 const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -33,8 +33,6 @@ export function nonTmdbImageUrl(value: any) {
   return text;
 }
 
-// Compatibility helper retained for callers such as Hero/Detail. Relative TMDB
-// paths are intentionally rejected; only already-resolved non-TMDB URLs pass.
 export function tmdbImageUrl(value: any, _size = "original") {
   return nonTmdbImageUrl(value);
 }
@@ -95,29 +93,32 @@ export default function useAutomaticMediaAssets(
     item?.contextualArtwork?.logo
   );
 
-  // Historical mapped artwork was curated as title-bearing merchandising art.
-  // It remains an instant zero-network placeholder while the unified resolver
-  // checks newer/higher-quality official variants.
+  // Historical mapping entries are title-bearing merchandising art. A generic
+  // saved image is only allowed when it also has a real saved logo to compose;
+  // clean legacy artwork is never intentionally promoted to a public card.
+  const safeSavedLandscape = savedLogo ? savedLandscape : null;
+  const safeSavedPoster = savedLogo ? savedPoster : null;
+
   const fallback = useMemo(() => ({
     tmdbId: id,
     type: typeSlug,
     title: item?.title || item?.name || "",
-    backdrop_path: mappedBackdrop || savedLandscape || null,
-    poster_path: mappedPoster || savedPoster || mappedBackdrop || savedLandscape || null,
-    titled_backdrop_path: mappedBackdrop || savedLandscape || null,
+    backdrop_path: mappedBackdrop || safeSavedLandscape || null,
+    poster_path: mappedPoster || safeSavedPoster || mappedBackdrop || safeSavedLandscape || null,
+    titled_backdrop_path: mappedBackdrop || safeSavedLandscape || null,
     logo_path: savedLogo || null,
     backdrop_embedded_title_treatment: !!mappedBackdrop,
     poster_embedded_title_treatment: !!mappedPoster,
     complete: !!(
-      (mappedBackdrop || savedLandscape) &&
-      (mappedPoster || savedPoster || mappedBackdrop || savedLandscape) &&
+      (mappedBackdrop || safeSavedLandscape) &&
+      (mappedPoster || safeSavedPoster || mappedBackdrop || safeSavedLandscape) &&
       (mappedBackdrop || mappedPoster || savedLogo)
     ),
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "complete-title-treatment_official-v3_no-tmdb-images",
+    image_source_policy: "complete-title-treatment_official-v3b_no-tmdb-images",
   }), [
     id,
     typeSlug,
@@ -125,8 +126,8 @@ export default function useAutomaticMediaAssets(
     item?.name,
     mappedBackdrop,
     mappedPoster,
-    savedLandscape,
-    savedPoster,
+    safeSavedLandscape,
+    safeSavedPoster,
     savedLogo,
     item?.runtime,
     item?.number_of_seasons,
@@ -144,9 +145,6 @@ export default function useAutomaticMediaAssets(
       });
       const official = response.ok ? await response.json() : {};
 
-      // The backend already made the cross-provider completeness/orientation/
-      // native-quality decision. Do not re-impose Netflix-first ordering here;
-      // doing so previously undid the server's better Apple/Prime choice.
       const officialLandscape = firstNonTmdbArtwork(official?.backdrop_url);
       const officialPoster = firstNonTmdbArtwork(official?.poster_url);
       const officialLogo = firstNonTmdbArtwork(official?.logo_url);
@@ -154,9 +152,9 @@ export default function useAutomaticMediaAssets(
       return {
         ...fallback,
         title: official?.title || fallback.title,
-        backdrop_path: officialLandscape || mappedBackdrop || savedLandscape || null,
-        titled_backdrop_path: officialLandscape || mappedBackdrop || savedLandscape || null,
-        poster_path: officialPoster || mappedPoster || savedPoster || officialLandscape || null,
+        backdrop_path: officialLandscape || fallback.backdrop_path || null,
+        titled_backdrop_path: officialLandscape || fallback.titled_backdrop_path || null,
+        poster_path: officialPoster || fallback.poster_path || officialLandscape || null,
         logo_path: officialLogo || savedLogo || null,
         netflix_logo_url: official?.logo_source === "netflix" ? officialLogo : null,
         official_artwork_source: official?.backdrop_source || official?.poster_source || null,
@@ -175,7 +173,7 @@ export default function useAutomaticMediaAssets(
           : !!mappedBackdrop,
         complete: official?.complete ?? fallback.complete,
         image_quality: "max-native",
-        image_source_policy: official?.policy || "complete-title-treatment_official-v3_no-tmdb-images",
+        image_source_policy: official?.policy || "complete-title-treatment_official-v3b_no-tmdb-images",
         upscaled: false,
       };
     },
