@@ -39,15 +39,10 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         return getattr(app.state, "trailer_resolver", None)
 
     resolver = install_queue_policy(TrailerResolver(db, fetch_tmdb_data, logger=logger))
-    # Keep Apple in slot 0 because resolver.resolve() performs the "perfect Apple
-    # candidate" early-exit check there. Theryston is added immediately after it
-    # and therefore runs automatically with the remaining providers.
     resolver.providers.insert(1, TherystonTrailerProvider())
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
-    # Preserve the old SC/TMDB YouTube endpoint only for rollback when the new
-    # resolver is disabled. While enabled, legacy YouTube is never a fallback.
     legacy_endpoint = None
     kept_routes = []
     for route in app.router.routes:
@@ -60,9 +55,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     router = APIRouter()
 
     def quality_config() -> dict:
-        # The resolver now ranks by native height/bitrate first. 2160p/4K is the
-        # preferred target when a provider exposes it; 720p/1080p remain honest
-        # fallbacks and are never synthetically upscaled.
         cfg = resolver.config()
         return {
             **cfg,
@@ -73,12 +65,47 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "upscaling": False,
         }
 
+    def _is_italian_language(value) -> bool:
+        lang = str(value or "").strip().lower().replace("_", "-")
+        return lang == "it" or lang.startswith("it-")
+
+    async def _italian_tmdb_youtube_key(media_type: str, tmdb_id: int) -> Optional[str]:
+        """Official Italian YouTube trailer fallback from TMDB metadata only."""
+        media_type = "tv" if media_type == "tv" else "movie"
+        try:
+            data = await fetch_tmdb_data(
+                f"/{media_type}/{int(tmdb_id)}/videos",
+                {
+                    "language": "it-IT",
+                    "include_video_language": "it",
+                },
+            )
+        except Exception:
+            return None
+        videos = (data or {}).get("results") or []
+        candidates = [
+            row for row in videos
+            if row.get("site") == "YouTube"
+            and row.get("key")
+            and str(row.get("iso_639_1") or "").lower() == "it"
+        ]
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda row: (
+                0 if row.get("type") == "Trailer" else (1 if row.get("type") == "Teaser" else 2),
+                0 if row.get("official") else 1,
+                -(int(row.get("size") or 0)),
+            )
+        )
+        return str(candidates[0].get("key") or "") or None
+
     @router.get("/api/public/trailer-config")
     async def public_trailer_config():
         cfg = quality_config()
         return {
             "enabled": cfg["enabled"],
-            "youtube_enabled": cfg["youtube_enabled"],
+            "youtube_enabled": True,
             "quality_mode": cfg["quality_mode"],
             "preferred_resolution": cfg["preferred_resolution"],
             "preferred_label": cfg["preferred_label"],
@@ -86,6 +113,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "upscaling": cfg["upscaling"],
             "theryston_enabled": True,
             "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
+            "language": "it-IT",
         }
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
@@ -100,21 +128,70 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             if isinstance(value, dict):
                 return {**value, "enabled": False, "resolved": False}
             return value
+
         selected = result.get("selected") or {}
-        url = selected.get("trailer_url") or selected.get("manifest_url")
+        selected_url = selected.get("trailer_url") or selected.get("manifest_url")
+        selected_is_italian = bool(selected_url and _is_italian_language(selected.get("audio_language")))
+
+        # Prefer a verified direct/HLS Italian candidate. If the native resolver
+        # has no Italian candidate (or a forced refresh emptied the cache), use
+        # TMDB's official Italian YouTube trailer instead of returning nothing.
+        if selected_is_italian:
+            return {
+                "trailer_key": selected_url,
+                "trailer_url": selected_url,
+                "manifest_url": selected.get("manifest_url"),
+                "source": result.get("source"),
+                "enabled": True,
+                "resolved": True,
+                "available": True,
+                "candidate": selected,
+                "cached": result.get("cached", True),
+                "stale": result.get("stale", False),
+                "quality_mode": "max_available",
+                "preferred_resolution": 2160,
+                "language": selected.get("audio_language") or "it-IT",
+            }
+
+        youtube_key = await _italian_tmdb_youtube_key(media_type, tmdb_id)
+        if youtube_key:
+            return {
+                "trailer_key": youtube_key,
+                "trailer_url": None,
+                "manifest_url": None,
+                "source": "tmdb_youtube_it",
+                "enabled": True,
+                "resolved": False,
+                "available": True,
+                "youtube": True,
+                "language": "it-IT",
+                "candidate": {
+                    "source": "tmdb_youtube_it",
+                    "trailer_type": "Official Trailer",
+                    "official": True,
+                    "audio_language": "it-IT",
+                    "youtube_id": youtube_key,
+                },
+                "cached": result.get("cached", False),
+                "stale": result.get("stale", False),
+                "quality_mode": "provider_native",
+                "preferred_resolution": 2160,
+            }
+
         return {
-            "trailer_key": url,
-            "trailer_url": url,
-            "manifest_url": selected.get("manifest_url"),
-            "source": result.get("source"),
+            "trailer_key": None,
+            "trailer_url": None,
+            "manifest_url": None,
+            "source": None,
             "enabled": True,
             "resolved": True,
-            "available": bool(result.get("available") and url),
-            "candidate": selected or None,
-            "cached": result.get("cached", True),
-            "stale": result.get("stale", False),
+            "available": False,
+            "candidate": None,
+            "cached": result.get("cached", bool(selected)),
+            "stale": result.get("stale", bool(selected)),
             "quality_mode": "max_available",
             "preferred_resolution": 2160,
+            "language": "it-IT",
         }
 
     @router.get("/api/public/trailer-file/{cache_key}")
@@ -148,8 +225,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    # Static admin endpoints MUST stay before /{media_type}/{tmdb_id}; otherwise
-    # FastAPI would try to parse "queue" or "status" as an integer TMDB id.
     @router.get("/api/admin/trailers/config")
     async def admin_trailer_config(admin=Depends(get_current_admin)):
         return quality_config()
