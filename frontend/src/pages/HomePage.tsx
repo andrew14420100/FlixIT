@@ -26,11 +26,13 @@ import {
   stableProfileBias,
 } from "src/store/homePersonalization";
 
-const INITIAL_ROWS = 4;
-const ROWS_PER_LOAD = 3;
+// Hero + the first two feed rows are the eager viewport budget. Everything else
+// is attached progressively as the user approaches it.
+const INITIAL_ROWS = 2;
+const ROWS_PER_LOAD = 2;
 const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
-const ROW_ITEM_LIMIT = 60;
-const HOME_CACHE_PREFIX = "flix-home-v7";
+const ROW_ITEM_LIMIT = 42;
+const HOME_CACHE_PREFIX = "flix-home-v8";
 
 function readPersistedCache(key) {
   if (typeof window === "undefined") return null;
@@ -219,8 +221,6 @@ function rowScore(item, type, originalIndex) {
 }
 
 function rankDailyItems(items, type) {
-  // Artwork is resolved automatically per TMDB id by each card. Do not remove
-  // titles solely because the section payload omitted poster/backdrop fields.
   const valid = uniqueItems(items).filter((item) => item && itemKey(item));
 
   if (type === "top10") return valid;
@@ -370,7 +370,7 @@ function SectionRow({ section, index, onSettled }) {
   const initialCache = useMemo(() => readFreshPersistedCache(cacheKey), [cacheKey]);
 
   const { data, isPending } = useQuery({
-    queryKey: ["home-row-v7", sectionSignature(section), url],
+    queryKey: ["home-row-v8", sectionSignature(section), url],
     queryFn: async () => {
       const incoming = await fetchSectionPayload(section, url);
       const snapshot = buildDailySnapshot(incoming, type);
@@ -384,8 +384,10 @@ function SectionRow({ section, index, onSettled }) {
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    refetchInterval: false,
-    refetchIntervalInBackground: false,
+    // A tab left open for days now updates itself; previously daily freshness
+    // only happened after a reload/remount.
+    refetchInterval: DAILY_REFRESH_MS,
+    refetchIntervalInBackground: true,
   });
 
   const rows = useHomeDedupe((s) => s.rows);
@@ -447,7 +449,7 @@ export function Component() {
   );
 
   const { data: feed = null } = useQuery({
-    queryKey: ["home-feed-v7", userId, preferenceSignature],
+    queryKey: ["home-feed-v8", userId, preferenceSignature],
     queryFn: async () => {
       const [secData, tplData] = await Promise.all([
         freshFetchJson("/api/public/sections", { sections: [] }),
@@ -475,8 +477,8 @@ export function Component() {
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    refetchInterval: false,
-    refetchIntervalInBackground: false,
+    refetchInterval: DAILY_REFRESH_MS,
+    refetchIntervalInBackground: true,
   });
 
   useEffect(() => {
@@ -510,7 +512,7 @@ export function Component() {
           });
         }
       },
-      { rootMargin: "900px 0px" }
+      { rootMargin: "650px 0px" }
     );
     observer.observe(el);
     return () => observer.disconnect();
