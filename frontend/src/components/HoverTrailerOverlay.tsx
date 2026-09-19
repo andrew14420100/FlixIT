@@ -1,17 +1,10 @@
 // @ts-nocheck
 import { useEffect, useRef, useState } from "react";
 import TrailerPlayer from "./TrailerPlayer";
+import TrailerAudioButton from "./TrailerAudioButton";
 
 const LOGO_VISIBLE_MS = 5000;
 const LOGO_FADE_MS = 300;
-
-function VolumeIcon({ muted }: { muted: boolean }) {
-  return muted ? (
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9zm12.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z"/></svg>
-  ) : (
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9zm11.5 3a3.5 3.5 0 0 0-2-3.16v6.32A3.5 3.5 0 0 0 15.5 12m-2-7.23v2.06a6 6 0 0 1 0 10.34v2.06a8 8 0 0 0 0-14.46"/></svg>
-  );
-}
 
 /**
  * Netflix-style hover trailer. The title treatment appears when playback really
@@ -158,36 +151,12 @@ export default function HoverTrailerOverlay({
       ) : null}
 
       {playing ? (
-        <button
-          type="button"
-          aria-label={muted ? "Attiva audio trailer" : "Disattiva audio trailer"}
-          title={muted ? "Attiva audio" : "Disattiva audio"}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setMuted((value) => !value);
-          }}
-          style={{
-            position: "absolute",
-            right: 10,
-            bottom: 10,
-            zIndex: 12,
-            width: 34,
-            height: 34,
-            borderRadius: "50%",
-            border: "2px solid rgba(255,255,255,.68)",
-            background: "rgba(24,24,24,.55)",
-            color: "#fff",
-            display: "grid",
-            placeItems: "center",
-            cursor: "pointer",
-            padding: 7,
-            backdropFilter: "blur(3px)",
-            pointerEvents: "auto",
-          }}
-        >
-          <VolumeIcon muted={muted} />
-        </button>
+        <TrailerAudioButton
+          muted={muted}
+          onToggle={() => setMuted((value) => !value)}
+          testId="hover-trailer-audio-toggle"
+          style={{ position: "absolute", right: 10, bottom: 10, zIndex: 12 }}
+        />
       ) : null}
     </div>
   );
