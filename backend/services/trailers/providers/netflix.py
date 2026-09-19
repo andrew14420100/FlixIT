@@ -7,6 +7,16 @@ from ..manifest import inspect_hls, probe_direct_file
 from .common import client, meta
 
 
+def _duration_seconds(value) -> float | None:
+    try:
+        raw = float(value)
+    except Exception:
+        return None
+    if raw <= 0:
+        return None
+    return raw / 1000.0 if raw > 10000 else raw
+
+
 class NetflixTrailerProvider:
     """Netflix provider restricted to publicly exposed trailer assets.
 
@@ -43,13 +53,16 @@ class NetflixTrailerProvider:
             direct = meta(response.text, "og:video") or meta(response.text, "og:video:url")
             if not direct or is_blocked_url(direct):
                 return []
+            duration = _duration_seconds(
+                meta(response.text, "video:duration")
+                or meta(response.text, "og:video:duration")
+            )
             host = (urlparse(direct).hostname or "").lower()
-            # Never accept a Netflix page URL itself as a media stream.
             if host.endswith("netflix.com") and "/title/" in direct:
                 return []
             try:
                 if ".m3u8" in direct.lower():
-                    return await inspect_hls(
+                    rows = await inspect_hls(
                         http,
                         direct,
                         source=self.name,
@@ -62,6 +75,14 @@ class NetflixTrailerProvider:
                         official=True,
                         default_language="it-IT",
                     )
+                    for candidate in rows:
+                        candidate.duration_seconds = duration
+                        candidate.metadata = {
+                            **(candidate.metadata or {}),
+                            "duration_seconds": duration,
+                            "public_page_asset": True,
+                        }
+                    return rows
                 probed = await probe_direct_file(direct)
                 if not probed:
                     return []
@@ -82,6 +103,7 @@ class NetflixTrailerProvider:
                         bitrate=probed.get("bitrate"),
                         codec=probed.get("codec"),
                         fps=probed.get("fps"),
+                        duration_seconds=duration,
                         audio_language=probed.get("audio_language") or "it-IT",
                         audio_codec=probed.get("audio_codec"),
                         audio_bitrate=probed.get("audio_bitrate"),
@@ -89,6 +111,7 @@ class NetflixTrailerProvider:
                         verified=True,
                         browser_compatible=True,
                         compatibility="mp4",
+                        metadata={"duration_seconds": duration, "public_page_asset": True},
                     )
                 ]
             except Exception:
