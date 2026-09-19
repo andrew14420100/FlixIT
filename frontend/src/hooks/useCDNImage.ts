@@ -23,13 +23,21 @@ function directImageUrl(
   type: 'poster' | 'backdrop' | 'detail_backdrop',
   tmdbPath: string | null | undefined,
   tmdbBaseUrl: string,
-  size: string
+  _size: string
 ) {
-  // Automatic TMDB metadata is the normal source of truth. This path needs no
-  // admin match/session and supports original-resolution artwork.
+  // Always request the native/original TMDB file. Legacy absolute TMDB URLs can
+  // already contain w342/w500/w780/w1280, so normalize those URLs as well.
+  // Non-TMDB remote URLs are left untouched: no artificial upscaling is done.
   if (tmdbPath) {
-    if (/^https?:\/\//i.test(tmdbPath)) return tmdbPath;
-    return `${tmdbBaseUrl}${size}${tmdbPath}`;
+    const raw = String(tmdbPath);
+    const absoluteTmdb = raw.match(
+      /^https:\/\/image\.tmdb\.org\/t\/p\/(?:original|w\d+)(\/.*)$/i
+    );
+    if (absoluteTmdb) {
+      return `https://image.tmdb.org/t/p/original${absoluteTmdb[1]}`;
+    }
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return `${tmdbBaseUrl}original${raw.startsWith('/') ? raw : `/${raw}`}`;
   }
 
   // Old static CDN mappings remain only as a compatibility fallback when TMDB
@@ -49,18 +57,18 @@ export function useCDNImage({
   const hasCDN = useMemo(() => hasCDNMapping(tmdbId), [tmdbId]);
 
   const getPosterUrl = useMemo(() => {
-    return (size: string = 'w780') =>
-      directImageUrl(tmdbId, 'poster', posterPath, tmdbBaseUrl, size);
+    return (_size: string = 'original') =>
+      directImageUrl(tmdbId, 'poster', posterPath, tmdbBaseUrl, 'original');
   }, [tmdbId, posterPath, tmdbBaseUrl]);
 
   const getBackdropUrl = useMemo(() => {
-    return (size: string = 'original') => {
+    return (_size: string = 'original') => {
       const backdropType = useDetailBackdrop ? 'detail_backdrop' : 'backdrop';
-      return directImageUrl(tmdbId, backdropType, backdropPath, tmdbBaseUrl, size);
+      return directImageUrl(tmdbId, backdropType, backdropPath, tmdbBaseUrl, 'original');
     };
   }, [tmdbId, backdropPath, tmdbBaseUrl, useDetailBackdrop]);
 
-  const posterUrl = useMemo(() => getPosterUrl('w780'), [getPosterUrl]);
+  const posterUrl = useMemo(() => getPosterUrl('original'), [getPosterUrl]);
   const backdropUrl = useMemo(() => getBackdropUrl('original'), [getBackdropUrl]);
 
   return {
@@ -77,10 +85,9 @@ export function getMediaImageUrl(
   type: 'poster' | 'backdrop' | 'detail_backdrop',
   tmdbPath: string | null,
   tmdbBaseUrl: string = 'https://image.tmdb.org/t/p/',
-  size: string = 'w780'
+  _size: string = 'original'
 ): string {
-  const effectiveSize = type === 'poster' ? size : 'original';
-  return directImageUrl(tmdbId, type, tmdbPath, tmdbBaseUrl, effectiveSize);
+  return directImageUrl(tmdbId, type, tmdbPath, tmdbBaseUrl, 'original');
 }
 
 export default useCDNImage;
