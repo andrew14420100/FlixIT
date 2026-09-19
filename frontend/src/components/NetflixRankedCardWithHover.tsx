@@ -74,8 +74,6 @@ export default function NetflixRankedCardWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Ranked tile = portrait Netflix treatment. Hover = separate horizontal
-  // contextual/home treatment, both at the best native quality available.
   const rankedArtwork = useNetflixArtwork(
     { ...item, id: normalizedId },
     mType,
@@ -104,20 +102,21 @@ export default function NetflixRankedCardWithHover({
     [automaticAssets, deferredAssets]
   );
 
+  // Only explicitly Netflix-labelled fields belong in the Netflix tier.
   const existingNetflixPoster = firstNonTmdbArtwork(
     item?.netflix_ranked_artwork_url,
     item?.netflixRankedArtworkUrl,
     item?.netflix_artwork_url,
     item?.netflixArtworkUrl,
     item?.netflix_cover_url,
-    item?.contextualArtwork?.artwork,
-    item?.artwork,
-    item?.image
+    item?.contextualArtwork?.artwork
   );
 
   const legacyPoster = firstNonTmdbArtwork(
     item?.poster_path,
     item?.poster,
+    item?.artwork,
+    item?.image,
     item?.cover_path,
     item?.cover
   );
@@ -125,6 +124,8 @@ export default function NetflixRankedCardWithHover({
     item?.backdrop_path,
     item?.titled_backdrop_path,
     item?.titledBackdropPath,
+    item?.artwork,
+    item?.image,
     item?.image_url,
     item?.thumbnail_url
   );
@@ -201,8 +202,8 @@ export default function NetflixRankedCardWithHover({
     item?.title_logo_path
   );
 
-  // Required priority for a horizontal hover: Netflix -> historical mapped CDN
-  // -> other saved non-TMDB artwork. The ranked tile remains portrait-first.
+  // Horizontal hover priority: Netflix -> historical mapped CDN -> saved
+  // non-TMDB artwork. Ranked tile priority: Netflix portrait -> mapped poster.
   const hoverBackdrop =
     hoverResolved || mappedBackdrop || legacyLandscape || existingNetflixPoster || rankedResolved || mappedPoster || legacyPoster;
   const hoverPoster = rankedResolved || existingNetflixPoster || mappedPoster || legacyPoster || hoverBackdrop;
@@ -273,8 +274,6 @@ export default function NetflixRankedCardWithHover({
               cover: null,
               poster_path: hoverPoster || null,
               poster: null,
-              // With an active trailer the overlay alone owns the title logo,
-              // so it cannot reappear under the video after the 5s dissolve.
               logo_path: trailerUrl ? null : (hoverLogoUrl || null),
               logo: null,
               title_logo_path: null,
