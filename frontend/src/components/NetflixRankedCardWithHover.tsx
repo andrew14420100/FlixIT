@@ -131,7 +131,6 @@ export default function NetflixRankedCardWithHover({
     item?.poster_embedded_title_treatment ||
     item?.has_embedded_poster_title_treatment
   );
-  const safeLegacyPoster = legacyPosterEmbedded ? legacyPoster : null;
 
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
   const automaticBackdrop = firstNonTmdbArtwork(
@@ -156,9 +155,9 @@ export default function NetflixRankedCardWithHover({
     () => unique([
       automaticPoster,
       mappedPoster,
-      safeLegacyPoster,
+      legacyPoster,
     ]),
-    [automaticPoster, mappedPoster, safeLegacyPoster]
+    [automaticPoster, mappedPoster, legacyPoster]
   );
 
   useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
@@ -173,8 +172,7 @@ export default function NetflixRankedCardWithHover({
       event?.stopPropagation?.();
       window.scrollTo(0, 0);
       navigate(detailHref);
-    },
-    [navigate, detailHref]
+    }, [navigate, detailHref]
   );
 
   const goPlay = useCallback(
@@ -184,15 +182,13 @@ export default function NetflixRankedCardWithHover({
       window.scrollTo(0, 0);
       const ep = watch && typeSlug === "tv" ? `?s=${watch.season || 1}&e=${watch.episode || 1}` : "";
       navigate(`/${MAIN_PATH.watch}/${typeSlug}/${normalizedId}${ep}`);
-    },
-    [navigate, normalizedId, typeSlug, watch]
+    }, [navigate, normalizedId, typeSlug, watch]
   );
 
   const handleEnter = useCallback(
     (event?: any) => {
       if (!suppressHover) onEnter(event);
-    },
-    [suppressHover, onEnter]
+    }, [suppressHover, onEnter]
   );
 
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
@@ -215,8 +211,14 @@ export default function NetflixRankedCardWithHover({
 
   const staticReady = !!(
     automaticAssets?.top10_ready ||
+    automaticPoster ||
     mappedPoster ||
-    safeLegacyPoster
+    legacyPoster
+  );
+  const posterEmbedded = !!(
+    automaticAssets?.poster_embedded_title_treatment ||
+    (!automaticPoster && !!mappedPoster) ||
+    (!automaticPoster && !mappedPoster && legacyPosterEmbedded)
   );
 
   if (!staticReady || !posterUrl) return null;
@@ -250,6 +252,39 @@ export default function NetflixRankedCardWithHover({
               onError={() => setPosterIndex((index) => index + 1)}
               className="netflix-ranked-card-poster"
             />
+            {!posterEmbedded && logoUrl ? (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  left: "8%",
+                  right: "8%",
+                  bottom: watch && Number(watch?.percent || 0) > 0 ? "12%" : "6%",
+                  height: "24%",
+                  display: "flex",
+                  alignItems: "flex-end",
+                  justifyContent: "center",
+                  zIndex: 3,
+                  pointerEvents: "none",
+                }}
+              >
+                <img
+                  src={logoUrl}
+                  alt=""
+                  draggable={false}
+                  decoding="async"
+                  style={{
+                    display: "block",
+                    maxWidth: "88%",
+                    maxHeight: "100%",
+                    width: "auto",
+                    height: "auto",
+                    objectFit: "contain",
+                    filter: "drop-shadow(0 2px 6px rgba(0,0,0,.86))",
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </a>
       </div>
@@ -268,7 +303,7 @@ export default function NetflixRankedCardWithHover({
               ...assets,
               id: normalizedId,
               preview_video_url: "",
-              netflix_ranked_artwork_url: automaticPoster || mappedPoster || undefined,
+              netflix_ranked_artwork_url: automaticPoster || mappedPoster || legacyPoster || undefined,
               netflix_artwork_url: hoverBackdrop || undefined,
               netflixArtworkUrl: undefined,
               netflix_cover_url: undefined,
@@ -281,7 +316,7 @@ export default function NetflixRankedCardWithHover({
               titled_backdrop_path: null,
               cover_path: null,
               cover: null,
-              poster_path: automaticPoster || mappedPoster || null,
+              poster_path: automaticPoster || mappedPoster || legacyPoster || null,
               poster: null,
               logo_path: logoUrl || null,
               logo: null,
