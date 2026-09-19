@@ -78,7 +78,6 @@ export default function HoverTrailerOverlay({
         entryFrameRef.current = null;
       });
     });
-    // Entrance first, then a complete 5s hold, then the CSS 300ms fade-out.
     logoTimerRef.current = window.setTimeout(() => {
       setLogoVisible(false);
       logoTimerRef.current = null;
@@ -122,11 +121,14 @@ export default function HoverTrailerOverlay({
         onOpen?.(event);
       }}
       style={{
+        // Fill the exact ExpandedCard player box instead of using a second 16:9
+        // calculation. The player container uses Netflix's slightly different
+        // native ratio; two independent ratios could expose a sub-pixel seam
+        // between the trailer and the metadata panel on some zoom/DPI values.
         position: "absolute",
-        left: 0,
-        right: 0,
-        top: 0,
-        aspectRatio: "16 / 9",
+        inset: 0,
+        width: "100%",
+        height: "100%",
         overflow: "hidden",
         borderRadius: "6px 6px 0 0",
         background: playing ? "#000" : "transparent",
