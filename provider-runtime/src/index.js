@@ -4,17 +4,23 @@ const http = require("http");
 
 const host = process.env.PROVIDER_HOST || "127.0.0.1";
 const port = Number.parseInt(process.env.PROVIDER_PORT || "9000", 10);
-const testId = String(process.env.PROVIDER_TEST_ID || "tt15239678").trim();
+
+// Sintel (2010), Blender Foundation open movie.
+// IMDb: tt1727587 | TMDB: 45745
+// The default HLS master is a public adaptive Sintel test asset that exposes
+// UHD/4K renditions for player quality-selection tests.
+const testId = String(process.env.PROVIDER_TEST_ID || "tt1727587").trim();
+const testTitle = String(process.env.PROVIDER_TEST_TITLE || "Sintel (2010) - 4K test movie").trim();
 const testUrl = String(
   process.env.PROVIDER_TEST_URL ||
-    "https://pbs.github.io/test-streams/pbs/test-pattern/pbs-bars_av1-vp9-hevc-avc.m3u8"
+    "https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8"
 ).trim();
 
 const manifest = {
   id: "org.flixit.local-test-provider",
-  version: "1.0.0",
+  version: "1.1.0",
   name: "FlixIT Local Test Provider",
-  description: "Authorized local Stremio-compatible provider used only for end-to-end testing",
+  description: "Authorized local Stremio-compatible provider used only for end-to-end movie and 4K testing",
   resources: ["stream"],
   types: ["movie", "series"],
   catalogs: []
@@ -41,7 +47,7 @@ function streamResponse(path) {
       streams: [
         {
           name: "FlixIT Local Provider",
-          title: "Public 4K HLS connectivity test",
+          title: testTitle,
           url: testUrl
         }
       ]
@@ -62,8 +68,12 @@ const server = http.createServer((req, res) => {
     return sendJson(res, 200, {
       ok: true,
       service: manifest.id,
-      testId,
-      testUrl
+      testMovie: {
+        title: testTitle,
+        imdbId: testId,
+        tmdbId: 45745,
+        url: testUrl
+      }
     });
   }
 
@@ -77,7 +87,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(port, host, () => {
   console.log(`[flixit-provider] listening on http://${host}:${port}`);
-  console.log(`[flixit-provider] test movie id ${testId}`);
+  console.log(`[flixit-provider] 4K test movie ${testTitle} (${testId})`);
 });
 
 function shutdown(signal) {
