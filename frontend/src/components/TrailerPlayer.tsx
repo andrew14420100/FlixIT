@@ -24,10 +24,6 @@ function isHlsUrl(value: string) {
   return /\.m3u8(?:$|[?#])/i.test(value || "") || /\/hls\//i.test(value || "");
 }
 
-function isYouTubeId(value: string) {
-  return /^[A-Za-z0-9_-]{11}$/.test(String(value || "").trim());
-}
-
 function routeIdentity() {
   if (typeof window === "undefined") return null;
   const match = window.location.pathname.match(/\/browse\/(movie|tv)\/(\d+)/i);
@@ -36,6 +32,8 @@ function routeIdentity() {
     : null;
 }
 
+/** Direct MP4/HLS trailer player. Audio changes are purely imperative and never
+ * rebuild HLS, replace src or reset currentTime. */
 export default function TrailerPlayer({
   videoKey,
   muted = true,
@@ -54,38 +52,17 @@ export default function TrailerPlayer({
   const onEndedRef = useRef(onEnded);
 
   const propDirect = isDirectUrl(videoKey);
-  const propYouTube = isYouTubeId(videoKey);
   const identity = useMemo(
-    () => (propDirect || propYouTube ? null : routeIdentity()),
-    [videoKey, propDirect, propYouTube]
+    () => (propDirect ? null : routeIdentity()),
+    [videoKey, propDirect]
   );
   const resolved = useResolvedTrailer(
     identity?.mediaType,
     identity?.id,
-    !propDirect && !propYouTube && !!identity
+    !propDirect && !!identity
   );
-  const playbackKey = propDirect || propYouTube ? videoKey : resolved.url;
+  const playbackKey = propDirect ? videoKey : resolved.url;
   const direct = isDirectUrl(playbackKey || "");
-  const youtube = isYouTubeId(playbackKey || "");
-
-  const youtubeSrc = useMemo(() => {
-    if (!youtube || !playbackKey) return null;
-    const params = new URLSearchParams({
-      autoplay: playing ? "1" : "0",
-      mute: muted ? "1" : "0",
-      controls: "0",
-      rel: "0",
-      playsinline: "1",
-      modestbranding: "1",
-      iv_load_policy: "3",
-      fs: "0",
-    });
-    if (loop) {
-      params.set("loop", "1");
-      params.set("playlist", playbackKey);
-    }
-    return `https://www.youtube-nocookie.com/embed/${playbackKey}?${params.toString()}`;
-  }, [youtube, playbackKey, muted, playing, loop]);
 
   useEffect(() => {
     playingRef.current = playing;
@@ -103,10 +80,21 @@ export default function TrailerPlayer({
     onEndedRef.current = onEnded;
   }, [onEnded]);
 
+  // Never put muted in the source-initialization dependencies. This changes the
+  // live media element only, preserving currentTime and buffered data.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
+    const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
     video.muted = !!muted;
+    if (currentTime > 0 && Math.abs(video.currentTime - currentTime) > 0.25) {
+      try {
+        video.currentTime = currentTime;
+      } catch {}
+    }
+    if (playingRef.current && video.paused) {
+      video.play().catch(() => undefined);
+    }
   }, [muted]);
 
   useEffect(() => {
@@ -208,41 +196,7 @@ export default function TrailerPlayer({
     };
   }, [direct, playbackKey]);
 
-  if (!playbackKey || (!direct && !youtube)) return null;
-
-  if (youtube && youtubeSrc) {
-    return (
-      <div
-        data-testid="trailer-player"
-        style={{
-          position: "absolute",
-          inset: 0,
-          overflow: "hidden",
-          background: "#000",
-        }}
-      >
-        <iframe
-          key={youtubeSrc}
-          src={youtubeSrc}
-          title="Trailer"
-          allow="autoplay; encrypted-media; picture-in-picture"
-          referrerPolicy="strict-origin-when-cross-origin"
-          onLoad={() => onPlayingRef.current?.()}
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            width: "120%",
-            height: "120%",
-            border: 0,
-            pointerEvents: "none",
-            transform: `translate(-50%, -50%) scale(${zoom})`,
-            background: "#000",
-          }}
-        />
-      </div>
-    );
-  }
+  if (!playbackKey || !direct) return null;
 
   return (
     <div
@@ -257,7 +211,7 @@ export default function TrailerPlayer({
       <video
         ref={videoRef}
         autoPlay
-        muted={muted}
+        defaultMuted={muted}
         loop={loop}
         playsInline
         preload="auto"
