@@ -89,9 +89,6 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     item?.contextualArtwork?.logo
   );
 
-  // Static cards are not allowed to compose a clean legacy image with a logo.
-  // They may use a historical mapping (curated title-bearing art), or a saved
-  // image only when that image was explicitly marked as already titled.
   const savedLandscapeEmbedded = !!(
     item?.backdrop_embedded_title_treatment ||
     item?.embedded_title_treatment ||
@@ -106,6 +103,8 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
 
   const cardBackdrop = mappedBackdrop || safeSavedLandscape || null;
   const cardPoster = mappedPoster || safeSavedPoster || null;
+  const cardReady = !!(cardBackdrop && savedLogo);
+  const posterReady = !!(cardPoster && savedLogo);
 
   return {
     tmdbId: id,
@@ -120,16 +119,16 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     backdrop_embedded_title_treatment: !!cardBackdrop,
     poster_embedded_title_treatment: !!cardPoster,
     hero_embedded_title_treatment: !!mappedBackdrop,
-    card_ready: !!cardBackdrop,
-    top10_ready: !!cardPoster,
-    landscape_card_ready: !!cardBackdrop,
-    poster_card_ready: !!cardPoster,
-    complete: !!(cardBackdrop && cardPoster),
+    card_ready: cardReady,
+    top10_ready: posterReady,
+    landscape_card_ready: cardReady,
+    poster_card_ready: posterReady,
+    complete: !!(cardReady && posterReady),
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "static-embedded-title-treatment_it-first_v4_no-tmdb-images",
+    image_source_policy: "static-embedded-title-treatment_plus-hover-logo_it-first_v4_no-tmdb-images",
     mapped_backdrop: mappedBackdrop,
     mapped_poster: mappedPoster,
   };
@@ -148,6 +147,20 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
   const backdrop = officialLandscape || fallback?.backdrop_path || null;
   const poster = officialPoster || fallback?.poster_path || null;
   const hero = officialHero || fallback?.hero_backdrop_path || backdrop || null;
+  const logo = officialLogo || fallback?.logo_path || null;
+
+  const backdropEmbedded = officialLandscape
+    ? !!official?.backdrop_embedded_title_treatment
+    : !!fallback?.backdrop_embedded_title_treatment;
+  const posterEmbedded = officialPoster
+    ? !!official?.poster_embedded_title_treatment
+    : !!fallback?.poster_embedded_title_treatment;
+
+  // Recompute readiness after combining sources. This lets a curated mapped
+  // title-bearing card become publishable when the official resolver finds the
+  // separate hover logo, while still blocking every clean/untitled card.
+  const cardReady = !!(backdrop && backdropEmbedded && logo);
+  const top10Ready = !!(poster && posterEmbedded && logo);
 
   return {
     ...fallback,
@@ -157,7 +170,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     poster_path: poster,
     hero_backdrop_path: hero,
     detail_backdrop_path: firstNonTmdbArtwork(official?.detail_backdrop_url) || hero,
-    logo_path: officialLogo || fallback?.logo_path || null,
+    logo_path: logo,
     netflix_logo_url: official?.logo_source === "netflix" ? officialLogo : null,
     official_artwork_source:
       official?.backdrop_source || official?.poster_source || official?.hero_backdrop_source || null,
@@ -169,34 +182,20 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     backdrop_locale: official?.backdrop_locale || null,
     poster_locale: official?.poster_locale || null,
     hero_backdrop_locale: official?.hero_backdrop_locale || null,
-    backdrop_embedded_title_treatment: officialLandscape
-      ? !!official?.backdrop_embedded_title_treatment
-      : !!fallback?.backdrop_embedded_title_treatment,
-    poster_embedded_title_treatment: officialPoster
-      ? !!official?.poster_embedded_title_treatment
-      : !!fallback?.poster_embedded_title_treatment,
+    backdrop_embedded_title_treatment: backdropEmbedded,
+    poster_embedded_title_treatment: posterEmbedded,
     hero_embedded_title_treatment: officialHero
       ? !!official?.hero_embedded_title_treatment
       : !!fallback?.hero_embedded_title_treatment,
-    embedded_title_treatment: officialLandscape
-      ? !!official?.backdrop_embedded_title_treatment
-      : !!fallback?.backdrop_embedded_title_treatment,
-    card_ready: officialLandscape
-      ? !!official?.landscape_card_ready
-      : !!fallback?.card_ready,
-    top10_ready: officialPoster
-      ? !!official?.poster_card_ready
-      : !!fallback?.top10_ready,
-    landscape_card_ready: officialLandscape
-      ? !!official?.landscape_card_ready
-      : !!fallback?.landscape_card_ready,
-    poster_card_ready: officialPoster
-      ? !!official?.poster_card_ready
-      : !!fallback?.poster_card_ready,
-    complete: official?.complete ?? fallback?.complete ?? false,
+    embedded_title_treatment: backdropEmbedded,
+    card_ready: cardReady,
+    top10_ready: top10Ready,
+    landscape_card_ready: cardReady,
+    poster_card_ready: top10Ready,
+    complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
     image_source_policy:
-      official?.policy || "static-embedded-title-treatment_it-first_v4_no-tmdb-images",
+      official?.policy || "static-embedded-title-treatment_plus-hover-logo_it-first_v4_no-tmdb-images",
     upscaled: false,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
