@@ -12,6 +12,9 @@ import NetflixNavigationLink from "src/components/NetflixNavigationLink";
 import { MEDIA_TYPE } from "src/types/Common";
 import useArtworkBatch from "src/hooks/useArtworkBatch";
 
+const TARGET_ROW_ITEMS = 50;
+const ARTWORK_CANDIDATE_LIMIT = 100;
+
 const RootStyle = styled("div")(() => ({
   position: "relative",
   overflow: "visible",
@@ -109,55 +112,62 @@ export default function HomepageSlider({
 
   const isTop10 = /top\s*10/i.test(title);
 
-  // React Slick's lazy image loading is not enough: without this cap every row
-  // still mounts dozens of card hooks. Keep about two screens alive and append
-  // more just before navigation reaches them.
-  const minimumBatch = Math.min(visibleItems.length, Math.max(tiles * 2 + 2, 14));
+  // Resolve a much deeper candidate pool up-front. Previously only the first
+  // ~14 candidates were checked for complete artwork, so a row could get stuck
+  // at 4-5 published cards even when valid cards existed later in the source.
+  const artworkCandidates = useMemo(
+    () => visibleItems.slice(0, isTop10 ? 10 : ARTWORK_CANDIDATE_LIMIT),
+    [visibleItems, isTop10]
+  );
+  const artworkBatch = useArtworkBatch(artworkCandidates, artworkCandidates.length > 0);
+  const readyItems = useMemo(
+    () =>
+      artworkCandidates
+        .filter((item) =>
+          artworkBatch.isReady(item, isTop10 ? "poster" : "landscape")
+        )
+        .slice(0, isTop10 ? 10 : TARGET_ROW_ITEMS),
+    [artworkCandidates, artworkBatch.data, isTop10]
+  );
+
+  // Mount only about two screens of card components at a time, while the
+  // artwork for the whole row is already resolved in the background. This keeps
+  // the Home responsive without making later pages wait for provider lookups.
+  const minimumBatch = Math.min(readyItems.length, Math.max(tiles * 2 + 2, 14));
   const [renderedCount, setRenderedCount] = useState(minimumBatch);
 
   useEffect(() => {
     setRenderedCount((current) => {
-      const bounded = Math.min(current || 0, visibleItems.length);
+      const bounded = Math.min(current || 0, readyItems.length);
       return Math.max(bounded, minimumBatch);
     });
-  }, [visibleItems.length, minimumBatch]);
+  }, [readyItems.length, minimumBatch]);
 
   const ensureRenderedThrough = useCallback(
     (startIndex: number) => {
       setRenderedCount((current) =>
         Math.min(
-          visibleItems.length,
+          readyItems.length,
           Math.max(current, Math.max(minimumBatch, startIndex + tiles * 3))
         )
       );
     },
-    [visibleItems.length, minimumBatch, tiles]
+    [readyItems.length, minimumBatch, tiles]
   );
 
-  const renderedItems = useMemo(
-    () => visibleItems.slice(0, renderedCount),
-    [visibleItems, renderedCount]
-  );
-
-  // One POST per <=40 titles seeds all individual card query keys. A title that
-  // still has no embedded title-treatment is deliberately not mounted at all.
-  const artworkBatch = useArtworkBatch(renderedItems, renderedItems.length > 0);
   const publishedItems = useMemo(
-    () =>
-      renderedItems.filter((item) =>
-        artworkBatch.isReady(item, isTop10 ? "poster" : "landscape")
-      ),
-    [renderedItems, artworkBatch.data, isTop10]
+    () => readyItems.slice(0, renderedCount),
+    [readyItems, renderedCount]
   );
 
-  const pageCount = Math.max(1, Math.ceil(publishedItems.length / tiles));
+  const pageCount = Math.max(1, Math.ceil(readyItems.length / tiles));
   const activePage = Math.min(
     pageCount - 1,
     Math.floor(activeSlideIndex / Math.max(1, tiles))
   );
   const isEnd =
-    publishedItems.length <= tiles ||
-    activeSlideIndex >= Math.max(0, publishedItems.length - tiles);
+    readyItems.length <= tiles ||
+    activeSlideIndex >= Math.max(0, readyItems.length - tiles);
 
   const settings: Settings = {
     speed: 750,
@@ -356,7 +366,7 @@ export default function HomepageSlider({
                 {publishedItems.map((item, index) => {
                   const key = sliderItemKey(item) || `item-${index}`;
                   const suppressHover = isSliding;
-                  const originalRank = Math.max(1, visibleItems.indexOf(item) + 1);
+                  const originalRank = Math.max(1, readyItems.indexOf(item) + 1);
 
                   return (
                     <Box
