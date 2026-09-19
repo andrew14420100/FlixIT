@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Slider, { Settings } from "react-slick";
 import { styled, Theme, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -55,9 +55,6 @@ const StyledSlider = styled(Slider)(
     "& .slick-slide > div": {
       height: "100%",
     },
-
-    // All tiles keep the same geometry. Edge handling belongs exclusively to
-    // the portal hover calculation, not to a special first-card transform.
     [theme.breakpoints.up("sm")]: {},
   })
 );
@@ -98,10 +95,6 @@ export default function HomepageSlider({
   const [isSliding, setIsSliding] = useState(false);
   const [showExplore, setShowExplore] = useState(false);
 
-  // Do not discard a title just because its row payload has no image yet.
-  // VideoItemWithHover/Top10 resolve artwork automatically from
-  // /api/public/media-assets by TMDB id; filtering here made those titles
-  // impossible to hydrate and produced apparently missing covers.
   const visibleItems = useMemo(() => {
     const seen = new Set();
     return (items || []).filter((item) => {
@@ -112,6 +105,37 @@ export default function HomepageSlider({
       return true;
     });
   }, [items]);
+
+  // React Slick's own lazyLoad delays <img> loading, but all 40-60 card React
+  // components were still mounted immediately. Each card carries observers,
+  // artwork queries and hover state. Keep about two screens plus a buffer alive
+  // and append more before the user reaches them.
+  const minimumBatch = Math.min(visibleItems.length, Math.max(tiles * 2 + 2, 14));
+  const [renderedCount, setRenderedCount] = useState(minimumBatch);
+
+  useEffect(() => {
+    setRenderedCount((current) => {
+      const bounded = Math.min(current || 0, visibleItems.length);
+      return Math.max(bounded, minimumBatch);
+    });
+  }, [visibleItems.length, minimumBatch]);
+
+  const ensureRenderedThrough = useCallback(
+    (startIndex: number) => {
+      setRenderedCount((current) =>
+        Math.min(
+          visibleItems.length,
+          Math.max(current, Math.max(minimumBatch, startIndex + tiles * 3))
+        )
+      );
+    },
+    [visibleItems.length, minimumBatch, tiles]
+  );
+
+  const renderedItems = useMemo(
+    () => visibleItems.slice(0, renderedCount),
+    [visibleItems, renderedCount]
+  );
 
   const isTop10 = /top\s*10/i.test(title);
   const pageCount = Math.max(1, Math.ceil(visibleItems.length / tiles));
@@ -141,6 +165,7 @@ export default function HomepageSlider({
     slidesToShow: visibleTiles,
     slidesToScroll: tiles,
     beforeChange: (_current, next) => {
+      ensureRenderedThrough(next);
       setIsSliding(true);
       setActiveSlideIndex(next);
     },
@@ -157,6 +182,13 @@ export default function HomepageSlider({
   };
 
   if (!visibleItems.length) return null;
+
+  const handleNext = () => {
+    ensureRenderedThrough(activeSlideIndex + tiles);
+    // Give React Slick one task to observe the newly appended children before
+    // asking it to advance into them.
+    window.setTimeout(() => sliderRef.current?.slickNext(), 0);
+  };
 
   return (
     <Box
@@ -306,12 +338,12 @@ export default function HomepageSlider({
             <CustomNavigation
               isEnd={isEnd}
               arrowWidth={ARROW_MAX_WIDTH}
-              onNext={() => sliderRef.current?.slickNext()}
+              onNext={handleNext}
               onPrevious={() => sliderRef.current?.slickPrev()}
               activeSlideIndex={activeSlideIndex}
             >
               <StyledSlider ref={sliderRef} {...settings} theme={theme}>
-                {visibleItems.map((item, index) => {
+                {renderedItems.map((item, index) => {
                   const key = sliderItemKey(item) || `item-${index}`;
                   const suppressHover = isSliding;
 
