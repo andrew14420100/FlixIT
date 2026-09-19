@@ -3,12 +3,23 @@
 No new provider is introduced here. The resolver keeps using the already
 configured Netflix artwork session/cache, but selection is deterministic and
 never discards a valid lower-resolution asset just because 4K is unavailable.
+
+The compatibility layer also prevents the old TMDB watch-provider availability
+check from blanking every card when that metadata endpoint is unavailable. In
+that case matching stays strict (title/year) and final availability is verified
+through the already-authenticated Netflix session itself.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from services.netflix_artwork import ArtworkResolver
+from services.netflix_artwork import (
+    AUTO_MATCH_GAP,
+    AUTO_MATCH_THRESHOLD,
+    ArtworkResolver,
+    _iso_now,
+    _year,
+)
 
 LOGO_TYPES = {"titleLogoUnbranded", "titleLogoBranded", "brandLogoSmall"}
 
@@ -172,12 +183,206 @@ def _choose(self, doc: dict, *, context: str, viewport: str, profile_id: str, ex
     return _annotate(max(candidates, key=key)), logo
 
 
+def _identity_from_doc(doc: Optional[dict]) -> Optional[dict]:
+    if not isinstance(doc, dict):
+        return None
+    title = (
+        doc.get("title")
+        or doc.get("name")
+        or doc.get("original_title")
+        or doc.get("original_name")
+        or ""
+    )
+    if not str(title).strip():
+        return None
+    return {
+        "title": str(title).strip(),
+        "original_title": str(
+            doc.get("original_title")
+            or doc.get("original_name")
+            or title
+        ).strip(),
+        "year": _year(
+            doc.get("year")
+            or doc.get("release_date")
+            or doc.get("first_air_date")
+            or doc.get("releaseDate")
+            or doc.get("firstAirDate")
+        ),
+    }
+
+
+def _local_identity(self, media_type: str, tmdb_id: int) -> Optional[dict]:
+    """Recover title/year from data FLIX-IT already has before asking TMDB.
+
+    This does not introduce a provider. It only prevents a transient metadata
+    outage from turning the artwork resolver into an all-or-nothing blank state.
+    """
+    current = self.matches.find_one(
+        {"type": media_type, "tmdbId": tmdb_id},
+        {"_id": 0, "identity": 1, "netflix_title": 1, "netflix_year": 1},
+    ) or {}
+    identity = _identity_from_doc(current.get("identity"))
+    if identity:
+        return identity
+
+    if current.get("netflix_title"):
+        return {
+            "title": str(current.get("netflix_title") or "").strip(),
+            "original_title": str(current.get("netflix_title") or "").strip(),
+            "year": _year(current.get("netflix_year")),
+        }
+
+    queries = [
+        {"type": media_type, "tmdbId": tmdb_id},
+        {"media_type": media_type, "tmdbId": tmdb_id},
+        {"tmdbId": tmdb_id},
+        {"tmdb_id": tmdb_id},
+        {"id": tmdb_id},
+    ]
+    for collection_name in ("media_assets", "contents", "catalog", "movies", "tv"):
+        try:
+            collection = self.db[collection_name]
+            for query in queries:
+                doc = collection.find_one(query, {"_id": 0})
+                identity = _identity_from_doc(doc)
+                if identity:
+                    return identity
+        except Exception:
+            continue
+    return None
+
+
+async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int) -> dict:
+    """Strict Netflix match that survives TMDB watch-provider outages.
+
+    TMDB images are never used here. Existing local title/year is preferred. If
+    local identity is unavailable, the old TMDB identity endpoint remains only a
+    metadata fallback. Availability is then verified by the authenticated
+    Netflix account/session used for the artwork request.
+    """
+    base = {
+        "type": media_type,
+        "tmdbId": tmdb_id,
+        "region": self.region(),
+        "checked_at": _iso_now(),
+    }
+
+    identity = _local_identity(self, media_type, tmdb_id)
+    if not identity:
+        try:
+            identity = await self._tmdb_identity(media_type, tmdb_id)
+        except Exception:
+            identity = None
+
+    if not identity or not identity.get("title"):
+        return {
+            **base,
+            "status": "uncertain",
+            "netflix_available": None,
+            "confidence": 0.0,
+            "reason": "identity_unavailable",
+        }
+
+    queries = []
+    for value in (identity.get("title"), identity.get("original_title")):
+        text = str(value or "").strip()
+        if text and text not in queries:
+            queries.append(text)
+
+    candidates: dict[str, dict] = {}
+    for query in queries:
+        try:
+            rows = await self.provider.search(query)
+        except Exception as exc:
+            return {
+                **base,
+                "status": "uncertain",
+                "netflix_available": None,
+                "confidence": 0.0,
+                "reason": "netflix_search_failed",
+                "identity": identity,
+                "error": str(exc),
+            }
+        for row in rows:
+            scored = {**row, "score": self._score_match(identity, row)}
+            nid = str(scored.get("netflix_id") or "")
+            if not nid:
+                continue
+            current = candidates.get(nid)
+            if current is None or scored["score"] > current["score"]:
+                candidates[nid] = scored
+
+    ranked = sorted(candidates.values(), key=lambda row: row.get("score", 0), reverse=True)
+    top = ranked[0] if ranked else None
+    second = ranked[1] if len(ranked) > 1 else None
+    confidence = float((top or {}).get("score") or 0)
+    gap = confidence - float((second or {}).get("score") or 0)
+    safe = bool(
+        top
+        and confidence >= AUTO_MATCH_THRESHOLD
+        and (second is None or gap >= AUTO_MATCH_GAP)
+    )
+
+    if not safe:
+        return {
+            **base,
+            "status": "uncertain",
+            "netflix_available": None,
+            "confidence": round(confidence, 4),
+            "reason": "ambiguous_or_low_confidence",
+            "identity": identity,
+            "candidates": ranked[:8],
+        }
+
+    try:
+        entity = await self.provider.metadata(str(top["netflix_id"]))
+    except Exception as exc:
+        return {
+            **base,
+            "status": "uncertain",
+            "netflix_available": None,
+            "confidence": round(confidence, 4),
+            "reason": "netflix_metadata_failed",
+            "identity": identity,
+            "candidates": ranked[:8],
+            "error": str(exc),
+        }
+
+    # The metadata call is made with the configured authenticated Netflix
+    # session/locale. A definitive false means do not expose the asset. Missing
+    # isAvailable is tolerated because successful search + metadata under the
+    # same account already proves the title can be resolved in that session.
+    if entity.get("isAvailable") is False:
+        return {
+            **base,
+            "status": "auto",
+            "netflix_available": False,
+            "confidence": 1.0,
+            "reason": "not_available_in_configured_netflix_session",
+            "identity": identity,
+        }
+
+    return {
+        **base,
+        "status": "matched",
+        "netflix_available": True,
+        "netflix_id": top["netflix_id"],
+        "confidence": round(confidence, 4),
+        "reason": "strict_title_year_match_netflix_session",
+        "identity": identity,
+        "contextualArtwork": top.get("contextualArtwork"),
+        "candidates": ranked[:8],
+    }
+
+
 def install_netflix_artwork_quality() -> None:
-    """Install the max-quality policy once on the existing resolver class."""
+    """Install the max-quality and resilient matching policy once."""
     if getattr(ArtworkResolver, "_flixit_max_native_installed", False):
         return
 
     original_enabled = ArtworkResolver.enabled
+    original_auto_match = ArtworkResolver.auto_match
 
     def enabled(self) -> bool:
         # Use the already-configured Netflix session when present. Also keep
@@ -197,7 +402,28 @@ def install_netflix_artwork_quality() -> None:
         except Exception:
             return False
 
+    async def auto_match(self, media_type: str, tmdb_id: int, force: bool = False):
+        # Old versions cached this transient TMDB-region failure for 24 hours.
+        # Force exactly those stale/temporary states through the new matcher.
+        if not force:
+            try:
+                current = self.matches.find_one(
+                    {"type": "tv" if media_type == "tv" else "movie", "tmdbId": tmdb_id},
+                    {"_id": 0, "reason": 1},
+                ) or {}
+                if current.get("reason") in {
+                    "region_verification_unavailable",
+                    "tmdb_identity_unavailable",
+                    "identity_unavailable",
+                }:
+                    force = True
+            except Exception:
+                pass
+        return await original_auto_match(self, media_type, tmdb_id, force=force)
+
     ArtworkResolver.enabled = enabled
+    ArtworkResolver._search_exact = _search_exact_without_region_gate
+    ArtworkResolver.auto_match = auto_match
     ArtworkResolver._logo = _best_logo
     ArtworkResolver._choose = _choose
     ArtworkResolver._flixit_max_native_installed = True
