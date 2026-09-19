@@ -211,17 +211,10 @@ export default function NetflixRankedCardWithHover({
        assets?.preview_video_url)
     : null;
 
-  // nf-scrape exposes Netflix artwork and title treatment separately. Reuse the
-  // original transparent title logo as an overlay so the Top 10 tile keeps the
-  // same high-quality source image while visually matching Netflix's treatment.
   const hoverLogoUrl = firstNonTmdbArtwork(
     hoverArtwork?.logo?.url,
     rankedArtwork?.logo?.url,
-    automaticAssets?.netflix_logo_url,
-    automaticAssets?.logo_path,
-    item?.logo_path,
-    item?.logo,
-    item?.title_logo_path
+    automaticAssets?.netflix_logo_url
   );
 
   const hoverBackdrop =
@@ -286,31 +279,10 @@ export default function NetflixRankedCardWithHover({
                       zIndex: 2,
                     }}
                   />
-                ) : title ? (
-                  <div
-                    aria-hidden="true"
-                    style={{
-                      position: "absolute",
-                      left: "8%",
-                      right: "8%",
-                      bottom: "7%",
-                      color: "#fff",
-                      fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
-                      fontSize: "clamp(9px, .67vw, 15px)",
-                      lineHeight: 1.02,
-                      fontWeight: 800,
-                      textAlign: "center",
-                      textShadow: "0 2px 5px rgba(0,0,0,.95)",
-                      pointerEvents: "none",
-                      zIndex: 2,
-                    }}
-                  >
-                    {title}
-                  </div>
                 ) : null}
               </>
             ) : (
-              <div className="netflix-ranked-card-placeholder">{title}</div>
+              <div className="netflix-ranked-card-placeholder" aria-hidden="true" />
             )}
           </div>
         </a>
