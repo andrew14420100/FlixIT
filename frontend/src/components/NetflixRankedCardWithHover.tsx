@@ -214,7 +214,9 @@ export default function NetflixRankedCardWithHover({
   const hoverLogoUrl = firstNonTmdbArtwork(
     hoverArtwork?.logo?.url,
     rankedArtwork?.logo?.url,
-    automaticAssets?.netflix_logo_url
+    automaticAssets?.netflix_logo_url,
+    automaticAssets?.logo_path,
+    assets?.logo_path
   );
 
   const hoverBackdrop =
@@ -242,45 +244,15 @@ export default function NetflixRankedCardWithHover({
           </div>
           <div className="netflix-ranked-card-poster-wrap" style={{ position: "absolute" }}>
             {posterUrl ? (
-              <>
-                <img
-                  src={posterUrl}
-                  alt=""
-                  draggable={false}
-                  loading="lazy"
-                  decoding="async"
-                  onError={() => setPosterIndex((index) => index + 1)}
-                  className="netflix-ranked-card-poster"
-                />
-                {hoverLogoUrl ? (
-                  <img
-                    src={hoverLogoUrl}
-                    alt=""
-                    aria-hidden="true"
-                    draggable={false}
-                    decoding="async"
-                    onError={(event) => {
-                      event.currentTarget.style.display = "none";
-                    }}
-                    style={{
-                      position: "absolute",
-                      left: "10%",
-                      right: "10%",
-                      bottom: "7%",
-                      margin: "0 auto",
-                      maxWidth: "72%",
-                      maxHeight: "26%",
-                      width: "auto",
-                      height: "auto",
-                      objectFit: "contain",
-                      objectPosition: "center bottom",
-                      filter: "drop-shadow(0 2px 5px rgba(0,0,0,.85))",
-                      pointerEvents: "none",
-                      zIndex: 2,
-                    }}
-                  />
-                ) : null}
-              </>
+              <img
+                src={posterUrl}
+                alt=""
+                draggable={false}
+                loading="lazy"
+                decoding="async"
+                onError={() => setPosterIndex((index) => index + 1)}
+                className="netflix-ranked-card-poster"
+              />
             ) : (
               <div className="netflix-ranked-card-placeholder" aria-hidden="true" />
             )}
