@@ -29,9 +29,6 @@ from services.omni_process import omni_lifespan, omni_status
 
 app = _core.app
 
-# One visual resolver is shared by Home, Top 10, Hero and Detail. TMDB is used
-# only to identify title/year/external ids; returned artwork never uses
-# image.tmdb.org.
 _official_artwork = OfficialArtworkResolver(
     _core.db,
     _core.fetch_tmdb_data,
@@ -46,21 +43,14 @@ async def flixit_official_artwork(media_type: str, tmdb_id: int):
     return await _official_artwork.resolve(media_type, int(tmdb_id))
 
 
-# Keep FastAPI/Starlette's original lifespan so every startup/shutdown handler
-# registered by server_core still runs (trailer resolver, catalog warmers, etc.).
 _core_lifespan = app.router.lifespan_context
 
 
 async def _daily_visual_maintenance(stop: asyncio.Event) -> None:
-    """Quietly refresh recently used assets once per day.
-
-    The first pass is delayed so normal Home/API traffic always gets CPU/network
-    priority after a backend restart. The client-side Home feed has its own 24h
-    refetch; clearing the small public response cache makes its next pass observe
-    newly released/upcoming metadata immediately.
-    """
+    """Quietly refresh recently used assets once per day."""
+    # Do not compete with the user's first Home load after a deploy/restart.
     try:
-        await asyncio.wait_for(stop.wait(), timeout=60)
+        await asyncio.wait_for(stop.wait(), timeout=5 * 60)
         return
     except asyncio.TimeoutError:
         pass
