@@ -6,6 +6,7 @@ interface Props {
   imageUrl?: string | null;
   fallbackImageUrl?: string | null;
   imageCandidates?: Array<string | null | undefined>;
+  logoUrl?: string | null;
   title?: string;
   href?: string;
   onClick?: any;
@@ -29,6 +30,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
     imageUrl,
     fallbackImageUrl,
     imageCandidates = [],
+    logoUrl,
     title = "",
     href = "#",
     onClick,
@@ -44,12 +46,18 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
     [imageUrl, imageCandidates, fallbackImageUrl]
   );
   const [candidateIndex, setCandidateIndex] = useState(0);
+  const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
     setCandidateIndex(0);
   }, [candidates.join("|")]);
 
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [logoUrl]);
+
   const src = candidates[candidateIndex] || null;
+  const showRealLogo = Boolean(logoUrl && !logoFailed);
 
   return (
     <div
@@ -67,7 +75,10 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
         onClick={onClick}
       >
         <div className="netflix-standard-card-frame">
-          <div className="netflix-standard-card-image-wrap">
+          <div
+            className="netflix-standard-card-image-wrap"
+            style={{ position: "relative", overflow: "hidden" }}
+          >
             {src ? (
               <img
                 src={src}
@@ -82,6 +93,64 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
               />
             ) : (
               <div className="netflix-standard-card-placeholder">{title}</div>
+            )}
+
+            {src && (
+              <div
+                aria-hidden="true"
+                className="netflix-standard-card-title-treatment"
+                style={{
+                  position: "absolute",
+                  left: "7%",
+                  right: "7%",
+                  bottom: watch && Number(watch.percent || 0) > 0 ? "12%" : "7%",
+                  height: "34%",
+                  display: "flex",
+                  alignItems: "flex-end",
+                  justifyContent: "center",
+                  pointerEvents: "none",
+                  zIndex: 2,
+                }}
+              >
+                {showRealLogo ? (
+                  <img
+                    src={logoUrl || ""}
+                    alt=""
+                    draggable={false}
+                    decoding="async"
+                    onError={() => setLogoFailed(true)}
+                    style={{
+                      display: "block",
+                      maxWidth: "78%",
+                      maxHeight: "100%",
+                      width: "auto",
+                      height: "auto",
+                      objectFit: "contain",
+                      filter: "drop-shadow(0 2px 5px rgba(0,0,0,.82))",
+                    }}
+                  />
+                ) : title ? (
+                  <div
+                    style={{
+                      maxWidth: "88%",
+                      color: "#fff",
+                      fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
+                      fontWeight: 800,
+                      fontSize: "clamp(10px, .78vw, 17px)",
+                      lineHeight: 1.02,
+                      textAlign: "center",
+                      letterSpacing: "-.025em",
+                      textShadow: "0 2px 5px rgba(0,0,0,.95)",
+                      overflow: "hidden",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                    }}
+                  >
+                    {title}
+                  </div>
+                ) : null}
+              </div>
             )}
 
             {watch && Number(watch.percent || 0) > 0 && (
