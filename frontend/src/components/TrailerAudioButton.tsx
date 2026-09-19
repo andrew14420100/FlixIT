@@ -5,14 +5,14 @@ import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import VolumeOffIcon from "@mui/icons-material/VolumeOff";
 
 export function TrailerVolumeIcon({ muted }: { muted: boolean }) {
-  return muted ? <VolumeOffIcon sx={{ fontSize: 24 }} /> : <VolumeUpIcon sx={{ fontSize: 24 }} />;
+  return muted ? (
+    <VolumeOffIcon sx={{ fontSize: { xs: 24, md: 31 } }} />
+  ) : (
+    <VolumeUpIcon sx={{ fontSize: { xs: 24, md: 31 } }} />
+  );
 }
 
-/**
- * Same audio control used visually by the Home Hero: circular MUI IconButton,
- * 2px translucent border, dark glass background and white Material volume icon.
- * The caller only toggles the live video's muted property; it never changes src.
- */
+/** Exact visual language of the Home Hero audio control. */
 export default function TrailerAudioButton({
   muted,
   onToggle,
@@ -37,8 +37,8 @@ export default function TrailerAudioButton({
       sx={{
         border: "2px solid rgba(255,255,255,0.55)",
         color: "#fff",
-        width: 46,
-        height: 46,
+        width: { xs: 46, md: 60 },
+        height: { xs: 46, md: 60 },
         bgcolor: "rgba(0,0,0,0.35)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
@@ -53,7 +53,7 @@ export default function TrailerAudioButton({
         ...(style || {}),
       }}
     >
-      {!muted ? <VolumeUpIcon sx={{ fontSize: 24 }} /> : <VolumeOffIcon sx={{ fontSize: 24 }} />}
+      <TrailerVolumeIcon muted={muted} />
     </IconButton>
   );
 }
