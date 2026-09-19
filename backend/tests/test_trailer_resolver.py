@@ -37,9 +37,10 @@ def test_native_2k_beats_italian_1080():
     assert best.height == 1440
 
 
-def test_italian_wins_at_same_resolution():
+def test_bitrate_wins_at_same_resolution_when_display_compatibility_matches():
     best = pick_best([c(1080, "en", 12_000_000), c(1080, "it", 5_000_000)])
-    assert best.audio_language == "it"
+    assert best.audio_language == "en"
+    assert best.bitrate == 12_000_000
 
 
 def test_sdr_default_and_hdr_when_supported():
@@ -49,8 +50,15 @@ def test_sdr_default_and_hdr_when_supported():
     assert pick_best([hdr, sdr], hdr_supported=True).hdr is True
 
 
-def test_below_1080_is_rejected():
-    assert candidate_is_usable(c(720, "it")) is False
+def test_4k_hdr_is_not_hidden_by_lower_resolution_sdr():
+    hdr_4k = c(2160, "it", 10_000_000, hdr=True, url="https://cdn.example.com/4k-hdr.mp4")
+    sdr_1080 = c(1080, "it", 20_000_000, hdr=False, url="https://cdn.example.com/1080-sdr.mp4")
+    assert pick_best([hdr_4k, sdr_1080], hdr_supported=False).height == 2160
+
+
+def test_720_is_valid_fallback_but_480_is_rejected():
+    assert candidate_is_usable(c(720, "it")) is True
+    assert candidate_is_usable(c(480, "it")) is False
 
 
 def test_youtube_is_rejected_even_at_4k():
