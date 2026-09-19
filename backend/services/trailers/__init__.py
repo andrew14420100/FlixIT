@@ -59,13 +59,31 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
 
     router = APIRouter()
 
+    def quality_config() -> dict:
+        # The resolver now ranks by native height/bitrate first. 2160p/4K is the
+        # preferred target when a provider exposes it; 720p/1080p remain honest
+        # fallbacks and are never synthetically upscaled.
+        cfg = resolver.config()
+        return {
+            **cfg,
+            "quality_mode": "max_available",
+            "preferred_resolution": 2160,
+            "preferred_label": "4K UHD",
+            "minimum_resolution": 720,
+            "upscaling": False,
+        }
+
     @router.get("/api/public/trailer-config")
     async def public_trailer_config():
-        cfg = resolver.config()
+        cfg = quality_config()
         return {
             "enabled": cfg["enabled"],
             "youtube_enabled": cfg["youtube_enabled"],
-            "minimum_resolution": 1080,
+            "quality_mode": cfg["quality_mode"],
+            "preferred_resolution": cfg["preferred_resolution"],
+            "preferred_label": cfg["preferred_label"],
+            "minimum_resolution": cfg["minimum_resolution"],
+            "upscaling": cfg["upscaling"],
             "theryston_enabled": True,
             "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
         }
@@ -95,6 +113,8 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "candidate": selected or None,
             "cached": result.get("cached", True),
             "stale": result.get("stale", False),
+            "quality_mode": "max_available",
+            "preferred_resolution": 2160,
         }
 
     @router.get("/api/public/trailer-file/{cache_key}")
@@ -132,7 +152,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     # FastAPI would try to parse "queue" or "status" as an integer TMDB id.
     @router.get("/api/admin/trailers/config")
     async def admin_trailer_config(admin=Depends(get_current_admin)):
-        return resolver.config()
+        return quality_config()
 
     @router.post("/api/admin/trailers/catalog/queue")
     async def admin_queue_catalog(body: QueueBody, admin=Depends(get_current_admin)):
