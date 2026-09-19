@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 
-from services.trailers.base import now_iso
 from services.trailers.resolver import TrailerResolver, _dt, _now
 
 _INSTALLED = False
@@ -43,8 +42,6 @@ def install_trailer_daily_policy() -> None:
             seen.add(key)
             targets.append(key)
 
-        # Catalog titles first, then titles that were discovered dynamically by
-        # Home/hover and therefore already exist in trailer_resolutions.
         for content in self.contents.find(
             {"available": {"$ne": False}}, {"_id": 0, "type": 1, "tmdbId": 1}
         ).limit(limit):
@@ -87,9 +84,11 @@ def install_trailer_daily_policy() -> None:
         }
 
     async def catalog_loop(self: TrailerResolver) -> None:
-        # Let the API become responsive before the first maintenance sweep.
+        # Interactive browsing gets a long quiet window after every backend
+        # restart. Hover/detail requests resolve immediately with priority 1;
+        # broad maintenance begins only after the site has settled.
         try:
-            await asyncio.wait_for(self._stop.wait(), timeout=45)
+            await asyncio.wait_for(self._stop.wait(), timeout=10 * 60)
             return
         except asyncio.TimeoutError:
             pass
