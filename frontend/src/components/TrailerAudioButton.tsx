@@ -1,19 +1,18 @@
 // @ts-nocheck
 import React from "react";
-import "./TrailerAudioButton.css";
+import IconButton from "@mui/material/IconButton";
+import VolumeUpIcon from "@mui/icons-material/VolumeUp";
+import VolumeOffIcon from "@mui/icons-material/VolumeOff";
 
 export function TrailerVolumeIcon({ muted }: { muted: boolean }) {
-  return muted ? (
-    <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: "100%", height: "100%", display: "block" }}>
-      <path fill="currentColor" d="M4 9v6h4l5 4V5L8 9zm12.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z" />
-    </svg>
-  ) : (
-    <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: "100%", height: "100%", display: "block" }}>
-      <path fill="currentColor" d="M4 9v6h4l5 4V5L8 9zm11.5 3a3.5 3.5 0 0 0-2-3.16v6.32A3.5 3.5 0 0 0 15.5 12m-2-7.23v2.06a6 6 0 0 1 0 10.34v2.06a8 8 0 0 0 0-14.46" />
-    </svg>
-  );
+  return muted ? <VolumeOffIcon sx={{ fontSize: 24 }} /> : <VolumeUpIcon sx={{ fontSize: 24 }} />;
 }
 
+/**
+ * Same audio control used visually by the Home Hero: circular MUI IconButton,
+ * 2px translucent border, dark glass background and white Material volume icon.
+ * The caller only toggles the live video's muted property; it never changes src.
+ */
 export default function TrailerAudioButton({
   muted,
   onToggle,
@@ -26,8 +25,7 @@ export default function TrailerAudioButton({
   style?: React.CSSProperties;
 }) {
   return (
-    <button
-      type="button"
+    <IconButton
       aria-label={muted ? "Attiva audio trailer" : "Disattiva audio trailer"}
       title={muted ? "Attiva audio" : "Disattiva audio"}
       data-testid={testId}
@@ -36,25 +34,26 @@ export default function TrailerAudioButton({
         event.stopPropagation();
         onToggle?.(event);
       }}
-      style={{
-        width: 34,
-        height: 34,
-        borderRadius: "50%",
-        border: "2px solid rgba(255,255,255,.68)",
-        background: "rgba(24,24,24,.55)",
+      sx={{
+        border: "2px solid rgba(255,255,255,0.55)",
         color: "#fff",
-        display: "grid",
-        placeItems: "center",
-        cursor: "pointer",
-        padding: 7,
-        backdropFilter: "blur(3px)",
-        WebkitBackdropFilter: "blur(3px)",
+        width: 46,
+        height: 46,
+        bgcolor: "rgba(0,0,0,0.35)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+        transition: "background-color 200ms ease, border-color 200ms ease, transform 200ms ease",
         pointerEvents: "auto",
-        lineHeight: 1,
-        ...style,
+        "&:hover": {
+          borderColor: "#fff",
+          color: "#fff",
+          bgcolor: "rgba(255,255,255,0.15)",
+          transform: "scale(1.06)",
+        },
+        ...(style || {}),
       }}
     >
-      <TrailerVolumeIcon muted={muted} />
-    </button>
+      {!muted ? <VolumeUpIcon sx={{ fontSize: 24 }} /> : <VolumeOffIcon sx={{ fontSize: 24 }} />}
+    </IconButton>
   );
 }
