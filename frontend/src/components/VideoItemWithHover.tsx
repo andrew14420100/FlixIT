@@ -223,16 +223,12 @@ export default function VideoItemWithHover({
        assets?.preview_video_url)
     : null;
 
-  // nf-scrape exposes titleLogoUnbranded/titleLogoBranded independently from
-  // storyArt/boxart. Keep that same model: the original Netflix logo is layered
-  // on top of the artwork, rather than baking text into a lower-quality image.
+  // The backend now returns a title logo only when the Netflix artwork key is
+  // Italian (or language-neutral). Do not fall back to old generic logos here,
+  // because those can reintroduce English title treatments.
   const hoverLogoUrl = firstNonTmdbArtwork(
     netflixArtwork?.logo?.url,
-    automaticAssets?.netflix_logo_url,
-    automaticAssets?.logo_path,
-    video?.logo_path,
-    video?.logo,
-    video?.title_logo_path
+    automaticAssets?.netflix_logo_url
   );
 
   const hoverArtwork =
