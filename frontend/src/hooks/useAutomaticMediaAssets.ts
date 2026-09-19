@@ -7,7 +7,7 @@ import { getCDNImageUrl } from "src/config/cdnMapping";
 // Compatibility export for older components. It is intentionally empty so a
 // legacy relative image path can never be expanded into an image.tmdb.org URL.
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v4";
+const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v5";
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -107,8 +107,9 @@ export default function useAutomaticMediaAssets(
     tmdbId: id,
     type: typeSlug,
     title: item?.title || item?.name || "",
-    // Required source priority: Netflix -> historical mapping -> other saved
-    // non-TMDB artwork -> nothing.
+    // Required source priority: Netflix -> historical mapping/CDN -> other
+    // saved non-TMDB artwork -> nothing. Lower-resolution Netflix artwork is
+    // kept when it is the best Netflix variant available.
     backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
     poster_path: netflixPoster || mappedPoster || savedPoster || null,
     titled_backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
