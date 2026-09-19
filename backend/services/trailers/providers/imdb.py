@@ -14,8 +14,6 @@ from ..manifest import _find_media_binary, inspect_hls
 from .common import USER_AGENT, client
 
 IMDB_GRAPHQL_URL = "https://graphql.imdb.com/"
-# Keep this query deliberately small. IMDb's GraphQL shape changes less often
-# when we only request fields needed for playback selection.
 IMDB_TRAILER_QUERY = r'''
 query Trailer($id: ID!) {
   title(id: $id) {
@@ -43,8 +41,20 @@ def _height_from_label(value) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _runtime_seconds(value) -> float | None:
+    """Normalize IMDb video runtime to seconds without inventing a duration."""
+    try:
+        raw = float(value)
+    except Exception:
+        return None
+    if raw <= 0:
+        return None
+    # IMDb normally exposes video runtime in seconds. Keep a defensive millis
+    # normalization for payload variants that use a large integer value.
+    return raw / 1000.0 if raw > 10000 else raw
+
+
 def _trailer_type(title: str, content_type: str = "") -> str:
-    """Normalize IMDb video labels into the resolver's trailer priority types."""
     text = normalize_title(f"{content_type} {title}")
     if "final trailer" in text:
         return "Final Trailer"
@@ -54,11 +64,12 @@ def _trailer_type(title: str, content_type: str = "") -> str:
         return "Teaser"
     if "clip" in text and "trailer" not in text:
         return "Clip"
+    if "preview" in text and "trailer" not in text:
+        return "Preview"
     return "Official Trailer" if "trailer" in text else "Trailer"
 
 
 def _best_probe_row(node: dict) -> dict | None:
-    """Select the highest labelled native MP4 rendition up to 2160p/4K."""
     rows = []
     unknown = []
     for raw in node.get("playbackURLs") or []:
@@ -82,12 +93,6 @@ def _best_probe_row(node: dict) -> dict | None:
 
 
 def _hls_row(node: dict) -> dict | None:
-    """Return IMDb's AUTO HLS master playlist when present.
-
-    IMDb exposes the same trailer as progressive MP4 rungs and as an AUTO
-    master playlist. The manifest is a better quality oracle than old ffprobe
-    builds because it explicitly declares native RESOLUTION/BANDWIDTH/CODECS.
-    """
     for raw in node.get("playbackURLs") or []:
         row = raw or {}
         url = str(row.get("url") or "").strip()
@@ -122,12 +127,18 @@ def _parse_probe_json(stdout: bytes) -> dict | None:
             fps = float(raw)
     except Exception:
         fps = None
+    duration = None
+    try:
+        duration = float((data.get("format") or {}).get("duration") or 0) or None
+    except Exception:
+        duration = None
     return {
         "width": int(video.get("width") or 0),
         "height": int(video.get("height") or 0),
         "bitrate": int(video.get("bit_rate") or (data.get("format") or {}).get("bit_rate") or 0) or None,
         "codec": video.get("codec_name"),
         "fps": fps,
+        "duration_seconds": duration,
         "audio_codec": (audio or {}).get("codec_name"),
         "audio_bitrate": int((audio or {}).get("bit_rate") or 0) or None,
         "audio_language": ((audio or {}).get("tags") or {}).get("language"),
@@ -135,7 +146,6 @@ def _parse_probe_json(stdout: bytes) -> dict | None:
 
 
 async def _probe_imdb_mp4(url: str, timeout: float = 12.0) -> dict | None:
-    """Fallback probe for titles where IMDb exposes no usable HLS master."""
     ffprobe = _find_media_binary("ffprobe")
     if not ffprobe:
         return None
@@ -195,13 +205,7 @@ async def _probe_imdb_mp4(url: str, timeout: float = 12.0) -> dict | None:
 
 
 class IMDbTrailerProvider:
-    """Resolve IMDb-hosted trailers directly from IMDb GraphQL.
-
-    TMDB supplies only the IMDb identity used for matching; it is not an image
-    source here. IMDb's AUTO HLS master is used to verify native resolution,
-    bitrate and codec. The best rendition is selected from 720p up through
-    2160p/4K; a lower rung remains valid when 4K/2K is not available.
-    """
+    """Resolve IMDb-hosted trailers directly from IMDb GraphQL."""
 
     name = "imdb"
 
@@ -243,13 +247,11 @@ class IMDbTrailerProvider:
                 video_id = str(node.get("id") or "").strip()
                 title = str(((node.get("name") or {}).get("value")) or "Trailer")
                 trailer_type = _trailer_type(title)
+                runtime_seconds = _runtime_seconds(((node.get("runtime") or {}).get("value")))
                 provider_page = f"https://www.imdb.com/video/{video_id}/" if video_id else f"https://www.imdb.com/title/{imdb_id}/"
                 mp4_row = _best_probe_row(node)
                 hls = _hls_row(node)
 
-                # Inspect every HLS rendition, but only promote native levels in
-                # the configured 720p..2160p window. This prevents an 8K master
-                # rung from hiding an otherwise valid 4K/2K/1080p alternative.
                 if hls:
                     try:
                         hls_candidates = await inspect_hls(
@@ -279,16 +281,16 @@ class IMDbTrailerProvider:
                         )
                         best.media_type = identity.get("type")
                         best.title = title
+                        best.duration_seconds = runtime_seconds
                         best.audio_language = best.audio_language or "en"
                         best.metadata = {
                             **(best.metadata or {}),
                             "imdb_id": imdb_id,
                             "discovery": "graphql+hls",
                             "hls_manifest": hls["url"],
+                            "duration_seconds": runtime_seconds,
                         }
 
-                        # Prefer progressive MP4 only when it is the exact same
-                        # native height as the best verified HLS rendition.
                         if mp4_row and int(mp4_row.get("reported_height") or 0) == int(best.height or 0):
                             best.trailer_url = mp4_row["url"]
                             best.manifest_url = None
@@ -297,8 +299,6 @@ class IMDbTrailerProvider:
                             best.metadata["reported_height"] = mp4_row.get("reported_height")
                         return [best]
 
-                # Fallback for uncommon IMDb entries without a usable AUTO HLS.
-                # Probe the highest labelled MP4 in the same 720p..2160p window.
                 if not mp4_row:
                     return []
                 async with probe_sem:
@@ -307,6 +307,7 @@ class IMDbTrailerProvider:
                 if not probed or not (MIN_TRAILER_HEIGHT <= height <= MAX_TRAILER_HEIGHT):
                     return []
 
+                duration_seconds = (probed or {}).get("duration_seconds") or runtime_seconds
                 return [
                     TrailerCandidate(
                         source=self.name,
@@ -324,6 +325,7 @@ class IMDbTrailerProvider:
                         bitrate=probed.get("bitrate"),
                         codec=probed.get("codec"),
                         fps=probed.get("fps"),
+                        duration_seconds=duration_seconds,
                         audio_language=probed.get("audio_language") or "en",
                         audio_codec=probed.get("audio_codec"),
                         audio_bitrate=probed.get("audio_bitrate"),
@@ -335,6 +337,7 @@ class IMDbTrailerProvider:
                             "imdb_id": imdb_id,
                             "reported_height": mp4_row.get("reported_height"),
                             "discovery": "graphql+ffprobe",
+                            "duration_seconds": duration_seconds,
                         },
                     )
                 ]
