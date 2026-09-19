@@ -1,14 +1,8 @@
 """
-ResolverRegistry: central registry that owns the provider chain, the resolution
-order and the MongoDB result cache.
+ResolverRegistry: central registry that owns provider ordering and stream cache.
 
-Resolution flow for a title:
-  1. Iterate active providers in configured order (AdminSource is forced first).
-  2. First provider returning a successful payload wins.
-  3. Result cached in Mongo `stream_cache` (success -> configurable TTL, default 2h;
-     miss -> short TTL, 15 min) so repeated requests skip external lookups.
-
-Provider on/off state and order are configured from Admin > Impostazioni.
+AdminSource remains first. Omni uses the stable `stremio_addon` resolver id and
+is promoted by its resolver to the first network source.
 """
 import logging
 from datetime import datetime, timezone, timedelta
@@ -58,7 +52,7 @@ class ResolverRegistry:
 
     # ------------------------------------------------------------------ ordering
     def _ordered_ids(self) -> list[str]:
-        """Return all provider ids in resolution order (AdminSource always first)."""
+        """Return all provider ids in resolution order (always-active providers first)."""
         saved = []
         if self._get_setting is not None:
             try:
@@ -69,7 +63,6 @@ class ResolverRegistry:
         for pid in self._registration_order:
             if pid not in ordered:
                 ordered.append(pid)
-        # force always_active providers to the front, preserving their relative order
         front = [pid for pid in ordered if self._providers[pid].always_active]
         rest = [pid for pid in ordered if not self._providers[pid].always_active]
         return front + rest
@@ -157,6 +150,16 @@ class ResolverRegistry:
             return 0
         return self._db["stream_cache"].delete_many({"key": {"$regex": f"^(movie|tv):{tmdb_id}:"}}).deleted_count
 
+    def _omni_active(self) -> bool:
+        """True when the Omni resolver has an effective runtime/Admin URL."""
+        provider = self._providers.get("stremio_addon")
+        if provider is None:
+            return False
+        try:
+            return bool(provider.is_active())
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------ resolution
     async def resolve(self, ctx: ResolveContext) -> dict:
         not_found = {"success": False, "reason": "not_found", "message": "Stream non disponibile"}
@@ -165,11 +168,14 @@ class ResolverRegistry:
         cached = self._cache_get(key)
         if cached is not None:
             cached_stream = str(cached.get("stream") or "").lower()
-            # Invalidate legacy cache entries created by the old Stremio path.
-            # Those entries contain a MediaFlow VixCloud extractor URL and would
-            # otherwise be wrapped again before the resolver gets a chance to
-            # resolve VixSrc directly.
-            if "/extractor/video.m3u8" in cached_stream and "vixsrc.to" in cached_stream:
+            cached_source = str(cached.get("source") or "")
+
+            # Once Omni is configured, do not let old network-provider hits or
+            # cached misses bypass it. Admin-managed streams remain authoritative.
+            if self._omni_active() and cached_source not in ("admin_source", "stremio_addon"):
+                logger.info("Invalidating pre-Omni cached result for %s (source=%s)", key, cached_source or "miss")
+                self.clear_cache(key)
+            elif "/extractor/video.m3u8" in cached_stream and "vixsrc.to" in cached_stream:
                 logger.info("Invalidating legacy cached VixSrc extractor stream for %s", key)
                 self.clear_cache(key)
             else:
@@ -190,23 +196,29 @@ class ResolverRegistry:
                 self._cache_set(key, result)
                 return self._route(result)
 
-        # A timeout on an upstream must not turn into a 15-minute "Stream non disponibile"
         if had_transient_error:
             return {**not_found, "reason": "temporary", "message": "Sorgente momentaneamente non raggiungibile, riprova"}
         self._cache_set(key, not_found)
         return not_found
 
     def _route(self, result: dict) -> dict:
-        """
-        Route the resolved stream through MediaFlow once.
-
-        Resolver results are cached as direct streams. If a provider already
-        returned a URL belonging to the configured MediaFlow instance, do not
-        wrap it a second time.
-        """
+        """Route resolved streams exactly once."""
         stream = str(result.get("stream") or "").strip()
         if not stream:
             return result
+
+        # Omni already exposes lazy resolver/HLS proxy endpoints. Keep those
+        # semantics intact and only add FLIX-IT's internal proxy when request
+        # headers are explicitly required or when the resolved item is HLS.
+        if result.get("source") == "stremio_addon":
+            if result.get("headers") or str(result.get("type") or "").lower() in ("hls", "m3u8"):
+                return proxy.wrap_stream_internal(result)
+            return {
+                **result,
+                "stream": stream,
+                "original_stream": result.get("original_stream", stream),
+                "proxied": False,
+            }
 
         cfg = mediaflow.get_config(self._get_setting)
         mediaflow_base = str(cfg.get("url") or "").strip().rstrip("/")
@@ -220,12 +232,9 @@ class ResolverRegistry:
                 "proxied": True,
             }
 
-        # MediaFlow takes precedence when explicitly configured and enabled.
         if cfg.get("enabled") and mediaflow_base:
             return mediaflow.wrap_stream(result, self._get_setting)
 
-        # Otherwise use the internal proxy for streams that need custom headers
-        # (e.g. VixSrc requires a Referer the browser cannot send).
         if result.get("headers") or result.get("source") == "vixsrc":
             return proxy.wrap_stream_internal(result)
 
