@@ -1,6 +1,5 @@
 // @ts-nocheck
 import { useMemo } from 'react';
-import { useGetConfigurationQuery } from 'src/store/slices/configuration';
 import { getCDNImageUrl, hasCDNMapping } from 'src/config/cdnMapping';
 
 interface UseCDNImageOptions {
@@ -18,33 +17,28 @@ interface UseCDNImageReturn {
   getBackdropUrl: (size?: string) => string;
 }
 
+function nonTmdbRemote(value: string | null | undefined) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw.startsWith('data:') || raw.startsWith('blob:')) return raw;
+  if (!/^https?:\/\//i.test(raw)) return null;
+  if (/^https?:\/\/image\.tmdb\.org\//i.test(raw)) return null;
+  return raw;
+}
+
 function imageUrl(
   tmdbId: number,
   type: 'poster' | 'backdrop' | 'detail_backdrop',
-  tmdbPath: string | null | undefined,
-  tmdbBaseUrl: string,
-  _size: string
+  existingPath: string | null | undefined
 ) {
-  // Restore the cover system used before the TMDB-primary migration: whenever
-  // FLIX-IT already has a curated/mapped cover, that image wins.
+  // Historical FlixIT mapping is the first fallback after Netflix artwork.
   const mapped = getCDNImageUrl(tmdbId, type);
   if (mapped) return mapped;
 
-  // TMDB is only the final compatibility fallback for titles that have no
-  // curated/Netflix-style cover at all. Keep the fallback at native quality.
-  if (tmdbPath) {
-    const raw = String(tmdbPath);
-    const absoluteTmdb = raw.match(
-      /^https:\/\/image\.tmdb\.org\/t\/p\/(?:original|w\d+)(\/.*)$/i
-    );
-    if (absoluteTmdb) {
-      return `https://image.tmdb.org/t/p/original${absoluteTmdb[1]}`;
-    }
-    if (/^https?:\/\//i.test(raw)) return raw;
-    return `${tmdbBaseUrl}original${raw.startsWith('/') ? raw : `/${raw}`}`;
-  }
-
-  return '/placeholder.jpg';
+  // Only already-resolved non-TMDB remote assets are accepted. Relative TMDB
+  // paths and image.tmdb.org URLs are deliberately ignored site-wide.
+  return nonTmdbRemote(existingPath) || '/placeholder.jpg';
 }
 
 export function useCDNImage({
@@ -53,22 +47,18 @@ export function useCDNImage({
   backdropPath,
   useDetailBackdrop = false,
 }: UseCDNImageOptions): UseCDNImageReturn {
-  const { data: configuration } = useGetConfigurationQuery(undefined);
-  const tmdbBaseUrl = configuration?.images.base_url || 'https://image.tmdb.org/t/p/';
-
   const hasCDN = useMemo(() => hasCDNMapping(tmdbId), [tmdbId]);
 
   const getPosterUrl = useMemo(() => {
-    return (_size: string = 'original') =>
-      imageUrl(tmdbId, 'poster', posterPath, tmdbBaseUrl, 'original');
-  }, [tmdbId, posterPath, tmdbBaseUrl]);
+    return (_size: string = 'original') => imageUrl(tmdbId, 'poster', posterPath);
+  }, [tmdbId, posterPath]);
 
   const getBackdropUrl = useMemo(() => {
     return (_size: string = 'original') => {
       const backdropType = useDetailBackdrop ? 'detail_backdrop' : 'backdrop';
-      return imageUrl(tmdbId, backdropType, backdropPath, tmdbBaseUrl, 'original');
+      return imageUrl(tmdbId, backdropType, backdropPath);
     };
-  }, [tmdbId, backdropPath, tmdbBaseUrl, useDetailBackdrop]);
+  }, [tmdbId, backdropPath, useDetailBackdrop]);
 
   const posterUrl = useMemo(() => getPosterUrl('original'), [getPosterUrl]);
   const backdropUrl = useMemo(() => getBackdropUrl('original'), [getBackdropUrl]);
@@ -85,11 +75,11 @@ export function useCDNImage({
 export function getMediaImageUrl(
   tmdbId: number,
   type: 'poster' | 'backdrop' | 'detail_backdrop',
-  tmdbPath: string | null,
-  tmdbBaseUrl: string = 'https://image.tmdb.org/t/p/',
+  existingPath: string | null,
+  _tmdbBaseUrl: string = '',
   _size: string = 'original'
 ): string {
-  return imageUrl(tmdbId, type, tmdbPath, tmdbBaseUrl, 'original');
+  return imageUrl(tmdbId, type, existingPath);
 }
 
 export default useCDNImage;
