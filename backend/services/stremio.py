@@ -24,6 +24,7 @@ When no URL is configured, source="embedded" is selected automatically.
 """
 import logging
 import os
+import re
 from typing import Callable, Optional
 from urllib.parse import quote, urlparse
 
@@ -206,6 +207,24 @@ def _stream_type(url: str, filename: str = "") -> str:
     return stream_type_for(candidate)
 
 
+def _quality_score(stream: dict) -> int:
+    text = " ".join(
+        str(stream.get(k) or "")
+        for k in ("name", "title", "filename", "url")
+    ).lower()
+    if re.search(r"\b(2160p|4k|uhd)\b", text):
+        return 400
+    if re.search(r"\b1440p\b", text):
+        return 300
+    if re.search(r"\b(1080p|fhd|full[ ._-]?hd)\b", text):
+        return 200
+    if re.search(r"\b720p\b", text):
+        return 100
+    if re.search(r"\b(576p|480p|sd)\b", text):
+        return 50
+    return 0
+
+
 def parse_streams(data: dict) -> list[dict]:
     """
     Keep HTTP(S) `url` streams. Torrent-only infoHash entries remain inside a
@@ -229,6 +248,7 @@ def parse_streams(data: dict) -> list[dict]:
             "type": _stream_type(url, filename),
             "name": (s.get("name") or "").strip(),
             "title": (s.get("title") or s.get("description") or "").strip(),
+            "filename": filename,
             "headers": {k: str(v) for k, v in headers.items() if v} if isinstance(headers, dict) else {},
             "not_web_ready": bool(hints.get("notWebReady")) if isinstance(hints, dict) else False,
         })
@@ -236,11 +256,15 @@ def parse_streams(data: dict) -> list[dict]:
 
 
 def pick_best(streams: list[dict]) -> Optional[dict]:
-    """Prefer web-ready HLS, then web-ready MP4, preserving source order."""
+    """Prefer web-ready 4K/2160p streams, then lower qualities; prefer HLS on ties."""
     if not streams:
         return None
     ranked = sorted(
         streams,
-        key=lambda s: (s["not_web_ready"], 0 if s["type"] == "hls" else 1),
+        key=lambda s: (
+            s["not_web_ready"],
+            -_quality_score(s),
+            0 if s["type"] == "hls" else 1,
+        ),
     )
     return ranked[0]
