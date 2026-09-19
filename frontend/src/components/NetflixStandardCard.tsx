@@ -15,19 +15,6 @@ interface Props {
   testId?: string;
 }
 
-function tmdbResponsiveSet(url?: string | null) {
-  if (!url) return undefined;
-  const match = String(url).match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)(\/.*)$/i);
-  if (!match) return undefined;
-  const [, base, path] = match;
-  return [
-    `${base}w342${path} 342w`,
-    `${base}w500${path} 500w`,
-    `${base}w780${path} 780w`,
-    `${base}w1280${path} 1280w`,
-  ].join(", ");
-}
-
 function uniqueCandidates(values: Array<string | null | undefined>) {
   const seen = new Set<string>();
   return values.filter((value): value is string => {
@@ -63,7 +50,6 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   }, [candidates.join("|")]);
 
   const src = candidates[candidateIndex] || null;
-  const srcSet = useMemo(() => tmdbResponsiveSet(src), [src]);
 
   return (
     <div
@@ -85,8 +71,6 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
             {src ? (
               <img
                 src={src}
-                srcSet={srcSet}
-                sizes="(max-width: 500px) 50vw, (max-width: 800px) 33vw, (max-width: 1100px) 25vw, 17vw"
                 alt=""
                 width="342"
                 height="192"
