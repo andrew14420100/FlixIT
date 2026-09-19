@@ -207,11 +207,12 @@ class ResolverRegistry:
         if not stream:
             return result
 
-        # Omni already exposes lazy resolver/HLS proxy endpoints. Keep those
-        # semantics intact and only add FLIX-IT's internal proxy when request
-        # headers are explicitly required or when the resolved item is HLS.
+        # Headerless Omni/Stremio streams are already browser-ready and should
+        # stay direct. Proxy only when request headers (Referer/User-Agent/etc.)
+        # are explicitly required; this removes one full manifest/segment hop
+        # and substantially improves startup latency for public HLS streams.
         if result.get("source") == "stremio_addon":
-            if result.get("headers") or str(result.get("type") or "").lower() in ("hls", "m3u8"):
+            if result.get("headers"):
                 return proxy.wrap_stream_internal(result)
             return {
                 **result,
