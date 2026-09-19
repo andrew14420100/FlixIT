@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v7-shape-fallback";
+const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v1";
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -32,6 +32,8 @@ export function nonTmdbImageUrl(value: any) {
   return text;
 }
 
+// Compatibility helper retained for older callers. It deliberately accepts only
+// already-resolved non-TMDB URLs.
 export function tmdbImageUrl(value: any, _size = "original") {
   return nonTmdbImageUrl(value);
 }
@@ -52,18 +54,20 @@ export default function useAutomaticMediaAssets(
   const typeSlug = mediaTypeSlug(mediaType, item);
   const id = item?.id || item?.tmdbId || item?.tmdb_id;
 
-  const netflixLandscape = firstNonTmdbArtwork(
+  const itemNetflixLandscape = firstNonTmdbArtwork(
     item?.netflix_artwork_url,
     item?.netflixArtworkUrl,
     item?.netflix_cover_url,
     item?.contextualArtwork?.artwork
   );
-  const netflixPoster = firstNonTmdbArtwork(
+  const itemNetflixPoster = firstNonTmdbArtwork(
     item?.netflix_ranked_artwork_url,
     item?.netflixRankedArtworkUrl,
     item?.netflix_cover_url
   );
 
+  // Preserve the existing project mapping as the historical fallback requested
+  // by the site, but never extend/scrape it here.
   const mappedBackdrop = id
     ? getCDNImageUrl(Number(id), "backdrop") || getCDNImageUrl(Number(id), "detail_backdrop")
     : null;
@@ -89,31 +93,40 @@ export default function useAutomaticMediaAssets(
     item?.image,
     item?.artwork
   );
+  const savedLogo = firstNonTmdbArtwork(
+    item?.netflix_logo_url,
+    item?.logo_path,
+    item?.logo,
+    item?.title_logo_path,
+    item?.titleLogoPath,
+    item?.contextualArtwork?.logo
+  );
 
   const fallback = useMemo(() => ({
     tmdbId: id,
     type: typeSlug,
     title: item?.title || item?.name || "",
-    backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
-    poster_path: netflixPoster || netflixLandscape || mappedPoster || savedPoster || null,
-    titled_backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
-    logo_path: null,
+    backdrop_path: itemNetflixLandscape || mappedBackdrop || savedLandscape || null,
+    poster_path: itemNetflixPoster || mappedPoster || savedPoster || itemNetflixLandscape || null,
+    titled_backdrop_path: itemNetflixLandscape || mappedBackdrop || savedLandscape || null,
+    logo_path: savedLogo || null,
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "netflix-cdn-saved-only",
+    image_source_policy: "netflix-existing-apple-imdb-no-tmdb-images",
   }), [
     id,
     typeSlug,
     item?.title,
     item?.name,
-    netflixLandscape,
-    netflixPoster,
+    itemNetflixLandscape,
+    itemNetflixPoster,
     mappedBackdrop,
     mappedPoster,
     savedLandscape,
     savedPoster,
+    savedLogo,
     item?.runtime,
     item?.number_of_seasons,
     item?.certification,
@@ -124,20 +137,12 @@ export default function useAutomaticMediaAssets(
     queryFn: async ({ signal }: any) => {
       if (!id) return fallback;
 
-      const artworkParams = new URLSearchParams({
-        context: "home",
-        viewport: typeof window !== "undefined" && window.innerWidth < 700 ? "mobile" : "desktop",
-        profile_id: typeof window !== "undefined"
-          ? (window.localStorage.getItem("netflix_user_id") || "guest")
-          : "guest",
-      });
-
-      const [metadataResult, netflixResult] = await Promise.allSettled([
+      const [metadataResult, officialResult] = await Promise.allSettled([
         fetch(`/api/public/media-assets/${typeSlug}/${id}`, {
           signal,
           headers: { Accept: "application/json" },
         }).then(async (response) => response.ok ? response.json() : {}),
-        fetch(`/api/player/artwork/${typeSlug}/${id}?${artworkParams.toString()}`, {
+        fetch(`/api/public/official-artwork/${typeSlug}/${id}`, {
           signal,
           cache: "no-store",
           headers: { Accept: "application/json" },
@@ -145,8 +150,11 @@ export default function useAutomaticMediaAssets(
       ]);
 
       const media = metadataResult.status === "fulfilled" ? (metadataResult.value || {}) : {};
-      const netflix = netflixResult.status === "fulfilled" ? (netflixResult.value || {}) : {};
+      const official = officialResult.status === "fulfilled" ? (officialResult.value || {}) : {};
 
+      // /api/public/media-assets still contains legacy TMDB image paths internally.
+      // Keep only non-visual metadata from it. All visuals below come from the
+      // unified official resolver or the pre-existing project mapping/saved URLs.
       const {
         backdrop_path: _dropBackdrop,
         poster_path: _dropPoster,
@@ -157,22 +165,65 @@ export default function useAutomaticMediaAssets(
         ...metadataOnly
       } = media;
 
-      const netflixArtwork = nonTmdbImageUrl(netflix?.artwork?.url);
-      const netflixLogo = nonTmdbImageUrl(netflix?.logo?.url);
+      const netflixLandscape = firstNonTmdbArtwork(
+        official?.netflix?.landscape_url,
+        official?.netflix?.artwork_url
+      );
+      const netflixPoster = firstNonTmdbArtwork(
+        official?.netflix?.poster_url,
+        official?.netflix?.landscape_url
+      );
+      const netflixLogo = firstNonTmdbArtwork(official?.netflix?.logo_url);
+
+      const officialFallbackLandscape = firstNonTmdbArtwork(
+        official?.fallback?.landscape_url,
+        official?.fallback?.poster_url
+      );
+      const officialFallbackPoster = firstNonTmdbArtwork(
+        official?.fallback?.poster_url,
+        official?.fallback?.landscape_url
+      );
+      const officialFallbackLogo = firstNonTmdbArtwork(official?.fallback?.logo_url);
+
+      // Required order for visuals:
+      // Netflix -> existing historical mapping -> Apple/iTunes -> IMDb -> saved
+      // non-TMDB asset. No TMDB image is ever promoted into the UI.
+      const landscape =
+        netflixLandscape ||
+        itemNetflixLandscape ||
+        mappedBackdrop ||
+        officialFallbackLandscape ||
+        savedLandscape ||
+        null;
+      const poster =
+        netflixPoster ||
+        itemNetflixPoster ||
+        mappedPoster ||
+        officialFallbackPoster ||
+        savedPoster ||
+        landscape ||
+        null;
+      const logo =
+        netflixLogo ||
+        officialFallbackLogo ||
+        savedLogo ||
+        null;
 
       return {
         ...fallback,
         ...metadataOnly,
-        backdrop_path: netflixArtwork || fallback.backdrop_path,
-        titled_backdrop_path: netflixArtwork || fallback.titled_backdrop_path,
-        // If Netflix has no dedicated portrait in this response, crop the same
-        // native artwork instead of leaving Top 10 / poster surfaces blank.
-        poster_path: netflixArtwork || fallback.poster_path,
-        logo_path: netflixLogo || null,
-        netflix_artwork_url: netflixArtwork || null,
+        title: official?.title || metadataOnly?.title || fallback.title,
+        backdrop_path: landscape,
+        titled_backdrop_path: landscape,
+        poster_path: poster,
+        logo_path: logo,
+        netflix_artwork_url: netflixLandscape || null,
+        netflix_ranked_artwork_url: netflixPoster || null,
         netflix_logo_url: netflixLogo || null,
-        image_quality: netflix?.artwork?.quality_label || "max-native",
-        image_source_policy: "netflix-cdn-saved-only",
+        official_artwork_source: official?.source || official?.fallback?.source || null,
+        embedded_title_treatment: !!official?.embedded_title_treatment,
+        image_quality: "max-native",
+        image_source_policy: "netflix-existing-apple-imdb-no-tmdb-images",
         upscaled: false,
       };
     },
