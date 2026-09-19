@@ -114,23 +114,30 @@ def _choose(self, doc: dict, *, context: str, viewport: str, profile_id: str, ex
     portrait = context == "top10"
     target_ratio = 0.70 if portrait else (16 / 9)
 
-    # Standard cards, Hero and hover are horizontal Netflix-style. Top 10 alone
-    # uses the portrait treatment. Unknown dimensions stay as the final fallback
-    # instead of disappearing.
-    shaped = []
-    unknown = []
+    # Prefer the intended Netflix geometry first, but never throw away a valid
+    # lower-quality/lower-resolution image merely because its crop is a little
+    # farther from the target. Standard/Hero/hover stay horizontal; Top 10 stays
+    # portrait. Unknown dimensions are the last fallback rather than a blank tile.
+    exact_shape: list[dict] = []
+    same_orientation: list[dict] = []
+    unknown: list[dict] = []
     for asset in visuals:
         ratio = _ratio(asset)
         if not ratio:
             unknown.append(asset)
             continue
         if portrait:
-            if 0.50 <= ratio <= 0.88:
-                shaped.append(asset)
-        elif 1.35 <= ratio <= 2.20:
-            shaped.append(asset)
+            if ratio < 1.0:
+                same_orientation.append(asset)
+                if 0.55 <= ratio <= 0.82:
+                    exact_shape.append(asset)
+        else:
+            if ratio > 1.0:
+                same_orientation.append(asset)
+                if 1.50 <= ratio <= 2.00:
+                    exact_shape.append(asset)
 
-    candidates = shaped or unknown
+    candidates = exact_shape or same_orientation or unknown
     if not candidates:
         return None, logo
 
@@ -173,9 +180,22 @@ def install_netflix_artwork_quality() -> None:
     original_enabled = ArtworkResolver.enabled
 
     def enabled(self) -> bool:
-        # If the existing Netflix artwork session is configured, make the
-        # resolver usable by the public UI without requiring a second toggle.
-        return bool(original_enabled(self) or self._cookies())
+        # Use the already-configured Netflix session when present. Also keep
+        # previously resolved Netflix artwork usable if the session is currently
+        # absent, so cached covers do not disappear after a restart/config change.
+        if original_enabled(self) or self._cookies():
+            return True
+        try:
+            cached = self.matches.find_one(
+                {
+                    "status": {"$in": ["matched", "manual"]},
+                    "assets.0": {"$exists": True},
+                },
+                {"_id": 1},
+            )
+            return bool(cached)
+        except Exception:
+            return False
 
     ArtworkResolver.enabled = enabled
     ArtworkResolver._logo = _best_logo
