@@ -24,6 +24,10 @@ function isHlsUrl(value: string) {
   return /\.m3u8(?:$|[?#])/i.test(value || "") || /\/hls\//i.test(value || "");
 }
 
+function isYouTubeId(value: string) {
+  return /^[A-Za-z0-9_-]{11}$/.test(String(value || "").trim());
+}
+
 function routeIdentity() {
   if (typeof window === "undefined") return null;
   const match = window.location.pathname.match(/\/browse\/(movie|tv)\/(\d+)/i);
@@ -32,19 +36,6 @@ function routeIdentity() {
     : null;
 }
 
-/**
- * Unified native trailer player.
- *
- * A direct MP4/HLS URL is played as-is. Any legacy key/sentinel is treated only
- * as a request to resolve the current DetailPage title through FLIX-IT's central
- * trailer endpoint. HLS playback prefers the highest native rendition available
- * up to 2160p/4K.
- *
- * Playback setup depends only on the media URL. UI state updates (for example
- * the hover logo disappearing after five seconds) must never tear down and
- * recreate the video element, otherwise the trailer would appear to stop or
- * restart at exactly that moment.
- */
 export default function TrailerPlayer({
   videoKey,
   muted = true,
@@ -63,17 +54,38 @@ export default function TrailerPlayer({
   const onEndedRef = useRef(onEnded);
 
   const propDirect = isDirectUrl(videoKey);
+  const propYouTube = isYouTubeId(videoKey);
   const identity = useMemo(
-    () => (propDirect ? null : routeIdentity()),
-    [videoKey, propDirect]
+    () => (propDirect || propYouTube ? null : routeIdentity()),
+    [videoKey, propDirect, propYouTube]
   );
   const resolved = useResolvedTrailer(
     identity?.mediaType,
     identity?.id,
-    !propDirect && !!identity
+    !propDirect && !propYouTube && !!identity
   );
-  const playbackKey = propDirect ? videoKey : resolved.url;
+  const playbackKey = propDirect || propYouTube ? videoKey : resolved.url;
   const direct = isDirectUrl(playbackKey || "");
+  const youtube = isYouTubeId(playbackKey || "");
+
+  const youtubeSrc = useMemo(() => {
+    if (!youtube || !playbackKey) return null;
+    const params = new URLSearchParams({
+      autoplay: playing ? "1" : "0",
+      mute: muted ? "1" : "0",
+      controls: "0",
+      rel: "0",
+      playsinline: "1",
+      modestbranding: "1",
+      iv_load_policy: "3",
+      fs: "0",
+    });
+    if (loop) {
+      params.set("loop", "1");
+      params.set("playlist", playbackKey);
+    }
+    return `https://www.youtube-nocookie.com/embed/${playbackKey}?${params.toString()}`;
+  }, [youtube, playbackKey, muted, playing, loop]);
 
   useEffect(() => {
     playingRef.current = playing;
@@ -97,8 +109,6 @@ export default function TrailerPlayer({
     video.muted = !!muted;
   }, [muted]);
 
-  // Play/pause is deliberately separate from media initialization. Toggling
-  // controls must not destroy HLS or reload an MP4 from time zero.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -130,9 +140,6 @@ export default function TrailerPlayer({
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        // Pick the highest declared native rendition that does not exceed 4K.
-        // The same index is also used as the ABR cap so an 8K rendition present
-        // in the master can never be selected later by adaptation.
         if (hls.levels?.length) {
           const eligible = hls.levels
             .map((level, index) => ({ level, index }))
@@ -190,8 +197,6 @@ export default function TrailerPlayer({
       };
     }
 
-    // Native HLS is used only when MediaSource/HLS.js is unavailable. The
-    // backend resolver has already rejected known renditions above 2160p.
     video.src = playbackKey;
     video.load();
     if (playingRef.current) video.play().catch(() => undefined);
@@ -203,7 +208,41 @@ export default function TrailerPlayer({
     };
   }, [direct, playbackKey]);
 
-  if (!playbackKey || !direct) return null;
+  if (!playbackKey || (!direct && !youtube)) return null;
+
+  if (youtube && youtubeSrc) {
+    return (
+      <div
+        data-testid="trailer-player"
+        style={{
+          position: "absolute",
+          inset: 0,
+          overflow: "hidden",
+          background: "#000",
+        }}
+      >
+        <iframe
+          key={youtubeSrc}
+          src={youtubeSrc}
+          title="Trailer"
+          allow="autoplay; encrypted-media; picture-in-picture"
+          referrerPolicy="strict-origin-when-cross-origin"
+          onLoad={() => onPlayingRef.current?.()}
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            width: "120%",
+            height: "120%",
+            border: 0,
+            pointerEvents: "none",
+            transform: `translate(-50%, -50%) scale(${zoom})`,
+            background: "#000",
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
