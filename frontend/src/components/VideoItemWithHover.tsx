@@ -124,19 +124,22 @@ export default function VideoItemWithHover({
     [automaticAssets, deferredAssets]
   );
 
+  // Only explicitly Netflix-labelled fields belong in this tier. Generic
+  // artwork/image fields are legacy project assets and must stay behind the
+  // historical CDN mapping.
   const existingNetflixArtwork = firstNonTmdbArtwork(
     video?.netflix_artwork_url,
     video?.netflixArtworkUrl,
     video?.netflix_cover_url,
-    video?.contextualArtwork?.artwork,
-    video?.artwork,
-    video?.image
+    video?.contextualArtwork?.artwork
   );
 
   const legacyLandscape = firstNonTmdbArtwork(
     video?.titled_backdrop_path,
     video?.titledBackdropPath,
     video?.backdrop_path,
+    video?.artwork,
+    video?.image,
     video?.cover_path,
     video?.cover,
     video?.image_url,
