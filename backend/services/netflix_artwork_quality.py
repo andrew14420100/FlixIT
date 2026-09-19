@@ -125,10 +125,6 @@ def _choose(self, doc: dict, *, context: str, viewport: str, profile_id: str, ex
     portrait = context == "top10"
     target_ratio = 0.70 if portrait else (16 / 9)
 
-    # Prefer the intended Netflix geometry first, but never throw away a valid
-    # lower-quality/lower-resolution image merely because its crop is a little
-    # farther from the target. Standard/Hero/hover stay horizontal; Top 10 stays
-    # portrait. Unknown dimensions are the last fallback rather than a blank tile.
     exact_shape: list[dict] = []
     same_orientation: list[dict] = []
     unknown: list[dict] = []
@@ -213,11 +209,6 @@ def _identity_from_doc(doc: Optional[dict]) -> Optional[dict]:
 
 
 def _local_identity(self, media_type: str, tmdb_id: int) -> Optional[dict]:
-    """Recover title/year from data FLIX-IT already has before asking TMDB.
-
-    This does not introduce a provider. It only prevents a transient metadata
-    outage from turning the artwork resolver into an all-or-nothing blank state.
-    """
     current = self.matches.find_one(
         {"type": media_type, "tmdbId": tmdb_id},
         {"_id": 0, "identity": 1, "netflix_title": 1, "netflix_year": 1},
@@ -254,13 +245,7 @@ def _local_identity(self, media_type: str, tmdb_id: int) -> Optional[dict]:
 
 
 async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int) -> dict:
-    """Strict Netflix match that survives TMDB watch-provider outages.
-
-    TMDB images are never used here. Existing local title/year is preferred. If
-    local identity is unavailable, the old TMDB identity endpoint remains only a
-    metadata fallback. Availability is then verified by the authenticated
-    Netflix account/session used for the artwork request.
-    """
+    """Strict Netflix match that survives missing watch-provider metadata."""
     base = {
         "type": media_type,
         "tmdbId": tmdb_id,
@@ -304,11 +289,34 @@ async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int)
                 "identity": identity,
                 "error": str(exc),
             }
+
         for row in rows:
-            scored = {**row, "score": self._score_match(identity, row)}
-            nid = str(scored.get("netflix_id") or "")
+            enriched = dict(row or {})
+            nid = str(enriched.get("netflix_id") or "")
             if not nid:
                 continue
+
+            # Netflix search suggestions often omit releaseYear even for an exact
+            # result. That used to cap confidence at 0.82 and blank valid cards.
+            # Ask the authenticated metadata endpoint for the candidate year
+            # before scoring; matching remains title+year strict whenever Netflix
+            # exposes the year.
+            if not _year(enriched.get("year")):
+                try:
+                    entity = await self.provider.metadata(nid)
+                except Exception:
+                    entity = None
+                if entity:
+                    enriched["year"] = (
+                        entity.get("latestYear")
+                        or entity.get("releaseYear")
+                        or entity.get("year")
+                    )
+                    enriched["metadata_available"] = entity.get("isAvailable")
+                    if not enriched.get("title"):
+                        enriched["title"] = entity.get("title")
+
+            scored = {**enriched, "score": self._score_match(identity, enriched)}
             current = candidates.get(nid)
             if current is None or scored["score"] > current["score"]:
                 candidates[nid] = scored
@@ -349,10 +357,6 @@ async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int)
             "error": str(exc),
         }
 
-    # The metadata call is made with the configured authenticated Netflix
-    # session/locale. A definitive false means do not expose the asset. Missing
-    # isAvailable is tolerated because successful search + metadata under the
-    # same account already proves the title can be resolved in that session.
     if entity.get("isAvailable") is False:
         return {
             **base,
@@ -385,9 +389,6 @@ def install_netflix_artwork_quality() -> None:
     original_auto_match = ArtworkResolver.auto_match
 
     def enabled(self) -> bool:
-        # Use the already-configured Netflix session when present. Also keep
-        # previously resolved Netflix artwork usable if the session is currently
-        # absent, so cached covers do not disappear after a restart/config change.
         if original_enabled(self) or self._cookies():
             return True
         try:
@@ -403,8 +404,6 @@ def install_netflix_artwork_quality() -> None:
             return False
 
     async def auto_match(self, media_type: str, tmdb_id: int, force: bool = False):
-        # Old versions cached this transient TMDB-region failure for 24 hours.
-        # Force exactly those stale/temporary states through the new matcher.
         if not force:
             try:
                 current = self.matches.find_one(
@@ -415,6 +414,9 @@ def install_netflix_artwork_quality() -> None:
                     "region_verification_unavailable",
                     "tmdb_identity_unavailable",
                     "identity_unavailable",
+                    "netflix_search_failed",
+                    "netflix_metadata_failed",
+                    "ambiguous_or_low_confidence",
                 }:
                     force = True
             except Exception:
