@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
 
-const ARTWORK_QUERY_VERSION = "netflix-native-v5";
+const ARTWORK_QUERY_VERSION = "netflix-native-v6-it";
 
 function profileId() {
   if (typeof window === "undefined") return "guest";
@@ -14,12 +14,6 @@ function viewport() {
   return window.innerWidth < 700 ? "mobile" : "desktop";
 }
 
-/**
- * Resolve the existing Netflix artwork provider directly. The config endpoint
- * remains useful for status/region, but an old cached `enabled:false` value must
- * never prevent a title from asking the backend for artwork: the backend now
- * knows whether a live session or a previously cached Netflix match is usable.
- */
 export default function useNetflixArtwork(
   item: any,
   mediaType: any,
