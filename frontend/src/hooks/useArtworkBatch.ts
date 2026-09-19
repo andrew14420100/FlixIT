@@ -19,6 +19,7 @@ const STORAGE_PREFIX = `flix-artwork-raw:${MEDIA_ASSET_QUALITY_VERSION}:`;
 // visible candidates of every row resolve before the deep background pool.
 const memoryCache = new Map<string, { savedAt: number; value: any }>();
 const pendingJobs = new Map<string, any>();
+const inFlightJobs = new Map<string, any>();
 let activeBatches = 0;
 let sequence = 0;
 let pumpScheduled = false;
@@ -91,7 +92,10 @@ function takeNextBatch() {
   const jobs = [...pendingJobs.values()]
     .sort((a, b) => a.priority - b.priority || a.sequence - b.sequence)
     .slice(0, MAX_BATCH);
-  jobs.forEach((job) => pendingJobs.delete(job.entry.key));
+  jobs.forEach((job) => {
+    pendingJobs.delete(job.entry.key);
+    inFlightJobs.set(job.entry.key, job);
+  });
   return jobs;
 }
 
@@ -129,6 +133,7 @@ async function runBatch(jobs: any[]) {
     // Do not cache transport failures. A later query/reload can retry them.
     jobs.forEach((job) => job.waiters.forEach((resolve: any) => resolve(null)));
   } finally {
+    jobs.forEach((job) => inFlightJobs.delete(job.entry.key));
     activeBatches -= 1;
     schedulePump();
   }
@@ -147,7 +152,7 @@ function enqueue(entry: any, priority: number) {
   if (cached) return Promise.resolve(cached);
 
   return new Promise((resolve) => {
-    const existing = pendingJobs.get(entry.key);
+    const existing = pendingJobs.get(entry.key) || inFlightJobs.get(entry.key);
     if (existing) {
       existing.priority = Math.min(existing.priority, priority);
       existing.waiters.push(resolve);
@@ -183,7 +188,7 @@ function mergeRaw(...groups: any[][]) {
  *
  * - first 32 candidates of every row are priority 0 and paint quickly;
  * - the remaining candidate pool is priority 1 and fills the row toward 50;
- * - duplicate IDs across rows are coalesced globally;
+ * - duplicate IDs across rows are coalesced, including while already in flight;
  * - only two browser batch requests are active at once;
  * - successful raw provider decisions survive reloads for 24h in localStorage;
  * - individual useAutomaticMediaAssets query keys are still seeded for complete
