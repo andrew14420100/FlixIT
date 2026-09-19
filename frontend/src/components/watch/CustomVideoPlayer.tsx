@@ -3,6 +3,7 @@
  * CustomVideoPlayer - native <video> player (no iframe).
  *  - HLS via hls.js (Chrome/Firefox/Edge) with native fallback (Safari/iOS); plain .mp4 supported too
  *  - Italian audio track auto-selected on MANIFEST_PARSED
+ *  - Displays the resolution actually being played (4K UHD / 1440p / 1080p / 720p)
  *  - MUI overlay: play/pause, +-10s, volume + mute, seekbar + times, fullscreen, next episode, audio menu
  *  - Controls auto-hide after 3s of mouse inactivity while playing
  *  - Resume from localStorage (key = storageKey/tmdbId) merged with `startAt`
@@ -89,6 +90,22 @@ function isItalianTrack(track) {
   return lang === "it" || lang === "ita" || lang.startsWith("it-") || name.includes("italian") || name.includes("italiano");
 }
 
+function qualityFromDimensions(width = 0, height = 0) {
+  const w = Number(width) || 0;
+  const h = Number(height) || 0;
+  if (!w || !h) return null;
+
+  // Width checks also recognize cinematic 4K/1080p encodes whose cropped height is below 2160/1080.
+  let label;
+  if (w >= 3000 || h >= 2000) label = "4K UHD";
+  else if (w >= 2500 || h >= 1400) label = "1440p";
+  else if (w >= 1800 || h >= 1000) label = "1080p";
+  else if (w >= 1200 || h >= 700) label = "720p";
+  else label = `${h}p`;
+
+  return { label, width: w, height: h };
+}
+
 const ctrlBtnSx = {
   color: "#fff", width: 44, height: 44,
   transition: "transform 160ms ease, background-color 160ms ease",
@@ -121,6 +138,7 @@ export default function CustomVideoPlayer({
   const [audioTrackId, setAudioTrackId] = useState(-1);
   const [audioMenuAnchor, setAudioMenuAnchor] = useState(null);
   const [fatalError, setFatalError] = useState(null);
+  const [videoQuality, setVideoQuality] = useState(null);
 
   const resumeTarget = useMemo(() => Math.max(Number(startAt) || 0, readSavedTime(storageKey)), [startAt, storageKey]);
 
@@ -133,6 +151,7 @@ export default function CustomVideoPlayer({
     setBuffering(true);
     setAudioTracks([]);
     setAudioTrackId(-1);
+    setVideoQuality(null);
 
     const useHls = type === "hls" || /\.m3u8(\?|$)/i.test(src) || /\/proxy\/hls/i.test(src);
     let hls = null;
@@ -184,6 +203,11 @@ export default function CustomVideoPlayer({
         setAudioTrackId(italian >= 0 ? italian : hls.audioTrack);
         startAutoplay();
       });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_e, data) => {
+        const level = hls.levels?.[data?.level];
+        const detected = qualityFromDimensions(level?.width, level?.height);
+        if (detected) setVideoQuality(detected);
+      });
       hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_e, data) => setAudioTrackId(data?.id ?? hls.audioTrack));
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data?.fatal) return;
@@ -231,6 +255,10 @@ export default function CustomVideoPlayer({
     video.volume = volume;
     video.muted = muted;
 
+    const updateVideoQuality = () => {
+      const detected = qualityFromDimensions(video.videoWidth, video.videoHeight);
+      if (detected) setVideoQuality(detected);
+    };
     const applyResume = () => {
       if (resumeAppliedRef.current) return;
       resumeAppliedRef.current = true;
@@ -239,7 +267,7 @@ export default function CustomVideoPlayer({
         try { video.currentTime = resumeTarget; } catch { /* not seekable yet */ }
       }
     };
-    const onLoadedMeta = () => { setDuration(video.duration || 0); applyResume(); };
+    const onLoadedMeta = () => { setDuration(video.duration || 0); applyResume(); updateVideoQuality(); };
     const onDuration = () => setDuration(video.duration || 0);
     const onTime = () => {
       if (seekingRef.current) return;
@@ -257,6 +285,7 @@ export default function CustomVideoPlayer({
       setFatalError(null);
       setPlaying(true);
       setBuffering(false);
+      updateVideoQuality();
     };
     const onPause = () => { setPlaying(false); setBuffering(false); writeSavedTime(storageKey, video.currentTime, video.duration || 0); onProgress?.(video.currentTime, video.duration || 0); };
     const onSeeked = () => { setCurrentTime(video.currentTime || 0); if (video.paused) setBuffering(false); };
@@ -265,8 +294,9 @@ export default function CustomVideoPlayer({
       clearTimeout(fatalErrorTimerRef.current);
       setFatalError(null);
       setBuffering(false);
+      updateVideoQuality();
     };
-    const onCanPlay = () => setBuffering(false);
+    const onCanPlay = () => { setBuffering(false); updateVideoQuality(); };
     const onEnd = () => { setPlaying(false); writeSavedTime(storageKey, video.duration || 0, video.duration || 0); onProgress?.(video.duration || 0, video.duration || 0); onEnded?.(); };
     const onVolume = () => { setMuted(video.muted); setVolume(video.volume); };
     const onErr = () => {
@@ -286,6 +316,7 @@ export default function CustomVideoPlayer({
     video.addEventListener("waiting", onWaiting);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("canplay", onCanPlay);
+    video.addEventListener("resize", updateVideoQuality);
     video.addEventListener("ended", onEnd);
     video.addEventListener("seeked", onSeeked);
     video.addEventListener("volumechange", onVolume);
@@ -299,6 +330,7 @@ export default function CustomVideoPlayer({
       video.removeEventListener("waiting", onWaiting);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("canplay", onCanPlay);
+      video.removeEventListener("resize", updateVideoQuality);
       video.removeEventListener("ended", onEnd);
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("volumechange", onVolume);
@@ -433,6 +465,7 @@ export default function CustomVideoPlayer({
       ref={containerRef}
       data-testid="custom-video-player"
       data-controls={showOverlay ? "visible" : "hidden"}
+      data-quality={videoQuality?.label || "unknown"}
       onMouseMove={wakeControls}
       onTouchStart={wakeControls}
       onMouseLeave={() => { if (playing) setControlsVisible(false); }}
@@ -478,6 +511,31 @@ export default function CustomVideoPlayer({
           <Typography data-testid="player-title" noWrap sx={{ color: "#fff", fontWeight: 700, fontSize: { xs: 16, md: 22 }, textShadow: "0 2px 8px rgba(0,0,0,0.8)" }}>{title}</Typography>
           {subtitle && <Typography data-testid="player-episode" noWrap sx={{ color: "rgba(255,255,255,0.8)", fontSize: { xs: 13, md: 15 }, textShadow: "0 2px 8px rgba(0,0,0,0.8)" }}>{subtitle}</Typography>}
         </Box>
+        {videoQuality && (
+          <Tooltip title={`Risoluzione in riproduzione: ${videoQuality.width}×${videoQuality.height}`}>
+            <Box
+              data-testid="player-quality"
+              aria-label={`Qualità video ${videoQuality.label}`}
+              sx={{
+                ml: "auto",
+                px: { xs: 0.9, md: 1.15 },
+                py: 0.35,
+                borderRadius: "4px",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,0.75)",
+                bgcolor: "rgba(0,0,0,0.38)",
+                fontSize: { xs: 11, md: 12 },
+                lineHeight: 1.2,
+                fontWeight: 800,
+                letterSpacing: "0.04em",
+                whiteSpace: "nowrap",
+                textShadow: "0 1px 4px rgba(0,0,0,0.9)",
+              }}
+            >
+              {videoQuality.label}
+            </Box>
+          </Tooltip>
+        )}
       </Box>
 
       <Box data-testid="player-controls" sx={{ position: "absolute", left: 0, right: 0, bottom: 0, px: { xs: 2, md: 4 }, pb: { xs: 1.5, md: 2.5 }, pt: 8,
