@@ -13,12 +13,13 @@ const port = Number.parseInt(process.env.PORT || "7001", 10);
 const test4kEnabled = /^(1|true|yes|on)$/i.test(process.env.OMNI_4K_TEST_MODE || "");
 const test4kId = String(process.env.OMNI_4K_TEST_ID || "tt15239678").trim();
 const test4kUrl = String(
-  process.env.OMNI_4K_TEST_URL || "https://test-streams.mux.dev/test_001/stream.m3u8"
+  process.env.OMNI_4K_TEST_URL ||
+    "https://pbs.github.io/test-streams/pbs/test-pattern/pbs-bars_av1-vp9-hevc-avc.m3u8"
 ).trim();
 
 const manifest = {
   id: "org.flixit.local-runtime-harness",
-  version: "1.1.0",
+  version: "1.2.0",
   name: "FlixIT Local Runtime Harness",
   description: "Local staging connectivity and public HLS quality test runtime",
   resources: ["stream"],
@@ -46,7 +47,7 @@ function streamResponse(path) {
       streams: [
         {
           name: "FlixIT 4K Test",
-          title: "Public 4K HLS test stream",
+          title: "PBS public 4K multicodec HLS test pattern",
           url: test4kUrl
         }
       ]
