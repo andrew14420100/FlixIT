@@ -5,8 +5,8 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v3b";
-const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v4";
+export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -45,11 +45,7 @@ function firstNonTmdbArtwork(...values: any[]) {
   return null;
 }
 
-export default function useAutomaticMediaAssets(
-  item: any,
-  mediaType: any,
-  enabled = true
-) {
+export function buildMediaAssetFallback(item: any, mediaType: any) {
   const typeSlug = mediaTypeSlug(mediaType, item);
   const id = item?.id || item?.tmdbId || item?.tmdb_id;
 
@@ -93,46 +89,130 @@ export default function useAutomaticMediaAssets(
     item?.contextualArtwork?.logo
   );
 
-  // Historical mapping entries are title-bearing merchandising art. A generic
-  // saved image is only allowed when it also has a real saved logo to compose;
-  // clean legacy artwork is never intentionally promoted to a public card.
-  const safeSavedLandscape = savedLogo ? savedLandscape : null;
-  const safeSavedPoster = savedLogo ? savedPoster : null;
+  // Static cards are not allowed to compose a clean legacy image with a logo.
+  // They may use a historical mapping (curated title-bearing art), or a saved
+  // image only when that image was explicitly marked as already titled.
+  const savedLandscapeEmbedded = !!(
+    item?.backdrop_embedded_title_treatment ||
+    item?.embedded_title_treatment ||
+    item?.has_embedded_title_treatment
+  );
+  const savedPosterEmbedded = !!(
+    item?.poster_embedded_title_treatment ||
+    item?.has_embedded_poster_title_treatment
+  );
+  const safeSavedLandscape = savedLandscapeEmbedded ? savedLandscape : null;
+  const safeSavedPoster = savedPosterEmbedded ? savedPoster : null;
 
-  const fallback = useMemo(() => ({
+  const cardBackdrop = mappedBackdrop || safeSavedLandscape || null;
+  const cardPoster = mappedPoster || safeSavedPoster || null;
+
+  return {
     tmdbId: id,
     type: typeSlug,
     title: item?.title || item?.name || "",
-    backdrop_path: mappedBackdrop || safeSavedLandscape || null,
-    poster_path: mappedPoster || safeSavedPoster || mappedBackdrop || safeSavedLandscape || null,
-    titled_backdrop_path: mappedBackdrop || safeSavedLandscape || null,
+    backdrop_path: cardBackdrop,
+    poster_path: cardPoster,
+    titled_backdrop_path: cardBackdrop,
+    hero_backdrop_path: savedLandscape || mappedBackdrop || cardBackdrop || null,
+    detail_backdrop_path: savedLandscape || mappedBackdrop || cardBackdrop || null,
     logo_path: savedLogo || null,
-    backdrop_embedded_title_treatment: !!mappedBackdrop,
-    poster_embedded_title_treatment: !!mappedPoster,
-    complete: !!(
-      (mappedBackdrop || safeSavedLandscape) &&
-      (mappedPoster || safeSavedPoster || mappedBackdrop || safeSavedLandscape) &&
-      (mappedBackdrop || mappedPoster || savedLogo)
-    ),
+    backdrop_embedded_title_treatment: !!cardBackdrop,
+    poster_embedded_title_treatment: !!cardPoster,
+    hero_embedded_title_treatment: !!mappedBackdrop,
+    card_ready: !!cardBackdrop,
+    top10_ready: !!cardPoster,
+    landscape_card_ready: !!cardBackdrop,
+    poster_card_ready: !!cardPoster,
+    complete: !!(cardBackdrop && cardPoster),
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "complete-title-treatment_official-v3b_no-tmdb-images",
-  }), [
-    id,
-    typeSlug,
-    item?.title,
-    item?.name,
-    mappedBackdrop,
-    mappedPoster,
-    safeSavedLandscape,
-    safeSavedPoster,
-    savedLogo,
-    item?.runtime,
-    item?.number_of_seasons,
-    item?.certification,
-  ]);
+    image_source_policy: "static-embedded-title-treatment_it-first_v4_no-tmdb-images",
+    mapped_backdrop: mappedBackdrop,
+    mapped_poster: mappedPoster,
+  };
+}
+
+export function mergeOfficialArtwork(fallback: any, official: any) {
+  const officialLandscape = firstNonTmdbArtwork(official?.backdrop_url);
+  const officialPoster = firstNonTmdbArtwork(official?.poster_url);
+  const officialHero = firstNonTmdbArtwork(
+    official?.hero_backdrop_url,
+    official?.detail_backdrop_url,
+    official?.backdrop_url
+  );
+  const officialLogo = firstNonTmdbArtwork(official?.logo_url);
+
+  const backdrop = officialLandscape || fallback?.backdrop_path || null;
+  const poster = officialPoster || fallback?.poster_path || null;
+  const hero = officialHero || fallback?.hero_backdrop_path || backdrop || null;
+
+  return {
+    ...fallback,
+    title: official?.title || fallback?.title || "",
+    backdrop_path: backdrop,
+    titled_backdrop_path: backdrop,
+    poster_path: poster,
+    hero_backdrop_path: hero,
+    detail_backdrop_path: firstNonTmdbArtwork(official?.detail_backdrop_url) || hero,
+    logo_path: officialLogo || fallback?.logo_path || null,
+    netflix_logo_url: official?.logo_source === "netflix" ? officialLogo : null,
+    official_artwork_source:
+      official?.backdrop_source || official?.poster_source || official?.hero_backdrop_source || null,
+    backdrop_source: official?.backdrop_source || (fallback?.mapped_backdrop ? "existing_mapping" : null),
+    poster_source: official?.poster_source || (fallback?.mapped_poster ? "existing_mapping" : null),
+    hero_backdrop_source: official?.hero_backdrop_source || null,
+    logo_source: official?.logo_source || (fallback?.logo_path ? "saved_non_tmdb" : null),
+    logo_locale: official?.logo_locale || null,
+    backdrop_locale: official?.backdrop_locale || null,
+    poster_locale: official?.poster_locale || null,
+    hero_backdrop_locale: official?.hero_backdrop_locale || null,
+    backdrop_embedded_title_treatment: officialLandscape
+      ? !!official?.backdrop_embedded_title_treatment
+      : !!fallback?.backdrop_embedded_title_treatment,
+    poster_embedded_title_treatment: officialPoster
+      ? !!official?.poster_embedded_title_treatment
+      : !!fallback?.poster_embedded_title_treatment,
+    hero_embedded_title_treatment: officialHero
+      ? !!official?.hero_embedded_title_treatment
+      : !!fallback?.hero_embedded_title_treatment,
+    embedded_title_treatment: officialLandscape
+      ? !!official?.backdrop_embedded_title_treatment
+      : !!fallback?.backdrop_embedded_title_treatment,
+    card_ready: officialLandscape
+      ? !!official?.landscape_card_ready
+      : !!fallback?.card_ready,
+    top10_ready: officialPoster
+      ? !!official?.poster_card_ready
+      : !!fallback?.top10_ready,
+    landscape_card_ready: officialLandscape
+      ? !!official?.landscape_card_ready
+      : !!fallback?.landscape_card_ready,
+    poster_card_ready: officialPoster
+      ? !!official?.poster_card_ready
+      : !!fallback?.poster_card_ready,
+    complete: official?.complete ?? fallback?.complete ?? false,
+    image_quality: "max-native",
+    image_source_policy:
+      official?.policy || "static-embedded-title-treatment_it-first_v4_no-tmdb-images",
+    upscaled: false,
+    official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
+  };
+}
+
+export default function useAutomaticMediaAssets(
+  item: any,
+  mediaType: any,
+  enabled = true
+) {
+  const typeSlug = mediaTypeSlug(mediaType, item);
+  const id = item?.id || item?.tmdbId || item?.tmdb_id;
+  const fallback = useMemo(
+    () => buildMediaAssetFallback(item, mediaType),
+    [item, mediaType]
+  );
 
   const query = useQuery({
     queryKey: ["media-assets", MEDIA_ASSET_QUALITY_VERSION, typeSlug, id],
@@ -144,48 +224,16 @@ export default function useAutomaticMediaAssets(
         headers: { Accept: "application/json" },
       });
       const official = response.ok ? await response.json() : {};
-
-      const officialLandscape = firstNonTmdbArtwork(official?.backdrop_url);
-      const officialPoster = firstNonTmdbArtwork(official?.poster_url);
-      const officialLogo = firstNonTmdbArtwork(official?.logo_url);
-
-      return {
-        ...fallback,
-        title: official?.title || fallback.title,
-        backdrop_path: officialLandscape || fallback.backdrop_path || null,
-        titled_backdrop_path: officialLandscape || fallback.titled_backdrop_path || null,
-        poster_path: officialPoster || fallback.poster_path || officialLandscape || null,
-        logo_path: officialLogo || savedLogo || null,
-        netflix_logo_url: official?.logo_source === "netflix" ? officialLogo : null,
-        official_artwork_source: official?.backdrop_source || official?.poster_source || null,
-        backdrop_source: official?.backdrop_source || (mappedBackdrop ? "existing_mapping" : null),
-        poster_source: official?.poster_source || (mappedPoster ? "existing_mapping" : null),
-        logo_source: official?.logo_source || (savedLogo ? "saved_non_tmdb" : null),
-        logo_locale: official?.logo_locale || null,
-        backdrop_embedded_title_treatment: officialLandscape
-          ? !!official?.backdrop_embedded_title_treatment
-          : !!mappedBackdrop,
-        poster_embedded_title_treatment: officialPoster
-          ? !!official?.poster_embedded_title_treatment
-          : !!mappedPoster,
-        embedded_title_treatment: officialLandscape
-          ? !!official?.backdrop_embedded_title_treatment
-          : !!mappedBackdrop,
-        complete: official?.complete ?? fallback.complete,
-        image_quality: "max-native",
-        image_source_policy: official?.policy || "complete-title-treatment_official-v3b_no-tmdb-images",
-        upscaled: false,
-      };
+      return mergeOfficialArtwork(fallback, official);
     },
     enabled: !!id && !!enabled,
     placeholderData: fallback,
-    staleTime: DAILY_REFRESH_MS,
-    gcTime: DAILY_REFRESH_MS * 7,
+    staleTime: DAILY_ARTWORK_REFRESH_MS,
+    gcTime: DAILY_ARTWORK_REFRESH_MS * 7,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    refetchInterval: enabled ? DAILY_REFRESH_MS : false,
-    refetchIntervalInBackground: true,
+    refetchInterval: false,
     retry: 1,
   });
 
