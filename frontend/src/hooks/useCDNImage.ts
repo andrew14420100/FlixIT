@@ -18,16 +18,20 @@ interface UseCDNImageReturn {
   getBackdropUrl: (size?: string) => string;
 }
 
-function directImageUrl(
+function imageUrl(
   tmdbId: number,
   type: 'poster' | 'backdrop' | 'detail_backdrop',
   tmdbPath: string | null | undefined,
   tmdbBaseUrl: string,
   _size: string
 ) {
-  // Always request the native/original TMDB file. Legacy absolute TMDB URLs can
-  // already contain w342/w500/w780/w1280, so normalize those URLs as well.
-  // Non-TMDB remote URLs are left untouched: no artificial upscaling is done.
+  // Restore the cover system used before the TMDB-primary migration: whenever
+  // FLIX-IT already has a curated/mapped cover, that image wins.
+  const mapped = getCDNImageUrl(tmdbId, type);
+  if (mapped) return mapped;
+
+  // TMDB is only the final compatibility fallback for titles that have no
+  // curated/Netflix-style cover at all. Keep the fallback at native quality.
   if (tmdbPath) {
     const raw = String(tmdbPath);
     const absoluteTmdb = raw.match(
@@ -40,9 +44,7 @@ function directImageUrl(
     return `${tmdbBaseUrl}original${raw.startsWith('/') ? raw : `/${raw}`}`;
   }
 
-  // Old static CDN mappings remain only as a compatibility fallback when TMDB
-  // has no image path at all. They never replace a valid automatic asset.
-  return getCDNImageUrl(tmdbId, type) || '/placeholder.jpg';
+  return '/placeholder.jpg';
 }
 
 export function useCDNImage({
@@ -58,13 +60,13 @@ export function useCDNImage({
 
   const getPosterUrl = useMemo(() => {
     return (_size: string = 'original') =>
-      directImageUrl(tmdbId, 'poster', posterPath, tmdbBaseUrl, 'original');
+      imageUrl(tmdbId, 'poster', posterPath, tmdbBaseUrl, 'original');
   }, [tmdbId, posterPath, tmdbBaseUrl]);
 
   const getBackdropUrl = useMemo(() => {
     return (_size: string = 'original') => {
       const backdropType = useDetailBackdrop ? 'detail_backdrop' : 'backdrop';
-      return directImageUrl(tmdbId, backdropType, backdropPath, tmdbBaseUrl, 'original');
+      return imageUrl(tmdbId, backdropType, backdropPath, tmdbBaseUrl, 'original');
     };
   }, [tmdbId, backdropPath, tmdbBaseUrl, useDetailBackdrop]);
 
@@ -87,7 +89,7 @@ export function getMediaImageUrl(
   tmdbBaseUrl: string = 'https://image.tmdb.org/t/p/',
   _size: string = 'original'
 ): string {
-  return directImageUrl(tmdbId, type, tmdbPath, tmdbBaseUrl, 'original');
+  return imageUrl(tmdbId, type, tmdbPath, tmdbBaseUrl, 'original');
 }
 
 export default useCDNImage;
