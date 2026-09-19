@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import TrailerPlayer from "./TrailerPlayer";
 import TrailerAudioButton from "./TrailerAudioButton";
 
+const LOGO_ENTER_MS = 220;
 const LOGO_VISIBLE_MS = 5000;
 const LOGO_FADE_MS = 300;
 
@@ -10,9 +11,9 @@ const LOGO_FADE_MS = 300;
  * Netflix-style hover trailer.
  * - logo appears only when the video really fires `playing`;
  * - subtle entrance from the lower-left;
- * - exactly 5 seconds fully visible, then a 300ms dissolve;
- * - it stays hidden for the rest of that trailer session;
- * - when playback ends/fails the underlying artwork + logo is immediately visible.
+ * - after the entrance it stays fully visible for a real 5 seconds;
+ * - then it dissolves for 300ms and stays hidden for that trailer session;
+ * - when playback ends/fails the underlying artwork + logo returns immediately.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -77,10 +78,11 @@ export default function HoverTrailerOverlay({
         entryFrameRef.current = null;
       });
     });
+    // Entrance first, then a complete 5s hold, then the CSS 300ms fade-out.
     logoTimerRef.current = window.setTimeout(() => {
       setLogoVisible(false);
       logoTimerRef.current = null;
-    }, LOGO_VISIBLE_MS);
+    }, LOGO_ENTER_MS + LOGO_VISIBLE_MS);
   };
 
   const handleEnded = () => {
@@ -163,7 +165,7 @@ export default function HoverTrailerOverlay({
             transform: showLogo && logoEntered
               ? "translate3d(0,0,0) scale(1)"
               : "translate3d(0,7px,0) scale(.985)",
-            transition: `opacity ${LOGO_FADE_MS}ms ease, transform ${LOGO_FADE_MS}ms cubic-bezier(.21,0,.07,1)`,
+            transition: `opacity ${logoVisible ? LOGO_ENTER_MS : LOGO_FADE_MS}ms ease, transform ${LOGO_ENTER_MS}ms cubic-bezier(.21,0,.07,1)`,
             pointerEvents: "none",
           }}
         >
