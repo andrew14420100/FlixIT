@@ -7,7 +7,6 @@ import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
 import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
-import useNetflixArtwork from "src/hooks/useNetflixArtwork";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
 import NetflixStandardCard from "./NetflixStandardCard";
@@ -63,7 +62,6 @@ export default function VideoItemWithHover({
   mediaType,
   watch,
   suppressHover = false,
-  artworkContext = "home",
 }: Props) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -73,6 +71,9 @@ export default function VideoItemWithHover({
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
   const id = video?.id || video?.tmdbId || video?.tmdb_id;
 
+  // Warm only cards close to the viewport. The previous 800/1200px margin could
+  // start artwork work for many rows at once. This tighter window still gives
+  // enough time to have the trailer ready before the 300ms hover expansion.
   useEffect(() => {
     const node = ref.current;
     if (!node || typeof IntersectionObserver === "undefined") {
@@ -86,7 +87,7 @@ export default function VideoItemWithHover({
           observer.disconnect();
         }
       },
-      { rootMargin: "800px 1200px" }
+      { rootMargin: "280px 480px" }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -102,36 +103,36 @@ export default function VideoItemWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  const netflixArtwork = useNetflixArtwork(
-    { ...video, id },
-    mType,
-    artworkContext,
-    nearViewport || intent || open
-  );
-
+  // One artwork request per title. The unified backend resolver already checks
+  // Netflix/Apple/Prime/IMDb and a supplemental genuine logo source, so the
+  // separate Netflix hook was duplicate network work and could contradict the
+  // chosen complete artwork.
   const automaticAssets = useAutomaticMediaAssets(
     { ...video, id },
     mType,
     nearViewport || intent || open
   );
+
+  // Prefetch the direct trailer while the card is close to the viewport, not
+  // after the mini-modal is already visible.
   const deferredAssets = useDeferredMediaAssets(
     { ...video, id },
     mType,
-    intent || open
+    nearViewport || intent || open
   );
   const assets = useMemo(
     () => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }),
     [automaticAssets, deferredAssets]
   );
 
-  const existingNetflixArtwork = firstNonTmdbArtwork(
+  const mappedBackdrop = id ? getCDNImageUrl(Number(id), "backdrop") : null;
+  const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
+
+  const legacyLandscape = firstNonTmdbArtwork(
     video?.netflix_artwork_url,
     video?.netflixArtworkUrl,
     video?.netflix_cover_url,
-    video?.contextualArtwork?.artwork
-  );
-
-  const legacyLandscape = firstNonTmdbArtwork(
+    video?.contextualArtwork?.artwork,
     video?.titled_backdrop_path,
     video?.titledBackdropPath,
     video?.backdrop_path,
@@ -151,12 +152,7 @@ export default function VideoItemWithHover({
     video?.cover
   );
 
-  const mappedBackdrop = id ? getCDNImageUrl(Number(id), "backdrop") : null;
-  const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
-  const resolvedArtwork = nonTmdbArtwork(netflixArtwork?.artwork?.url);
-
   const automaticLandscape = firstNonTmdbArtwork(
-    automaticAssets?.netflix_artwork_url,
     automaticAssets?.backdrop_path,
     automaticAssets?.titled_backdrop_path
   );
@@ -164,25 +160,14 @@ export default function VideoItemWithHover({
 
   const imageCandidates = useMemo(
     () => unique([
-      resolvedArtwork,
       automaticLandscape,
-      existingNetflixArtwork,
       mappedBackdrop,
       legacyLandscape,
       automaticPoster,
       mappedPoster,
       legacyPoster,
     ]),
-    [
-      resolvedArtwork,
-      automaticLandscape,
-      existingNetflixArtwork,
-      mappedBackdrop,
-      legacyLandscape,
-      automaticPoster,
-      mappedPoster,
-      legacyPoster,
-    ]
+    [automaticLandscape, mappedBackdrop, legacyLandscape, automaticPoster, mappedPoster, legacyPoster]
   );
 
   const title = automaticAssets?.title || video?.title || video?.name || "";
@@ -223,19 +208,17 @@ export default function VideoItemWithHover({
        assets?.preview_video_url)
     : null;
 
-  // One logo pipeline for static card and hover: Netflix first, then any real
-  // official logo exposed by the unified artwork resolver. Never synthesize the
-  // title as text over the artwork.
   const hoverLogoUrl = firstNonTmdbArtwork(
-    netflixArtwork?.logo?.url,
-    automaticAssets?.netflix_logo_url,
     automaticAssets?.logo_path,
-    assets?.logo_path
+    assets?.logo_path,
+    video?.netflix_logo_url,
+    video?.logo_path,
+    video?.logo
   );
 
-  const hoverArtwork =
-    resolvedArtwork || automaticLandscape || existingNetflixArtwork || mappedBackdrop || legacyLandscape || automaticPoster || mappedPoster || legacyPoster;
+  const hoverArtwork = automaticLandscape || mappedBackdrop || legacyLandscape || automaticPoster || mappedPoster || legacyPoster;
   const hoverPoster = automaticPoster || mappedPoster || legacyPoster || hoverArtwork;
+  const staticEmbedded = !!automaticAssets?.backdrop_embedded_title_treatment;
 
   return (
     <>
@@ -245,6 +228,7 @@ export default function VideoItemWithHover({
         imageCandidates={imageCandidates.slice(1)}
         fallbackImageUrl={null}
         logoUrl={hoverLogoUrl}
+        embeddedTitleTreatment={staticEmbedded}
         title={title}
         href={detailHref}
         onClick={goDetail}
@@ -282,7 +266,10 @@ export default function VideoItemWithHover({
               cover: null,
               poster_path: hoverPoster || null,
               poster: null,
-              logo_path: trailerUrl ? null : (hoverLogoUrl || null),
+              // Keep the underlying expanded-card logo alive even when a trailer
+              // exists. When the trailer ends/fails, the artwork and logo return
+              // immediately instead of revealing a logo-less card.
+              logo_path: hoverLogoUrl || null,
               logo: null,
               title_logo_path: null,
             }}
