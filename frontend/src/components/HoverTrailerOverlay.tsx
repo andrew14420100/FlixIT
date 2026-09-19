@@ -1,6 +1,9 @@
 // @ts-nocheck
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import TrailerPlayer from "./TrailerPlayer";
+
+const LOGO_VISIBLE_MS = 5000;
+const LOGO_FADE_MS = 300;
 
 function VolumeIcon({ muted }: { muted: boolean }) {
   return muted ? (
@@ -11,11 +14,9 @@ function VolumeIcon({ muted }: { muted: boolean }) {
 }
 
 /**
- * The trailer starts almost immediately after the mini-modal opens. The static
- * artwork stays visible until the video fires onPlaying, preventing a black
- * buffering flash. At that exact moment the title logo fades in over the video.
- * Clicking the artwork/video surface opens the content; only the volume control
- * consumes its own click.
+ * Netflix-style hover trailer. The title treatment appears when playback really
+ * starts, remains fully visible for exactly five seconds, then dissolves and
+ * never reappears during the same hover session.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -32,18 +33,49 @@ export default function HoverTrailerOverlay({
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [logoVisible, setLogoVisible] = useState(true);
+  const logoTimerRef = useRef<number | null>(null);
+  const logoTimerStartedRef = useRef(false);
 
   useEffect(() => {
     setReady(false);
     setPlaying(false);
     setMuted(true);
     setFailed(false);
+    setLogoVisible(true);
+    logoTimerStartedRef.current = false;
+
+    if (logoTimerRef.current !== null) {
+      window.clearTimeout(logoTimerRef.current);
+      logoTimerRef.current = null;
+    }
+
     if (!url) return;
     const timer = window.setTimeout(() => setReady(true), delay);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (logoTimerRef.current !== null) {
+        window.clearTimeout(logoTimerRef.current);
+        logoTimerRef.current = null;
+      }
+    };
   }, [url, delay]);
 
+  const handlePlaying = () => {
+    setPlaying(true);
+    if (logoTimerStartedRef.current) return;
+
+    logoTimerStartedRef.current = true;
+    setLogoVisible(true);
+    logoTimerRef.current = window.setTimeout(() => {
+      setLogoVisible(false);
+      logoTimerRef.current = null;
+    }, LOGO_VISIBLE_MS);
+  };
+
   if (!url || !ready || failed) return null;
+
+  const showLogo = playing && logoVisible;
 
   return (
     <div
@@ -84,7 +116,7 @@ export default function HoverTrailerOverlay({
         playing
         loop={false}
         zoom={1.02}
-        onPlaying={() => setPlaying(true)}
+        onPlaying={handlePlaying}
         onError={() => setFailed(true)}
       />
 
@@ -100,9 +132,9 @@ export default function HoverTrailerOverlay({
             maxHeight: 58,
             display: "flex",
             alignItems: "flex-end",
-            opacity: playing ? 1 : 0,
-            transform: playing ? "translateY(0)" : "translateY(4px)",
-            transition: "opacity 180ms ease 40ms, transform 180ms ease 40ms",
+            opacity: showLogo ? 1 : 0,
+            transform: showLogo ? "translateY(0)" : "translateY(3px)",
+            transition: `opacity ${LOGO_FADE_MS}ms ease, transform ${LOGO_FADE_MS}ms ease`,
             pointerEvents: "none",
           }}
         >
