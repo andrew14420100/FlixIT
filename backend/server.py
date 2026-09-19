@@ -5,6 +5,7 @@ lifecycle management for an optional localhost Node/Stremio runtime without
 changing any existing API routes or player contracts.
 """
 import os
+from contextlib import asynccontextmanager
 
 import server_core as _core
 from server_core import *  # noqa: F401,F403 - preserve existing imports/contracts
@@ -20,7 +21,21 @@ from services.omni_process import omni_lifespan, omni_status
 
 
 app = _core.app
-app.router.lifespan_context = omni_lifespan
+
+# Keep FastAPI/Starlette's original lifespan so every startup/shutdown handler
+# registered by server_core still runs (trailer resolver, catalog warmers, etc.).
+# Omni is composed inside that lifecycle instead of replacing it.
+_core_lifespan = app.router.lifespan_context
+
+
+@asynccontextmanager
+async def flixit_lifespan(app):
+    async with _core_lifespan(app):
+        async with omni_lifespan(app):
+            yield
+
+
+app.router.lifespan_context = flixit_lifespan
 
 
 @app.get("/api/system/omni-health", tags=["system"])
