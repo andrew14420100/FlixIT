@@ -3,6 +3,8 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
+const TRAILER_QUERY_VERSION = "it-trailer-v2";
+
 export function browserSupportsHdr() {
   if (typeof window === "undefined" || !window.matchMedia) return false;
   try {
@@ -22,7 +24,7 @@ export default function useResolvedTrailer(
   const hdr = useMemo(() => browserSupportsHdr(), []);
 
   const query = useQuery({
-    queryKey: ["resolved-trailer", typeSlug, id, hdr],
+    queryKey: [TRAILER_QUERY_VERSION, "resolved-trailer", typeSlug, id, hdr],
     queryFn: async ({ signal }: any) => {
       if (!id) return {};
       const response = await fetch(
@@ -44,14 +46,9 @@ export default function useResolvedTrailer(
     refetchInterval: (query: any) => {
       const data = query?.state?.data || {};
       const candidate = data?.trailer_url || data?.trailer_key || data?.manifest_url || null;
-
-      // Support both trailer endpoint contracts:
-      // - legacy/current backend: { trailer_key, source }
-      // - richer resolver response: { enabled, available, trailer_url/... }
-      if (!enabled || data?.enabled === false || data?.available === false || candidate) {
+      if (!enabled || data?.enabled === false || candidate) {
         return false;
       }
-
       const updates = Number(query?.state?.dataUpdateCount || 0);
       return updates < 8 ? 1000 : false;
     },
