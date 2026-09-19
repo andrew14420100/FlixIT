@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v4";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v5";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -98,13 +98,17 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     item?.poster_embedded_title_treatment ||
     item?.has_embedded_poster_title_treatment
   );
-  const safeSavedLandscape = savedLandscapeEmbedded ? savedLandscape : null;
-  const safeSavedPoster = savedPosterEmbedded ? savedPoster : null;
 
-  const cardBackdrop = mappedBackdrop || safeSavedLandscape || null;
-  const cardPoster = mappedPoster || safeSavedPoster || null;
-  const cardReady = !!(cardBackdrop && savedLogo);
-  const posterReady = !!(cardPoster && savedLogo);
+  // Clean provider artwork is valid too. When it has no embedded title treatment
+  // the card composes the real transparent provider logo as a separate layer.
+  // If a logo is temporarily unavailable the artwork still remains publishable:
+  // never hide a catalogue title merely because its merchandising image is clean.
+  const cardBackdrop = mappedBackdrop || savedLandscape || null;
+  const cardPoster = mappedPoster || savedPoster || null;
+  const cardBackdropEmbedded = !!(mappedBackdrop || (savedLandscape && savedLandscapeEmbedded));
+  const cardPosterEmbedded = !!(mappedPoster || (savedPoster && savedPosterEmbedded));
+  const cardReady = !!cardBackdrop;
+  const posterReady = !!cardPoster;
 
   return {
     tmdbId: id,
@@ -112,13 +116,13 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     title: item?.title || item?.name || "",
     backdrop_path: cardBackdrop,
     poster_path: cardPoster,
-    titled_backdrop_path: cardBackdrop,
+    titled_backdrop_path: cardBackdropEmbedded ? cardBackdrop : null,
     hero_backdrop_path: savedLandscape || mappedBackdrop || cardBackdrop || null,
     detail_backdrop_path: savedLandscape || mappedBackdrop || cardBackdrop || null,
     logo_path: savedLogo || null,
-    backdrop_embedded_title_treatment: !!cardBackdrop,
-    poster_embedded_title_treatment: !!cardPoster,
-    hero_embedded_title_treatment: !!mappedBackdrop,
+    backdrop_embedded_title_treatment: cardBackdropEmbedded,
+    poster_embedded_title_treatment: cardPosterEmbedded,
+    hero_embedded_title_treatment: cardBackdropEmbedded,
     card_ready: cardReady,
     top10_ready: posterReady,
     landscape_card_ready: cardReady,
@@ -128,7 +132,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "static-embedded-title-treatment_plus-hover-logo_it-first_v4_no-tmdb-images",
+    image_source_policy: "official-clean-or-title-treatment_plus-separate-logo_it-first_v5_no-tmdb-images",
     mapped_backdrop: mappedBackdrop,
     mapped_poster: mappedPoster,
   };
@@ -156,17 +160,16 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     ? !!official?.poster_embedded_title_treatment
     : !!fallback?.poster_embedded_title_treatment;
 
-  // Recompute readiness after combining sources. This lets a curated mapped
-  // title-bearing card become publishable when the official resolver finds the
-  // separate hover logo, while still blocking every clean/untitled card.
-  const cardReady = !!(backdrop && backdropEmbedded && logo);
-  const top10Ready = !!(poster && posterEmbedded && logo);
+  // Publication no longer depends on an embedded title treatment. Clean official
+  // artwork is allowed and, when available, the transparent logo is layered over it.
+  const cardReady = !!backdrop;
+  const top10Ready = !!poster;
 
   return {
     ...fallback,
     title: official?.title || fallback?.title || "",
     backdrop_path: backdrop,
-    titled_backdrop_path: backdrop,
+    titled_backdrop_path: backdropEmbedded ? backdrop : null,
     poster_path: poster,
     hero_backdrop_path: hero,
     detail_backdrop_path: firstNonTmdbArtwork(official?.detail_backdrop_url) || hero,
@@ -195,7 +198,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
     image_source_policy:
-      official?.policy || "static-embedded-title-treatment_plus-hover-logo_it-first_v4_no-tmdb-images",
+      official?.policy || "official-clean-or-title-treatment_plus-separate-logo_it-first_v5_no-tmdb-images",
     upscaled: false,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
