@@ -5,7 +5,8 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v2";
+const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v3";
+const DAILY_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -32,8 +33,8 @@ export function nonTmdbImageUrl(value: any) {
   return text;
 }
 
-// Compatibility helper retained for older callers. It deliberately accepts only
-// already-resolved non-TMDB URLs.
+// Compatibility helper retained for callers such as Hero/Detail. Relative TMDB
+// paths are intentionally rejected; only already-resolved non-TMDB URLs pass.
 export function tmdbImageUrl(value: any, _size = "original") {
   return nonTmdbImageUrl(value);
 }
@@ -54,26 +55,16 @@ export default function useAutomaticMediaAssets(
   const typeSlug = mediaTypeSlug(mediaType, item);
   const id = item?.id || item?.tmdbId || item?.tmdb_id;
 
-  const itemNetflixLandscape = firstNonTmdbArtwork(
-    item?.netflix_artwork_url,
-    item?.netflixArtworkUrl,
-    item?.netflix_cover_url,
-    item?.contextualArtwork?.artwork
-  );
-  const itemNetflixPoster = firstNonTmdbArtwork(
-    item?.netflix_ranked_artwork_url,
-    item?.netflixRankedArtworkUrl,
-    item?.netflix_cover_url
-  );
-
-  // Preserve the existing project mapping as the historical fallback requested
-  // by the site, but never extend/scrape it here.
   const mappedBackdrop = id
     ? getCDNImageUrl(Number(id), "backdrop") || getCDNImageUrl(Number(id), "detail_backdrop")
     : null;
   const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
 
   const savedLandscape = firstNonTmdbArtwork(
+    item?.netflix_artwork_url,
+    item?.netflixArtworkUrl,
+    item?.netflix_cover_url,
+    item?.contextualArtwork?.artwork,
     item?.backdrop_path,
     item?.backdrop,
     item?.titled_backdrop_path,
@@ -86,6 +77,8 @@ export default function useAutomaticMediaAssets(
     item?.thumbnail_url
   );
   const savedPoster = firstNonTmdbArtwork(
+    item?.netflix_ranked_artwork_url,
+    item?.netflixRankedArtworkUrl,
     item?.poster_path,
     item?.poster,
     item?.cover_path,
@@ -102,26 +95,34 @@ export default function useAutomaticMediaAssets(
     item?.contextualArtwork?.logo
   );
 
+  // Historical mapped artwork was curated as title-bearing merchandising art.
+  // It remains an instant zero-network placeholder while the unified resolver
+  // checks newer/higher-quality official variants.
   const fallback = useMemo(() => ({
     tmdbId: id,
     type: typeSlug,
     title: item?.title || item?.name || "",
-    backdrop_path: itemNetflixLandscape || mappedBackdrop || savedLandscape || null,
-    poster_path: itemNetflixPoster || mappedPoster || savedPoster || itemNetflixLandscape || null,
-    titled_backdrop_path: itemNetflixLandscape || mappedBackdrop || savedLandscape || null,
+    backdrop_path: mappedBackdrop || savedLandscape || null,
+    poster_path: mappedPoster || savedPoster || mappedBackdrop || savedLandscape || null,
+    titled_backdrop_path: mappedBackdrop || savedLandscape || null,
     logo_path: savedLogo || null,
+    backdrop_embedded_title_treatment: !!mappedBackdrop,
+    poster_embedded_title_treatment: !!mappedPoster,
+    complete: !!(
+      (mappedBackdrop || savedLandscape) &&
+      (mappedPoster || savedPoster || mappedBackdrop || savedLandscape) &&
+      (mappedBackdrop || mappedPoster || savedLogo)
+    ),
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "netflix-existing-apple-prime-imdb-no-tmdb-images",
+    image_source_policy: "complete-title-treatment_official-v3_no-tmdb-images",
   }), [
     id,
     typeSlug,
     item?.title,
     item?.name,
-    itemNetflixLandscape,
-    itemNetflixPoster,
     mappedBackdrop,
     mappedPoster,
     savedLandscape,
@@ -136,104 +137,57 @@ export default function useAutomaticMediaAssets(
     queryKey: ["media-assets", MEDIA_ASSET_QUALITY_VERSION, typeSlug, id],
     queryFn: async ({ signal }: any) => {
       if (!id) return fallback;
+      const response = await fetch(`/api/public/official-artwork/${typeSlug}/${id}`, {
+        signal,
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      const official = response.ok ? await response.json() : {};
 
-      const [metadataResult, officialResult] = await Promise.allSettled([
-        fetch(`/api/public/media-assets/${typeSlug}/${id}`, {
-          signal,
-          headers: { Accept: "application/json" },
-        }).then(async (response) => response.ok ? response.json() : {}),
-        fetch(`/api/public/official-artwork/${typeSlug}/${id}`, {
-          signal,
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        }).then(async (response) => response.ok ? response.json() : {}),
-      ]);
-
-      const media = metadataResult.status === "fulfilled" ? (metadataResult.value || {}) : {};
-      const official = officialResult.status === "fulfilled" ? (officialResult.value || {}) : {};
-
-      // /api/public/media-assets still contains legacy TMDB image paths internally.
-      // Keep only non-visual metadata from it. All visuals below come from the
-      // unified official resolver or the pre-existing project mapping/saved URLs.
-      const {
-        backdrop_path: _dropBackdrop,
-        poster_path: _dropPoster,
-        titled_backdrop_path: _dropTitled,
-        logo_path: _dropLogo,
-        fallback_backdrop_path: _dropFallbackBackdrop,
-        fallback_logo_path: _dropFallbackLogo,
-        ...metadataOnly
-      } = media;
-
-      const netflixLandscape = firstNonTmdbArtwork(
-        official?.netflix?.landscape_url,
-        official?.netflix?.artwork_url
-      );
-      const netflixPoster = firstNonTmdbArtwork(
-        official?.netflix?.poster_url,
-        official?.netflix?.landscape_url
-      );
-      const netflixLogo = firstNonTmdbArtwork(official?.netflix?.logo_url);
-
-      const officialFallbackLandscape = firstNonTmdbArtwork(
-        official?.fallback?.landscape_url,
-        official?.fallback?.poster_url
-      );
-      const officialFallbackPoster = firstNonTmdbArtwork(
-        official?.fallback?.poster_url,
-        official?.fallback?.landscape_url
-      );
-      const officialFallbackLogo = firstNonTmdbArtwork(official?.fallback?.logo_url);
-
-      // Required order for visuals:
-      // Netflix -> existing historical mapping -> Apple/iTunes -> Prime Video
-      // -> IMDb -> saved non-TMDB asset. No TMDB image is promoted into the UI.
-      const landscape =
-        netflixLandscape ||
-        itemNetflixLandscape ||
-        mappedBackdrop ||
-        officialFallbackLandscape ||
-        savedLandscape ||
-        null;
-      const poster =
-        netflixPoster ||
-        itemNetflixPoster ||
-        mappedPoster ||
-        officialFallbackPoster ||
-        savedPoster ||
-        landscape ||
-        null;
-      const logo =
-        netflixLogo ||
-        officialFallbackLogo ||
-        savedLogo ||
-        null;
+      // The backend already made the cross-provider completeness/orientation/
+      // native-quality decision. Do not re-impose Netflix-first ordering here;
+      // doing so previously undid the server's better Apple/Prime choice.
+      const officialLandscape = firstNonTmdbArtwork(official?.backdrop_url);
+      const officialPoster = firstNonTmdbArtwork(official?.poster_url);
+      const officialLogo = firstNonTmdbArtwork(official?.logo_url);
 
       return {
         ...fallback,
-        ...metadataOnly,
-        title: official?.title || metadataOnly?.title || fallback.title,
-        backdrop_path: landscape,
-        titled_backdrop_path: landscape,
-        poster_path: poster,
-        logo_path: logo,
-        netflix_artwork_url: netflixLandscape || null,
-        netflix_ranked_artwork_url: netflixPoster || null,
-        netflix_logo_url: netflixLogo || null,
-        official_artwork_source: official?.source || official?.fallback?.source || null,
-        embedded_title_treatment: !!official?.embedded_title_treatment,
+        title: official?.title || fallback.title,
+        backdrop_path: officialLandscape || mappedBackdrop || savedLandscape || null,
+        titled_backdrop_path: officialLandscape || mappedBackdrop || savedLandscape || null,
+        poster_path: officialPoster || mappedPoster || savedPoster || officialLandscape || null,
+        logo_path: officialLogo || savedLogo || null,
+        netflix_logo_url: official?.logo_source === "netflix" ? officialLogo : null,
+        official_artwork_source: official?.backdrop_source || official?.poster_source || null,
+        backdrop_source: official?.backdrop_source || (mappedBackdrop ? "existing_mapping" : null),
+        poster_source: official?.poster_source || (mappedPoster ? "existing_mapping" : null),
+        logo_source: official?.logo_source || (savedLogo ? "saved_non_tmdb" : null),
+        logo_locale: official?.logo_locale || null,
+        backdrop_embedded_title_treatment: officialLandscape
+          ? !!official?.backdrop_embedded_title_treatment
+          : !!mappedBackdrop,
+        poster_embedded_title_treatment: officialPoster
+          ? !!official?.poster_embedded_title_treatment
+          : !!mappedPoster,
+        embedded_title_treatment: officialLandscape
+          ? !!official?.backdrop_embedded_title_treatment
+          : !!mappedBackdrop,
+        complete: official?.complete ?? fallback.complete,
         image_quality: "max-native",
-        image_source_policy: "netflix-existing-apple-prime-imdb-no-tmdb-images",
+        image_source_policy: official?.policy || "complete-title-treatment_official-v3_no-tmdb-images",
         upscaled: false,
       };
     },
     enabled: !!id && !!enabled,
     placeholderData: fallback,
-    staleTime: 6 * 60 * 60 * 1000,
-    gcTime: 7 * 24 * 60 * 60 * 1000,
+    staleTime: DAILY_REFRESH_MS,
+    gcTime: DAILY_REFRESH_MS * 7,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    refetchInterval: enabled ? DAILY_REFRESH_MS : false,
+    refetchIntervalInBackground: true,
     retry: 1,
   });
 
