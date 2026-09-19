@@ -4,10 +4,11 @@ No new provider is introduced here. The resolver keeps using the already
 configured Netflix artwork session/cache, but selection is deterministic and
 never discards a valid lower-resolution asset just because 4K is unavailable.
 
-The compatibility layer also prevents the old TMDB watch-provider availability
-check from blanking every card when that metadata endpoint is unavailable. In
-that case matching stays strict (title/year) and final availability is verified
-through the already-authenticated Netflix session itself.
+Artwork availability is intentionally separate from playback availability: when
+an authenticated Netflix search + metadata lookup yields a strict title/year
+match, FLIX-IT may use the returned artwork even if Netflix reports that title as
+not currently playable in the configured session/region. The availability flag
+is still preserved as metadata and is never used to enable playback.
 """
 from __future__ import annotations
 
@@ -245,7 +246,7 @@ def _local_identity(self, media_type: str, tmdb_id: int) -> Optional[dict]:
 
 
 async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int) -> dict:
-    """Strict Netflix match that survives missing watch-provider metadata."""
+    """Strict Netflix artwork match independent from playback availability."""
     base = {
         "type": media_type,
         "tmdbId": tmdb_id,
@@ -296,11 +297,9 @@ async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int)
             if not nid:
                 continue
 
-            # Netflix search suggestions often omit releaseYear even for an exact
-            # result. That used to cap confidence at 0.82 and blank valid cards.
-            # Ask the authenticated metadata endpoint for the candidate year
-            # before scoring; matching remains title+year strict whenever Netflix
-            # exposes the year.
+            # Search suggestions can omit releaseYear even for an exact title.
+            # Resolve metadata first so the automatic match remains title+year
+            # strict whenever Netflix exposes a year.
             if not _year(enriched.get("year")):
                 try:
                     entity = await self.provider.metadata(nid)
@@ -357,23 +356,24 @@ async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int)
             "error": str(exc),
         }
 
-    if entity.get("isAvailable") is False:
-        return {
-            **base,
-            "status": "auto",
-            "netflix_available": False,
-            "confidence": 1.0,
-            "reason": "not_available_in_configured_netflix_session",
-            "identity": identity,
-        }
+    playable = entity.get("isAvailable")
+    artwork_only = playable is False
 
+    # A successful authenticated metadata response plus a strict title/year
+    # match is sufficient for artwork. isAvailable controls playback/catalog
+    # availability only; it must not blank an otherwise valid cover/logo.
     return {
         **base,
         "status": "matched",
-        "netflix_available": True,
+        "netflix_available": False if artwork_only else (True if playable is True else None),
         "netflix_id": top["netflix_id"],
         "confidence": round(confidence, 4),
-        "reason": "strict_title_year_match_netflix_session",
+        "reason": (
+            "strict_title_year_match_artwork_only"
+            if artwork_only
+            else "strict_title_year_match_netflix_session"
+        ),
+        "artwork_only": artwork_only,
         "identity": identity,
         "contextualArtwork": top.get("contextualArtwork"),
         "candidates": ranked[:8],
@@ -417,6 +417,7 @@ def install_netflix_artwork_quality() -> None:
                     "netflix_search_failed",
                     "netflix_metadata_failed",
                     "ambiguous_or_low_confidence",
+                    "not_available_in_configured_netflix_session",
                 }:
                     force = True
             except Exception:
