@@ -7,6 +7,8 @@ import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
 import useAutomaticMediaAssets, { tmdbImageUrl } from "src/hooks/useAutomaticMediaAssets";
+import useNetflixArtwork from "src/hooks/useNetflixArtwork";
+import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
 import NetflixStandardCard from "./NetflixStandardCard";
 import HoverTrailerOverlay from "./HoverTrailerOverlay";
@@ -28,11 +30,21 @@ function firstArtwork(...values: any[]) {
   return null;
 }
 
+function unique(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  return values.filter((value): value is string => {
+    if (!value || seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
 export default function VideoItemWithHover({
   video,
   mediaType,
   watch,
   suppressHover = false,
+  artworkContext = "home",
 }: Props) {
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -71,6 +83,16 @@ export default function VideoItemWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
+  // Restore the pre-TMDB-primary behavior: Netflix contextual artwork is the
+  // first visual source for cards. Automatic media assets remain available for
+  // metadata/trailers and as a last visual fallback only.
+  const netflixArtwork = useNetflixArtwork(
+    { ...video, id },
+    mType,
+    artworkContext,
+    nearViewport || intent || open
+  );
+
   const automaticAssets = useAutomaticMediaAssets(
     { ...video, id },
     mType,
@@ -86,51 +108,56 @@ export default function VideoItemWithHover({
     [automaticAssets, deferredAssets]
   );
 
-  // Automatic media-assets always wins, but every artwork shape that older
-  // rows may already carry remains an instant fallback. This makes the cover
-  // visible immediately instead of showing an empty tile while the automatic
-  // request is still in flight.
-  const legacyLandscape = firstArtwork(
-    video?.backdrop_path,
-    video?.titled_backdrop_path,
-    video?.titledBackdropPath,
+  const existingNetflixArtwork = firstArtwork(
     video?.netflix_artwork_url,
     video?.netflixArtworkUrl,
     video?.netflix_cover_url,
     video?.contextualArtwork?.artwork,
     video?.artwork,
-    video?.image,
+    video?.image
+  );
+
+  const legacyLandscape = firstArtwork(
+    video?.titled_backdrop_path,
+    video?.titledBackdropPath,
+    video?.backdrop_path,
     video?.cover_path,
     video?.cover,
     video?.image_url,
     video?.thumbnail_url
   );
   const legacyPoster = firstArtwork(
-    video?.poster_path,
-    video?.poster,
     video?.netflix_ranked_artwork_url,
     video?.netflixRankedArtworkUrl,
-    video?.netflix_cover_url,
+    video?.poster_path,
+    video?.poster,
     video?.cover_path,
-    video?.cover,
-    video?.image,
-    video?.artwork
+    video?.cover
   );
 
+  const mappedBackdrop = id ? getCDNImageUrl(Number(id), "backdrop") : null;
+  const resolvedArtwork = netflixArtwork?.artwork?.url || null;
+
   const imageCandidates = useMemo(
-    () => [
+    () => unique([
+      resolvedArtwork,
+      existingNetflixArtwork,
+      mappedBackdrop,
+      tmdbImageUrl(legacyLandscape, "original"),
       tmdbImageUrl(automaticAssets?.backdrop_path, "original"),
       tmdbImageUrl(automaticAssets?.titled_backdrop_path, "original"),
-      tmdbImageUrl(legacyLandscape, "original"),
-      tmdbImageUrl(automaticAssets?.poster_path, "original"),
       tmdbImageUrl(legacyPoster, "original"),
-    ].filter(Boolean),
+      tmdbImageUrl(automaticAssets?.poster_path, "original"),
+    ]),
     [
+      resolvedArtwork,
+      existingNetflixArtwork,
+      mappedBackdrop,
+      legacyLandscape,
+      legacyPoster,
       automaticAssets?.backdrop_path,
       automaticAssets?.titled_backdrop_path,
       automaticAssets?.poster_path,
-      legacyLandscape,
-      legacyPoster,
     ]
   );
 
@@ -172,10 +199,9 @@ export default function VideoItemWithHover({
        assets?.preview_video_url)
     : null;
 
-  const hoverLogoUrl = tmdbImageUrl(
-    automaticAssets?.logo_path || assets?.logo_path || video?.logo_path,
-    "original"
-  );
+  const hoverLogoUrl =
+    netflixArtwork?.logo?.url ||
+    tmdbImageUrl(automaticAssets?.logo_path || assets?.logo_path || video?.logo_path, "original");
 
   return (
     <>
@@ -183,7 +209,7 @@ export default function VideoItemWithHover({
         ref={ref}
         imageUrl={imageCandidates[0] || null}
         imageCandidates={imageCandidates.slice(1)}
-        fallbackImageUrl={tmdbImageUrl(legacyLandscape || legacyPoster, "original")}
+        fallbackImageUrl={mappedBackdrop || existingNetflixArtwork || null}
         title={title}
         href={detailHref}
         onClick={goDetail}
@@ -207,15 +233,17 @@ export default function VideoItemWithHover({
               ...assets,
               id,
               preview_video_url: "",
-              // Automatic assets win; pre-existing artwork is preserved only
-              // as a visual fallback so migration never creates blank covers.
-              netflix_artwork_url: undefined,
+              netflix_artwork_url:
+                resolvedArtwork || existingNetflixArtwork || mappedBackdrop || undefined,
               netflixArtworkUrl: undefined,
               netflix_cover_url: undefined,
               contextualArtwork: undefined,
               artwork: undefined,
               image: undefined,
               backdrop_path:
+                resolvedArtwork ||
+                existingNetflixArtwork ||
+                mappedBackdrop ||
                 automaticAssets?.backdrop_path ||
                 automaticAssets?.titled_backdrop_path ||
                 legacyLandscape ||
@@ -224,7 +252,8 @@ export default function VideoItemWithHover({
                 automaticAssets?.titled_backdrop_path || video?.titled_backdrop_path,
               poster_path:
                 automaticAssets?.poster_path || legacyPoster || legacyLandscape,
-              logo_path: automaticAssets?.logo_path || video?.logo_path,
+              logo_path:
+                netflixArtwork?.logo?.url || automaticAssets?.logo_path || video?.logo_path,
             }}
             mediaType={mType}
             onPlay={goPlay}
