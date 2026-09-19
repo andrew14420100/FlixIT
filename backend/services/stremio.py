@@ -1,24 +1,26 @@
 """
-Omni/Stremio addon client used by the native FLIX-IT player.
+Omni/Stremio stream client used by the native FLIX-IT player.
 
-Omni exposes the standard Stremio stream resource and keeps its own provider,
-resolver and HLS proxy logic inside the Omni service. FLIX-IT only consumes the
-final HTTP(S) stream URLs returned by Omni.
+FLIX-IT supports two Omni modes:
+1. embedded (default): the Omni-compatible core runs inside the same FastAPI
+   process and resolves authorized streams stored in FLIX-IT's database;
+2. remote: when OMNI_ADDON_URL or the legacy Admin Stremio URL is configured,
+   FLIX-IT consumes the remote Stremio /stream resource.
 
-Protocol:
+Remote protocol:
   GET {addon}/manifest.json
   GET {addon}/stream/{movie|series}/{imdb_id}.json
   GET {addon}/stream/series/{imdb_id}:{season}:{episode}.json
 
 Runtime configuration:
-  OMNI_ADDON_URL   preferred Omni base URL. A trailing /manifest.json is accepted.
-  OMNI_ENABLED     optional boolean override (1/true/yes/on or 0/false/no/off).
+  OMNI_ADDON_URL   optional remote Omni base URL. A trailing /manifest.json is accepted.
+  OMNI_ENABLED     global boolean override (1/true/yes/on or 0/false/no/off).
 
 Backward-compatible Admin settings:
   stremio_addon_url
   stremio_enabled
 
-When OMNI_ADDON_URL is present it takes precedence over the legacy Admin URL.
+When no URL is configured, source="embedded" is selected automatically.
 """
 import logging
 import os
@@ -77,21 +79,27 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def get_config(get_setting: Optional[Callable]) -> dict:
-    """Return the effective Omni config, preferring environment over Admin settings."""
+    """Return effective Omni config; embedded mode is the zero-config default."""
+    global_enabled = _env_bool(OMNI_ENABLED_ENV, True)
+    if not global_enabled:
+        return {"url": "", "enabled": False, "source": "disabled"}
+
     env_url = normalize_addon_url_safe(os.environ.get(OMNI_URL_ENV, ""))
     if env_url:
         return {
             "url": env_url,
-            "enabled": _env_bool(OMNI_ENABLED_ENV, True),
+            "enabled": True,
             "source": "env",
         }
 
-    if get_setting is None:
-        return {"url": "", "enabled": False, "source": "none"}
+    if get_setting is not None:
+        url = normalize_addon_url_safe(get_setting(URL_KEY, ""))
+        if url and bool(get_setting(ENABLED_KEY, True)):
+            return {"url": url, "enabled": True, "source": "admin"}
 
-    url = normalize_addon_url_safe(get_setting(URL_KEY, ""))
-    enabled = bool(get_setting(ENABLED_KEY, True)) and bool(url)
-    return {"url": url, "enabled": enabled, "source": "admin"}
+    # No separate Omni deployment is required. The resolver switches to
+    # services.omni_embedded inside the same FastAPI process.
+    return {"url": "", "enabled": True, "source": "embedded"}
 
 
 # --------------------------------------------------------------------------- TMDB -> IMDb
@@ -129,7 +137,7 @@ async def fetch_imdb_id(media_type: str, tmdb_id: int, db=None) -> Optional[str]
 
 # --------------------------------------------------------------------------- addon calls
 def stremio_id(imdb_id: str, media_type: str, season: Optional[int], episode: Optional[int]) -> tuple[str, str]:
-    """Return (stremio_type, stremio_id) for the request path."""
+    """Return (stremio_type, stremio_id) for a remote request path."""
     if media_type == "tv":
         return "series", f"{imdb_id}:{season}:{episode}"
     return "movie", imdb_id
@@ -164,7 +172,7 @@ async def fetch_streams(
     season: Optional[int] = None,
     episode: Optional[int] = None,
 ) -> list[dict]:
-    """Call Omni's stream resource and return HTTP(S) streams playable by FLIX-IT."""
+    """Call a remote Omni stream resource and return HTTP(S) streams playable by FLIX-IT."""
     addon_url = normalize_addon_url(addon_url)
     if not addon_url:
         raise StremioError("URL Omni non configurato")
@@ -200,8 +208,8 @@ def _stream_type(url: str, filename: str = "") -> str:
 
 def parse_streams(data: dict) -> list[dict]:
     """
-    Keep HTTP(S) `url` streams. Torrent-only infoHash entries remain inside Omni
-    unless Omni/debrid converts them to an HTTP(S) URL first.
+    Keep HTTP(S) `url` streams. Torrent-only infoHash entries remain inside a
+    remote Omni/debrid service unless it converts them to an HTTP(S) URL first.
     """
     items = data.get("streams") if isinstance(data, dict) else None
     out = []
@@ -228,7 +236,7 @@ def parse_streams(data: dict) -> list[dict]:
 
 
 def pick_best(streams: list[dict]) -> Optional[dict]:
-    """Prefer web-ready HLS, then web-ready MP4, preserving Omni's order."""
+    """Prefer web-ready HLS, then web-ready MP4, preserving source order."""
     if not streams:
         return None
     ranked = sorted(
