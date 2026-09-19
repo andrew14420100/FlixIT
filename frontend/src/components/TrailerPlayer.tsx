@@ -1,10 +1,7 @@
 // @ts-nocheck
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import Hls from "hls.js";
 import useResolvedTrailer from "src/hooks/useResolvedTrailer";
-
-const YT_ORIGIN = "https://www.youtube.com";
-const RESOLVER_SENTINEL = "__flixit_resolver__";
 
 interface Props {
   videoKey: string;
@@ -25,10 +22,6 @@ function isHlsUrl(value: string) {
   return /\.m3u8(?:$|[?#])/i.test(value || "") || /\/hls\//i.test(value || "");
 }
 
-function isYouTubeKey(value: string) {
-  return /^[A-Za-z0-9_-]{6,20}$/.test(String(value || ""));
-}
-
 function routeIdentity() {
   if (typeof window === "undefined") return null;
   const match = window.location.pathname.match(/\/browse\/(movie|tv)\/(\d+)/i);
@@ -38,15 +31,11 @@ function routeIdentity() {
 }
 
 /**
- * Unified trailer player.
+ * Unified native trailer player.
  *
- * - Direct MP4/HLS URLs are played natively.
- * - TMDB/StreamingCommunity trailer keys are YouTube IDs and are rendered
- *   through the YouTube iframe player.
- * - The resolver sentinel still resolves the current DetailPage title through
- *   FLIX-IT's central trailer endpoint.
- *
- * This component is trailer-only and does not affect movie/episode playback.
+ * A direct MP4/HLS URL is played as-is. Any legacy key/sentinel is treated only
+ * as a request to resolve the current DetailPage title through FLIX-IT's central
+ * trailer endpoint. There is deliberately no YouTube iframe or YouTube fallback.
  */
 export default function TrailerPlayer({
   videoKey,
@@ -58,90 +47,34 @@ export default function TrailerPlayer({
   onPlaying,
   onError,
 }: Props) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
-  const readyRef = useRef(false);
-  const idRef = useRef(
-    `flixit-${String(videoKey || "trailer").slice(-24)}-${Math.random().toString(36).slice(2, 8)}`
-  );
 
   const propDirect = isDirectUrl(videoKey);
-  const propYouTube = isYouTubeKey(videoKey) && videoKey !== RESOLVER_SENTINEL;
-  const shouldResolve = !propDirect && !propYouTube;
-
   const identity = useMemo(
-    () => (shouldResolve ? routeIdentity() : null),
-    [videoKey, shouldResolve]
+    () => (propDirect ? null : routeIdentity()),
+    [videoKey, propDirect]
   );
-
   const resolved = useResolvedTrailer(
     identity?.mediaType,
     identity?.id,
-    shouldResolve && !!identity
+    !propDirect && !!identity
   );
-
-  const playbackKey = propDirect || propYouTube
-    ? videoKey
-    : (resolved.url || null);
-
+  const playbackKey = propDirect ? videoKey : resolved.url;
   const direct = isDirectUrl(playbackKey || "");
-  const youtubeKey = !direct && isYouTubeKey(playbackKey || "")
-    ? String(playbackKey)
-    : "";
-
-  const ytSrc = useMemo(() => {
-    if (!youtubeKey || typeof window === "undefined") return "";
-    const origin = encodeURIComponent(window.location.origin);
-    const params = [
-      "autoplay=1",
-      `mute=${muted ? "1" : "0"}`,
-      "controls=0",
-      "rel=0",
-      "iv_load_policy=3",
-      "disablekb=1",
-      "fs=0",
-      "playsinline=1",
-      "modestbranding=1",
-      "enablejsapi=1",
-      `origin=${origin}`,
-    ];
-    if (loop) params.push("loop=1", `playlist=${youtubeKey}`);
-    return `${YT_ORIGIN}/embed/${youtubeKey}?${params.join("&")}`;
-  }, [youtubeKey, loop, muted]);
-
-  const post = useCallback((func: string, args: any[] = []) => {
-    if (!readyRef.current || !youtubeKey) return;
-    iframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ event: "command", func, args, id: idRef.current }),
-      YT_ORIGIN
-    );
-  }, [youtubeKey]);
-
-  const applyAudio = useCallback(() => {
-    if (direct) {
-      if (videoRef.current) videoRef.current.muted = !!muted;
-      return;
-    }
-    if (!youtubeKey) return;
-    post(muted ? "mute" : "unMute");
-    if (!muted) post("setVolume", [100]);
-  }, [muted, post, direct, youtubeKey]);
 
   useEffect(() => {
-    applyAudio();
-  }, [applyAudio]);
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !!muted;
+  }, [muted]);
 
   useEffect(() => {
-    if (direct) {
-      const video = videoRef.current;
-      if (!video) return;
-      if (playing) video.play().catch(() => undefined);
-      else video.pause();
-      return;
-    }
-    if (youtubeKey) post(playing ? "playVideo" : "pauseVideo");
-  }, [playing, post, direct, youtubeKey, playbackKey]);
+    const video = videoRef.current;
+    if (!video) return;
+    if (playing) video.play().catch(() => undefined);
+    else video.pause();
+  }, [playing, playbackKey]);
 
   useEffect(() => {
     if (!direct || !playbackKey) return;
@@ -168,6 +101,8 @@ export default function TrailerPlayer({
       hls.attachMedia(video);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        // TrailerResolver already filters out sub-1080p results. When an HLS
+        // master contains several valid renditions, start from its best level.
         if (hls.levels?.length) {
           let best = 0;
           for (let i = 1; i < hls.levels.length; i += 1) {
@@ -225,90 +160,7 @@ export default function TrailerPlayer({
     };
   }, [direct, playbackKey, playing, onError]);
 
-  useEffect(() => {
-    if (!youtubeKey) return;
-
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== YT_ORIGIN || event.source !== iframeRef.current?.contentWindow) return;
-
-      let data: any;
-      try {
-        data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-      } catch {
-        return;
-      }
-
-      if (data?.event === "onReady") {
-        readyRef.current = true;
-        applyAudio();
-        if (playing) post("playVideo");
-        return;
-      }
-
-      if (data?.event === "onError") {
-        onError?.(Number(data.info) || 500);
-        return;
-      }
-
-      const state = data?.event === "onStateChange"
-        ? data.info
-        : data?.info?.playerState;
-
-      if (state === 1) onPlaying?.();
-      if (state === 0) onEnded?.();
-    };
-
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [youtubeKey, onEnded, onPlaying, onError, applyAudio, playing, post]);
-
-  if (!playbackKey || playbackKey === RESOLVER_SENTINEL) return null;
-
-  if (direct) {
-    return (
-      <div
-        data-testid="trailer-player"
-        style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#000" }}
-      >
-        <video
-          ref={videoRef}
-          autoPlay
-          muted={muted}
-          loop={loop}
-          playsInline
-          preload="auto"
-          disablePictureInPicture
-          onPlaying={onPlaying}
-          onEnded={onEnded}
-          onError={() => {
-            if (!hlsRef.current) onError?.(500);
-          }}
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            transform: `translate(-50%, -50%) scale(${zoom})`,
-            background: "#000",
-          }}
-        />
-      </div>
-    );
-  }
-
-  if (!youtubeKey || !ytSrc) return null;
-
-  const handleLoad = () => {
-    readyRef.current = true;
-    iframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ event: "listening", id: idRef.current, channel: "widget" }),
-      YT_ORIGIN
-    );
-    applyAudio();
-    if (playing) post("playVideo");
-  };
+  if (!playbackKey || !direct) return null;
 
   return (
     <div
@@ -318,24 +170,30 @@ export default function TrailerPlayer({
         inset: 0,
         overflow: "hidden",
         background: "#000",
-        containerType: "size",
       }}
     >
-      <iframe
-        ref={iframeRef}
-        src={ytSrc}
-        onLoad={handleLoad}
-        title="Trailer"
-        allow="autoplay; encrypted-media; picture-in-picture"
+      <video
+        ref={videoRef}
+        autoPlay
+        muted={muted}
+        loop={loop}
+        playsInline
+        preload="auto"
+        disablePictureInPicture
+        onPlaying={onPlaying}
+        onEnded={onEnded}
+        onError={() => {
+          if (!hlsRef.current) onError?.(500);
+        }}
         style={{
           position: "absolute",
           top: "50%",
           left: "50%",
-          border: 0,
-          pointerEvents: "none",
-          width: "max(100cqw, calc(100cqh * 16 / 9))",
-          height: "max(100cqh, calc(100cqw * 9 / 16))",
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
           transform: `translate(-50%, -50%) scale(${zoom})`,
+          background: "#000",
         }}
       />
     </div>
