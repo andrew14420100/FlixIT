@@ -14,15 +14,19 @@ function VolumeIcon({ muted }: { muted: boolean }) {
  * The trailer starts almost immediately after the mini-modal opens. The static
  * artwork stays visible until the video fires onPlaying, preventing a black
  * buffering flash. At that exact moment the title logo fades in over the video.
+ * Clicking the artwork/video surface opens the content; only the volume control
+ * consumes its own click.
  */
 export default function HoverTrailerOverlay({
   url,
   logoUrl,
   delay = 90,
+  onOpen,
 }: {
   url?: string;
   logoUrl?: string | null;
   delay?: number;
+  onOpen?: (event?: any) => void;
 }) {
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -44,7 +48,20 @@ export default function HoverTrailerOverlay({
   return (
     <div
       className="flixit-hover-trailer"
-      onClick={(e) => e.stopPropagation()}
+      role="button"
+      tabIndex={0}
+      aria-label="Apri contenuto"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpen?.(event);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        onOpen?.(event);
+      }}
       style={{
         position: "absolute",
         left: 0,
@@ -58,6 +75,7 @@ export default function HoverTrailerOverlay({
         opacity: playing ? 1 : 0,
         transition: "opacity 180ms ease",
         pointerEvents: playing ? "auto" : "none",
+        cursor: onOpen ? "pointer" : "default",
       }}
     >
       <TrailerPlayer
