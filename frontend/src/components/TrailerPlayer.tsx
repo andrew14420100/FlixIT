@@ -87,8 +87,7 @@ export default function TrailerPlayer({
     hlsRef.current?.destroy();
     hlsRef.current = null;
 
-    const nativeHls = !!video.canPlayType("application/vnd.apple.mpegurl");
-    if (isHlsUrl(playbackKey) && !nativeHls && Hls.isSupported()) {
+    if (isHlsUrl(playbackKey) && Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
         startLevel: -1,
@@ -164,6 +163,8 @@ export default function TrailerPlayer({
       };
     }
 
+    // Native HLS is used only when MediaSource/HLS.js is unavailable. The
+    // backend resolver has already rejected known renditions above 2160p.
     video.src = playbackKey;
     video.load();
     if (playing) video.play().catch(() => undefined);
