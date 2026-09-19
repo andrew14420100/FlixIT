@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React from "react";
+import "./TrailerAudioButton.css";
 
 export function TrailerVolumeIcon({ muted }: { muted: boolean }) {
   return muted ? (
