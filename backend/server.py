@@ -5,12 +5,13 @@ lifecycle management for optional runtimes plus low-priority daily artwork /
 trailer/catalog maintenance.
 """
 import asyncio
+import math
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import Body, HTTPException
+from fastapi import Body, HTTPException, Query
 
 import server_core as _core
 from server_core import *  # noqa: F401,F403 - preserve existing imports/contracts
@@ -53,11 +54,7 @@ async def flixit_official_artwork(media_type: str, tmdb_id: int):
 
 @app.post("/api/public/official-artwork/batch", tags=["artwork"])
 async def flixit_official_artwork_batch(payload: dict = Body(...)):
-    """Resolve up to 40 card artwork bundles in one HTTP round-trip.
-
-    The resolver itself coalesces/cache-hits individual titles; the batch layer
-    removes the browser request waterfall used by Home/Cinema/Serie/Catalogo.
-    """
+    """Resolve up to 40 card artwork bundles in one HTTP round-trip."""
     raw_items = payload.get("items") if isinstance(payload, dict) else None
     if not isinstance(raw_items, list):
         raise HTTPException(status_code=400, detail="items deve essere una lista")
@@ -105,6 +102,237 @@ async def flixit_official_artwork_batch(payload: dict = Body(...)):
         "count": len(results),
         "version": POLICY_VERSION,
         "max_batch_size": 40,
+    }
+
+
+def _safe_number(value, default=0.0) -> float:
+    try:
+        return float(value if value is not None else default)
+    except Exception:
+        return float(default)
+
+
+def _safe_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _media_identity(row: dict):
+    raw_id = (
+        row.get("tmdbId")
+        or row.get("tmdb_id")
+        or row.get("media_id")
+        or row.get("content_id")
+    )
+    try:
+        tmdb_id = int(raw_id)
+    except Exception:
+        return None
+    raw_type = str(row.get("media_type") or row.get("type") or "").lower()
+    media_type = "tv" if "tv" in raw_type or "series" in raw_type else "movie"
+    if not raw_type:
+        try:
+            content = _core.db["contents"].find_one(
+                {"tmdbId": tmdb_id}, {"_id": 0, "type": 1}
+            ) or {}
+            media_type = "tv" if content.get("type") == "tv" else "movie"
+        except Exception:
+            pass
+    return media_type, tmdb_id
+
+
+@app.get("/api/public/flixit-top10", tags=["catalog"])
+async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
+    """Top 10 driven primarily by recent real FlixIT activity.
+
+    Recent watch activity dominates the score. Local ratings and all-time views
+    are secondary signals, while public popularity/votes are only tie-breakers.
+    No artwork is sourced here; cards hydrate it through the official batch API.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=int(hours))
+    candidates: dict[tuple[str, int], dict] = {}
+
+    def row_for(key):
+        if key not in candidates:
+            candidates[key] = {
+                "type": key[0],
+                "tmdbId": key[1],
+                "recent_watchers": 0,
+                "recent_completions": 0.0,
+                "recent_score": 0.0,
+                "views": 0.0,
+                "rating_sum": 0.0,
+                "rating_count": 0,
+                "latest_activity": None,
+            }
+        return candidates[key]
+
+    # watch_progress is unique per user/title, so counting rows approximates
+    # unique recent watchers rather than raw playback-event spam.
+    try:
+        progress_rows = list(
+            _core.db["watch_progress"].find(
+                {},
+                {
+                    "_id": 0,
+                    "tmdb_id": 1,
+                    "tmdbId": 1,
+                    "media_id": 1,
+                    "media_type": 1,
+                    "type": 1,
+                    "updated_at": 1,
+                    "updatedAt": 1,
+                    "progress": 1,
+                    "duration": 1,
+                },
+            ).sort("updated_at", -1).limit(2000)
+        )
+    except Exception:
+        progress_rows = []
+
+    for row in progress_rows:
+        key = _media_identity(row)
+        if not key:
+            continue
+        updated = _safe_datetime(row.get("updated_at") or row.get("updatedAt"))
+        if not updated or updated.astimezone(timezone.utc) < cutoff:
+            continue
+        entry = row_for(key)
+        age_hours = max(0.0, (now - updated.astimezone(timezone.utc)).total_seconds() / 3600.0)
+        recency = max(0.18, 1.0 - age_hours / max(24.0, float(hours)))
+        duration = max(0.0, _safe_number(row.get("duration")))
+        progress = max(0.0, _safe_number(row.get("progress")))
+        completion = min(1.0, progress / duration) if duration > 0 else 0.0
+        entry["recent_watchers"] += 1
+        entry["recent_completions"] += completion
+        entry["recent_score"] += 8.0 * recency + 4.0 * completion
+        if not entry["latest_activity"] or updated > entry["latest_activity"]:
+            entry["latest_activity"] = updated
+
+    # Existing site view counter is useful as a secondary long-term popularity
+    # signal and also fills the list for a new installation with sparse history.
+    try:
+        view_rows = list(
+            _core.db["content_views"].find({}, {"_id": 0}).sort("views", -1).limit(300)
+        )
+    except Exception:
+        view_rows = []
+    for row in view_rows:
+        key = _media_identity(row)
+        if not key:
+            continue
+        entry = row_for(key)
+        entry["views"] = max(
+            entry["views"],
+            _safe_number(row.get("views") or row.get("view_count") or row.get("count")),
+        )
+
+    try:
+        rating_rows = list(_core.db["user_ratings"].find({}, {"_id": 0}).limit(5000))
+    except Exception:
+        rating_rows = []
+    for row in rating_rows:
+        key = _media_identity(row)
+        if not key:
+            continue
+        rating = _safe_number(row.get("rating"))
+        if rating <= 0:
+            continue
+        entry = row_for(key)
+        entry["rating_sum"] += min(10.0, rating)
+        entry["rating_count"] += 1
+
+    # Preselect before metadata enrichment: recent FlixIT behavior is the main
+    # source of truth, not a global popularity feed.
+    def pre_score(entry):
+        views_signal = min(100.0, math.log1p(max(0.0, entry["views"])) * 14.0)
+        rating = (
+            entry["rating_sum"] / entry["rating_count"]
+            if entry["rating_count"]
+            else 0.0
+        )
+        return entry["recent_score"] * 7.0 + views_signal * 0.18 + rating * 2.0
+
+    pool = sorted(candidates.values(), key=pre_score, reverse=True)[:30]
+
+    semaphore = asyncio.Semaphore(8)
+
+    async def enrich(entry):
+        media_type = entry["type"]
+        tmdb_id = entry["tmdbId"]
+        endpoint = f"/{'tv' if media_type == 'tv' else 'movie'}/{tmdb_id}"
+        async with semaphore:
+            data = await _core.fetch_tmdb_data(endpoint) or {}
+        title = data.get("name") if media_type == "tv" else data.get("title")
+        release_date = data.get("first_air_date") if media_type == "tv" else data.get("release_date")
+        popularity = max(0.0, _safe_number(data.get("popularity")))
+        vote_count = max(0.0, _safe_number(data.get("vote_count")))
+        vote_average = max(0.0, min(10.0, _safe_number(data.get("vote_average"))))
+        external_fame = min(100.0, math.log1p(popularity) * 16.0) * 0.55 + min(
+            100.0, math.log1p(vote_count) * 11.0
+        ) * 0.30 + vote_average * 10.0 * 0.15
+        local_rating = (
+            entry["rating_sum"] / entry["rating_count"]
+            if entry["rating_count"]
+            else 0.0
+        )
+        views_signal = min(100.0, math.log1p(max(0.0, entry["views"])) * 14.0)
+        watcher_signal = min(100.0, entry["recent_watchers"] * 18.0)
+        completion_signal = min(100.0, entry["recent_completions"] * 20.0)
+        activity_signal = min(100.0, entry["recent_score"] * 5.5)
+
+        score = (
+            activity_signal * 0.42
+            + watcher_signal * 0.25
+            + completion_signal * 0.10
+            + views_signal * 0.08
+            + local_rating * 10.0 * 0.08
+            + external_fame * 0.07
+        )
+        return {
+            "id": tmdb_id,
+            "tmdbId": tmdb_id,
+            "tmdb_id": tmdb_id,
+            "type": media_type,
+            "media_type": media_type,
+            "title": title or data.get("title") or data.get("name") or str(tmdb_id),
+            "name": title or data.get("name") or data.get("title") or str(tmdb_id),
+            "release_date": data.get("release_date"),
+            "first_air_date": data.get("first_air_date"),
+            "genre_ids": [g.get("id") for g in (data.get("genres") or []) if g.get("id")],
+            "popularity": popularity,
+            "vote_count": vote_count,
+            "vote_average": vote_average,
+            "recent_watchers": entry["recent_watchers"],
+            "recent_completion_score": round(entry["recent_completions"], 3),
+            "views": int(entry["views"]),
+            "local_rating": round(local_rating, 2),
+            "flixit_score": round(score, 4),
+            "latest_activity": entry["latest_activity"].isoformat() if entry["latest_activity"] else None,
+            "ranking_window_hours": int(hours),
+        }
+
+    enriched = await asyncio.gather(*(enrich(entry) for entry in pool), return_exceptions=True)
+    clean = [row for row in enriched if isinstance(row, dict)]
+    clean.sort(key=lambda row: row.get("flixit_score", 0), reverse=True)
+    top = clean[:10]
+    for index, row in enumerate(top, start=1):
+        row["rank"] = index
+
+    return {
+        "items": top,
+        "total": len(top),
+        "window_hours": int(hours),
+        "generated_at": now.isoformat(),
+        "policy": "recent_flixit_activity_first_then_local_ratings_views_then_external_fame",
     }
 
 
