@@ -4,7 +4,7 @@
  *  - HLS via hls.js (Chrome/Firefox/Edge) with native fallback (Safari/iOS); plain .mp4 supported too
  *  - Italian audio track auto-selected on MANIFEST_PARSED
  *  - Displays the resolution actually being played (4K UHD / 1440p / 1080p / 720p)
- *  - Manual HLS quality selector with Auto mode
+ *  - Manual HLS quality selector with Auto mode directly on the control bar
  *  - MUI overlay: play/pause, +-10s, volume + mute, seekbar + times, fullscreen, next episode, audio menu
  *  - Controls auto-hide after 3s of mouse inactivity while playing
  *  - Resume from localStorage (key = storageKey/tmdbId) merged with `startAt`
@@ -42,8 +42,6 @@ const HLS_CONFIG = {
   maxMaxBufferLength: 120,
   maxBufferSize: 60 * 1000 * 1000,
   startFragPrefetch: true,
-  // Do not restrict ABR to the rendered player size: if the manifest exposes
-  // a 2160p rendition, Auto and the manual selector are allowed to use it.
   capLevelToPlayerSize: false,
   abrEwmaDefaultEstimate: 2_000_000,
   abrBandWidthUpFactor: 0.8,
@@ -98,7 +96,6 @@ function qualityFromDimensions(width = 0, height = 0) {
   const h = Number(height) || 0;
   if (!w || !h) return null;
 
-  // Width checks also recognize cinematic 4K/1080p encodes whose cropped height is below 2160/1080.
   let label;
   if (w >= 3000 || h >= 2000) label = "4K UHD";
   else if (w >= 2500 || h >= 1400) label = "1440p";
@@ -125,9 +122,6 @@ function getSelectableQualityLevels(levels = []) {
       bitrate: Number(level?.bitrate) || 0,
     };
     const existing = byResolution.get(key);
-
-    // When the manifest exposes the same resolution at multiple bitrates,
-    // keep the highest-bitrate rendition in the manual quality menu.
     if (!existing || candidate.bitrate > existing.bitrate) byResolution.set(key, candidate);
   });
 
@@ -140,6 +134,29 @@ const ctrlBtnSx = {
   color: "#fff", width: 44, height: 44,
   transition: "transform 160ms ease, background-color 160ms ease",
   "&:hover": { bgcolor: "rgba(255,255,255,0.12)", transform: "scale(1.08)" },
+};
+
+const qualityBtnSx = {
+  height: 32,
+  minWidth: 48,
+  px: 1,
+  borderRadius: "4px",
+  border: "1px solid rgba(255,255,255,0.42)",
+  bgcolor: "rgba(0,0,0,0.28)",
+  color: "rgba(255,255,255,0.86)",
+  fontFamily: "inherit",
+  fontSize: { xs: 10, md: 11 },
+  lineHeight: 1,
+  fontWeight: 800,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+  transition: "background-color 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease",
+  "&:hover": {
+    bgcolor: "rgba(255,255,255,0.13)",
+    borderColor: "rgba(255,255,255,0.85)",
+    color: "#fff",
+    transform: "translateY(-1px)",
+  },
 };
 
 export default function CustomVideoPlayer({
@@ -168,14 +185,12 @@ export default function CustomVideoPlayer({
   const [audioTrackId, setAudioTrackId] = useState(-1);
   const [audioMenuAnchor, setAudioMenuAnchor] = useState(null);
   const [qualityLevels, setQualityLevels] = useState([]);
-  const [qualityMenuAnchor, setQualityMenuAnchor] = useState(null);
   const [selectedQuality, setSelectedQuality] = useState("auto");
   const [fatalError, setFatalError] = useState(null);
   const [videoQuality, setVideoQuality] = useState(null);
 
   const resumeTarget = useMemo(() => Math.max(Number(startAt) || 0, readSavedTime(storageKey)), [startAt, storageKey]);
 
-  // ---------------------------------------------------------------- source attach
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return undefined;
@@ -185,7 +200,6 @@ export default function CustomVideoPlayer({
     setAudioTracks([]);
     setAudioTrackId(-1);
     setQualityLevels([]);
-    setQualityMenuAnchor(null);
     setSelectedQuality("auto");
     setVideoQuality(null);
 
@@ -193,8 +207,6 @@ export default function CustomVideoPlayer({
     let hls = null;
     let recoveryTimer = null;
 
-    // First try audible autoplay. If the browser rejects it because of autoplay
-    // policy, immediately retry muted so clicking "Guarda" still starts video.
     const startAutoplay = () => {
       if (!autoPlay || !video.paused) return;
       video.autoplay = true;
@@ -267,7 +279,6 @@ export default function CustomVideoPlayer({
       hls.loadSource(src);
       hls.attachMedia(video);
     } else {
-      // Safari/iOS native HLS or plain mp4
       video.src = src;
       if (autoPlay) {
         if (video.readyState >= 2) startAutoplay();
@@ -285,7 +296,6 @@ export default function CustomVideoPlayer({
     };
   }, [src, type, autoPlay, onError]);
 
-  // ---------------------------------------------------------------- video events
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return undefined;
@@ -375,7 +385,6 @@ export default function CustomVideoPlayer({
     };
   }, [storageKey, resumeTarget, onProgress, onEnded, onError, src]);
 
-  // Save on unmount / tab hide
   useEffect(() => {
     const flush = () => { const v = videoRef.current; if (v && v.currentTime > 0) writeSavedTime(storageKey, v.currentTime, v.duration || 0); };
     const onVis = () => { if (document.visibilityState === "hidden") flush(); };
@@ -384,7 +393,6 @@ export default function CustomVideoPlayer({
     return () => { flush(); window.removeEventListener("beforeunload", flush); document.removeEventListener("visibilitychange", onVis); };
   }, [storageKey]);
 
-  // ---------------------------------------------------------------- actions
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -393,15 +401,11 @@ export default function CustomVideoPlayer({
       userRequestedPlayRef.current = true;
       setFatalError(null);
       setBuffering(true);
-
       v.play().then(() => {
         clearTimeout(fatalErrorTimerRef.current);
         setFatalError(null);
       }).catch((err) => {
-        const message = err?.name === "NotAllowedError"
-          ? "La riproduzione è stata bloccata dal browser."
-          : null;
-
+        const message = err?.name === "NotAllowedError" ? "La riproduzione è stata bloccata dal browser." : null;
         if (message) {
           setBuffering(false);
           setFatalError(null);
@@ -414,12 +418,14 @@ export default function CustomVideoPlayer({
       v.pause();
     }
   }, [onError, muted]);
+
   const skip = useCallback((delta) => {
     const v = videoRef.current; if (!v) return;
     const d = v.duration || Infinity;
     v.currentTime = Math.min(Math.max(0, v.currentTime + delta), d);
     setCurrentTime(v.currentTime);
   }, []);
+
   const changeVolume = useCallback((value) => {
     const v = videoRef.current; if (!v) return;
     const clamped = Math.min(1, Math.max(0, value));
@@ -427,11 +433,13 @@ export default function CustomVideoPlayer({
     setVolume(clamped); setMuted(clamped === 0);
     localStorage.setItem("flixit_player_volume", String(clamped));
   }, []);
+
   const toggleMute = useCallback(() => {
     const v = videoRef.current; if (!v) return;
     if (v.muted || v.volume === 0) { v.muted = false; if (v.volume === 0) { v.volume = 0.5; setVolume(0.5); } setMuted(false); }
     else { v.muted = true; setMuted(true); }
   }, []);
+
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current; const v = videoRef.current;
     if (!el) return;
@@ -440,31 +448,30 @@ export default function CustomVideoPlayer({
     else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
     else if (v?.webkitEnterFullscreen) v.webkitEnterFullscreen();
   }, []);
+
   const selectAudioTrack = useCallback((id) => {
     if (hlsRef.current) hlsRef.current.audioTrack = id;
     setAudioTrackId(id);
     setAudioMenuAnchor(null);
   }, []);
+
   const selectQuality = useCallback((value) => {
     const hls = hlsRef.current;
     if (!hls) return;
 
     if (value === "auto") {
-      // -1 restores HLS.js adaptive bitrate selection.
       hls.currentLevel = -1;
       hls.nextLevel = -1;
       setSelectedQuality("auto");
     } else {
       const levelIndex = Number(value);
       if (!Number.isInteger(levelIndex) || !hls.levels?.[levelIndex]) return;
-      // currentLevel performs an immediate switch and keeps this level manual
-      // until Auto is selected again.
       hls.currentLevel = levelIndex;
+      hls.nextLevel = levelIndex;
       setSelectedQuality(levelIndex);
     }
 
-    setQualityMenuAnchor(null);
-    wakeControls();
+    setControlsVisible(true);
   }, []);
 
   useEffect(() => {
@@ -473,19 +480,17 @@ export default function CustomVideoPlayer({
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
-  // ---------------------------------------------------------------- auto-hide controls
   const wakeControls = useCallback(() => {
     setControlsVisible(true);
     clearTimeout(hideTimerRef.current);
     hideTimerRef.current = setTimeout(() => {
       const v = videoRef.current;
-      if (v && !v.paused && !audioMenuAnchor && !qualityMenuAnchor) setControlsVisible(false);
+      if (v && !v.paused && !audioMenuAnchor) setControlsVisible(false);
     }, CONTROLS_HIDE_MS);
-  }, [audioMenuAnchor, qualityMenuAnchor]);
+  }, [audioMenuAnchor]);
 
   useEffect(() => { wakeControls(); return () => clearTimeout(hideTimerRef.current); }, [wakeControls, playing]);
 
-  // ---------------------------------------------------------------- keyboard shortcuts
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target?.tagName || "").toLowerCase();
@@ -506,7 +511,6 @@ export default function CustomVideoPlayer({
     return () => window.removeEventListener("keydown", onKey);
   }, [togglePlay, toggleFullscreen, toggleMute, skip, changeVolume, wakeControls, volume]);
 
-  // ---------------------------------------------------------------- seek slider
   const onSeekChange = (_e, value) => { seekingRef.current = true; setCurrentTime(Number(value)); };
   const onSeekCommit = (_e, value) => {
     const v = videoRef.current;
@@ -517,8 +521,6 @@ export default function CustomVideoPlayer({
 
   const VolumeIcon = muted || volume === 0 ? VolumeOffRoundedIcon : volume < 0.5 ? VolumeDownRoundedIcon : VolumeUpRoundedIcon;
   const showOverlay = controlsVisible || !playing;
-  const selectedQualityLevel = selectedQuality === "auto" ? null : qualityLevels.find((q) => q.index === selectedQuality);
-  const qualityButtonLabel = selectedQuality === "auto" ? "Auto" : (selectedQualityLevel?.label || videoQuality?.label || "Qualità");
 
   return (
     <Box
@@ -576,21 +578,7 @@ export default function CustomVideoPlayer({
             <Box
               data-testid="player-quality"
               aria-label={`Qualità video ${videoQuality.label}`}
-              sx={{
-                ml: "auto",
-                px: { xs: 0.9, md: 1.15 },
-                py: 0.35,
-                borderRadius: "4px",
-                color: "#fff",
-                border: "1px solid rgba(255,255,255,0.75)",
-                bgcolor: "rgba(0,0,0,0.38)",
-                fontSize: { xs: 11, md: 12 },
-                lineHeight: 1.2,
-                fontWeight: 800,
-                letterSpacing: "0.04em",
-                whiteSpace: "nowrap",
-                textShadow: "0 1px 4px rgba(0,0,0,0.9)",
-              }}
+              sx={{ ml: "auto", px: { xs: 0.9, md: 1.15 }, py: 0.35, borderRadius: "4px", color: "#fff", border: "1px solid rgba(255,255,255,0.75)", bgcolor: "rgba(0,0,0,0.38)", fontSize: { xs: 11, md: 12 }, lineHeight: 1.2, fontWeight: 800, letterSpacing: "0.04em", whiteSpace: "nowrap", textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}
             >
               {videoQuality.label}
             </Box>
@@ -614,7 +602,7 @@ export default function CustomVideoPlayer({
           </Typography>
         </Stack>
 
-        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 0.5 }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 0.5, gap: 1 }}>
           <Stack direction="row" alignItems="center" spacing={0.5}>
             <Tooltip title={playing ? "Pausa (Spazio)" : "Riproduci (Spazio)"}>
               <IconButton onClick={togglePlay} data-testid="play-pause-button" aria-label={playing ? "Pausa" : "Riproduci"} sx={ctrlBtnSx}>
@@ -639,73 +627,77 @@ export default function CustomVideoPlayer({
             </Stack>
           </Stack>
 
-          <Stack direction="row" alignItems="center" spacing={0.5}>
+          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
             {hasNext && onNext && (
               <Tooltip title="Episodio successivo">
                 <IconButton onClick={onNext} data-testid="next-episode-button" aria-label="Episodio successivo" sx={ctrlBtnSx}><SkipNextRoundedIcon sx={{ fontSize: 32 }} /></IconButton>
               </Tooltip>
             )}
+
             {qualityLevels.length > 0 && (
-              <>
-                <Tooltip title={`Qualità video: ${qualityButtonLabel}`}>
-                  <Box
-                    component="button"
-                    type="button"
-                    onClick={(e) => setQualityMenuAnchor(e.currentTarget)}
-                    data-testid="quality-selector-button"
-                    aria-label={`Seleziona qualità video, ${qualityButtonLabel}`}
-                    sx={{
-                      minWidth: 54,
-                      height: 34,
-                      px: 1,
-                      borderRadius: "4px",
-                      border: "1px solid rgba(255,255,255,0.55)",
-                      bgcolor: "rgba(0,0,0,0.32)",
-                      color: "#fff",
-                      fontFamily: "inherit",
-                      fontSize: { xs: 11, md: 12 },
-                      fontWeight: 800,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                      transition: "background-color 160ms ease, border-color 160ms ease, transform 160ms ease",
-                      "&:hover": { bgcolor: "rgba(255,255,255,0.12)", borderColor: "#fff", transform: "scale(1.04)" },
-                    }}
-                  >
-                    {qualityButtonLabel}
-                  </Box>
-                </Tooltip>
-                <Menu
-                  anchorEl={qualityMenuAnchor}
-                  open={!!qualityMenuAnchor}
-                  onClose={() => setQualityMenuAnchor(null)}
-                  anchorOrigin={{ vertical: "top", horizontal: "center" }}
-                  transformOrigin={{ vertical: "bottom", horizontal: "center" }}
-                  PaperProps={{ sx: { bgcolor: "rgba(20,20,20,0.97)", color: "#fff", border: "1px solid rgba(255,255,255,0.1)", minWidth: 190 } }}
+              <Box
+                data-testid="quality-selector-bar"
+                aria-label="Selezione qualità video"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  maxWidth: { xs: 180, sm: 320, md: "none" },
+                  overflowX: "auto",
+                  overflowY: "hidden",
+                  px: 0.25,
+                  py: 0.25,
+                  scrollbarWidth: "none",
+                  "&::-webkit-scrollbar": { display: "none" },
+                }}
+              >
+                <Box
+                  component="button"
+                  type="button"
+                  onClick={() => selectQuality("auto")}
+                  data-testid="quality-option-auto"
+                  aria-pressed={selectedQuality === "auto"}
+                  sx={{
+                    ...qualityBtnSx,
+                    ...(selectedQuality === "auto" ? {
+                      bgcolor: "#fff",
+                      color: "#000",
+                      borderColor: "#fff",
+                      "&:hover": { bgcolor: "rgba(255,255,255,0.88)", color: "#000", borderColor: "#fff" },
+                    } : {}),
+                  }}
                 >
-                  <MenuItem
-                    selected={selectedQuality === "auto"}
-                    onClick={() => selectQuality("auto")}
-                    sx={{ "&.Mui-selected": { bgcolor: "rgba(229,9,20,0.25)" }, "&.Mui-selected:hover": { bgcolor: "rgba(229,9,20,0.35)" } }}
-                  >
-                    Auto{selectedQuality === "auto" && videoQuality?.label ? ` · ${videoQuality.label}` : ""}
-                  </MenuItem>
-                  {qualityLevels.map((q) => (
-                    <MenuItem
-                      key={`${q.index}-${q.width}x${q.height}`}
-                      selected={selectedQuality === q.index}
-                      onClick={() => selectQuality(q.index)}
-                      data-testid={`quality-option-${q.height}`}
-                      sx={{ "&.Mui-selected": { bgcolor: "rgba(229,9,20,0.25)" }, "&.Mui-selected:hover": { bgcolor: "rgba(229,9,20,0.35)" } }}
-                    >
-                      <Box sx={{ display: "flex", width: "100%", justifyContent: "space-between", gap: 2 }}>
-                        <span>{q.label}</span>
-                        <Box component="span" sx={{ color: "rgba(255,255,255,0.58)", fontSize: 12 }}>{q.width}×{q.height}</Box>
+                  Auto
+                </Box>
+
+                {qualityLevels.map((q) => {
+                  const active = selectedQuality === q.index;
+                  return (
+                    <Tooltip key={`${q.index}-${q.width}x${q.height}`} title={`${q.width}×${q.height}${q.bitrate ? ` · ${Math.round(q.bitrate / 100000) / 10} Mbps` : ""}`}>
+                      <Box
+                        component="button"
+                        type="button"
+                        onClick={() => selectQuality(q.index)}
+                        data-testid={`quality-option-${q.height}`}
+                        aria-pressed={active}
+                        sx={{
+                          ...qualityBtnSx,
+                          ...(active ? {
+                            bgcolor: "#fff",
+                            color: "#000",
+                            borderColor: "#fff",
+                            "&:hover": { bgcolor: "rgba(255,255,255,0.88)", color: "#000", borderColor: "#fff" },
+                          } : {}),
+                        }}
+                      >
+                        {q.label}
                       </Box>
-                    </MenuItem>
-                  ))}
-                </Menu>
-              </>
+                    </Tooltip>
+                  );
+                })}
+              </Box>
             )}
+
             {audioTracks.length > 1 && (
               <>
                 <Tooltip title="Lingua audio">
