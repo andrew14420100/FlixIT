@@ -158,16 +158,38 @@ export default function VideoItemWithHover({
   const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
   const resolvedArtwork = nonTmdbArtwork(netflixArtwork?.artwork?.url);
 
+  // useAutomaticMediaAssets already enforces the visual source policy:
+  // Netflix -> existing mapped CDN -> saved non-TMDB -> nothing. These values
+  // were previously fetched correctly but never inserted into the card's image
+  // candidate list, leaving many tiles as text-only placeholders.
+  const automaticLandscape = firstNonTmdbArtwork(
+    automaticAssets?.netflix_artwork_url,
+    automaticAssets?.backdrop_path,
+    automaticAssets?.titled_backdrop_path
+  );
+  const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
+
   const imageCandidates = useMemo(
     () => unique([
       resolvedArtwork,
+      automaticLandscape,
       existingNetflixArtwork,
       mappedBackdrop,
       legacyLandscape,
+      automaticPoster,
       mappedPoster,
       legacyPoster,
     ]),
-    [resolvedArtwork, existingNetflixArtwork, mappedBackdrop, legacyLandscape, mappedPoster, legacyPoster]
+    [
+      resolvedArtwork,
+      automaticLandscape,
+      existingNetflixArtwork,
+      mappedBackdrop,
+      legacyLandscape,
+      automaticPoster,
+      mappedPoster,
+      legacyPoster,
+    ]
   );
 
   const title = automaticAssets?.title || video?.title || video?.name || "";
@@ -210,14 +232,16 @@ export default function VideoItemWithHover({
 
   const hoverLogoUrl = firstNonTmdbArtwork(
     netflixArtwork?.logo?.url,
+    automaticAssets?.netflix_logo_url,
+    automaticAssets?.logo_path,
     video?.logo_path,
     video?.logo,
     video?.title_logo_path
   );
 
   const hoverArtwork =
-    resolvedArtwork || existingNetflixArtwork || mappedBackdrop || legacyLandscape || mappedPoster || legacyPoster;
-  const hoverPoster = mappedPoster || legacyPoster || hoverArtwork;
+    resolvedArtwork || automaticLandscape || existingNetflixArtwork || mappedBackdrop || legacyLandscape || automaticPoster || mappedPoster || legacyPoster;
+  const hoverPoster = automaticPoster || mappedPoster || legacyPoster || hoverArtwork;
 
   return (
     <>
@@ -265,7 +289,7 @@ export default function VideoItemWithHover({
               poster: null,
               // When a trailer exists, HoverTrailerOverlay exclusively owns the
               // title treatment. This prevents the static logo underneath from
-              // reappearing after the five-second fade during the same hover.
+              // reappearing after the five-second logo fade during the same hover.
               logo_path: trailerUrl ? null : (hoverLogoUrl || null),
               logo: null,
               title_logo_path: null,
