@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
 
-const ARTWORK_QUERY_VERSION = "netflix-native-v6-it";
+const ARTWORK_QUERY_VERSION = "netflix-native-v7-shape-fallback";
 
 function profileId() {
   if (typeof window === "undefined") return "guest";
