@@ -2,6 +2,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
 
+const ARTWORK_QUERY_VERSION = "netflix-native-v4";
+
 function profileId() {
   if (typeof window === "undefined") return "guest";
   return window.localStorage.getItem("netflix_user_id") || "guest";
@@ -13,9 +15,10 @@ function viewport() {
 }
 
 /**
- * Resolve the Netflix artwork that FLIX-IT used before the automatic TMDB
- * artwork migration.  The backend keeps the Netflix session/provider isolated;
- * the public client only receives the already-resolved artwork metadata.
+ * Resolve the existing Netflix artwork provider directly. The config endpoint
+ * remains useful for status/region, but an old cached `enabled:false` value must
+ * never prevent a title from asking the backend for artwork: the backend now
+ * knows whether a live session or a previously cached Netflix match is usable.
  */
 export default function useNetflixArtwork(
   item: any,
@@ -30,23 +33,23 @@ export default function useNetflixArtwork(
   const id = item?.id || item?.tmdbId || item?.tmdb_id;
 
   const { data: config } = useQuery({
-    queryKey: ["netflix-artwork-config"],
+    queryKey: ["netflix-artwork-config", ARTWORK_QUERY_VERSION],
     queryFn: async () => {
       const response = await fetch("/api/player/artwork/config", { cache: "no-store" });
       return response.ok ? response.json() : { enabled: false, region: "IT" };
     },
-    staleTime: 5 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
+    staleTime: 60 * 1000,
+    gcTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
     retry: 1,
   });
 
-  const enabled = !!config?.enabled && !!id && !!shouldLoad;
   const profile = profileId();
   const device = viewport();
+  const enabled = !!id && !!shouldLoad;
 
   const { data, isFetching } = useQuery({
-    queryKey: ["netflix-artwork", type, id, context, device, profile],
+    queryKey: [ARTWORK_QUERY_VERSION, "netflix-artwork", type, id, context, device, profile],
     queryFn: async () => {
       const params = new URLSearchParams({
         context,
@@ -60,7 +63,7 @@ export default function useNetflixArtwork(
       return response.ok ? response.json() : { active: false };
     },
     enabled,
-    staleTime: 24 * 60 * 60 * 1000,
+    staleTime: 6 * 60 * 60 * 1000,
     gcTime: 7 * 24 * 60 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -68,7 +71,7 @@ export default function useNetflixArtwork(
   });
 
   return {
-    enabled: !!config?.enabled,
+    enabled: !!(data?.enabled ?? config?.enabled),
     active: !!data?.active,
     artwork: data?.artwork || null,
     logo: data?.logo || null,
