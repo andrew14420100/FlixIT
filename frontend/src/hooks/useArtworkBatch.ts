@@ -40,8 +40,11 @@ function chunks(values: any[], size: number) {
 
 /**
  * Hydrate many cards with one HTTP request per <=40 titles, then seed the exact
- * individual React Query keys consumed by useAutomaticMediaAssets. This removes
- * the N-card request waterfall while keeping every card hook backwards-compatible.
+ * individual React Query keys consumed by useAutomaticMediaAssets.
+ *
+ * Chunks are requested in parallel. The backend resolver already owns the real
+ * provider concurrency limit, so the browser can enqueue the whole row without
+ * creating an N-card waterfall while upstream work remains controlled.
  */
 export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const queryClient = useQueryClient();
@@ -54,26 +57,32 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const query = useQuery({
     queryKey: ["artwork-batch", MEDIA_ASSET_QUALITY_VERSION, signature],
     queryFn: async ({ signal }: any) => {
-      const all: any[] = [];
-      for (const group of chunks(normalized, MAX_BATCH)) {
-        if (signal?.aborted) break;
-        const response = await fetch("/api/public/official-artwork/batch", {
-          method: "POST",
-          signal,
-          cache: "no-store",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            items: group.map((entry) => ({ type: entry.type, tmdbId: entry.id })),
-          }),
-        });
-        if (!response.ok) continue;
-        const payload = await response.json();
-        all.push(...(payload?.items || []));
-      }
-      return all;
+      const groups = chunks(normalized, MAX_BATCH);
+      const responses = await Promise.all(
+        groups.map(async (group) => {
+          if (signal?.aborted) return [];
+          try {
+            const response = await fetch("/api/public/official-artwork/batch", {
+              method: "POST",
+              signal,
+              cache: "no-store",
+              headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                items: group.map((entry) => ({ type: entry.type, tmdbId: entry.id })),
+              }),
+            });
+            if (!response.ok) return [];
+            const payload = await response.json();
+            return payload?.items || [];
+          } catch {
+            return [];
+          }
+        })
+      );
+      return responses.flat();
     },
     enabled: !!enabled && normalized.length > 0,
     staleTime: DAILY_ARTWORK_REFRESH_MS,
