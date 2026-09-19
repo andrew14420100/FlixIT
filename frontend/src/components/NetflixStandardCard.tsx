@@ -92,10 +92,10 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
                 className="standard-card tracked-card netflix-standard-card-image"
               />
             ) : (
-              <div className="netflix-standard-card-placeholder">{title}</div>
+              <div className="netflix-standard-card-placeholder" aria-hidden="true" />
             )}
 
-            {src && (
+            {src && showRealLogo ? (
               <div
                 aria-hidden="true"
                 className="netflix-standard-card-title-treatment"
@@ -112,46 +112,24 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
                   zIndex: 2,
                 }}
               >
-                {showRealLogo ? (
-                  <img
-                    src={logoUrl || ""}
-                    alt=""
-                    draggable={false}
-                    decoding="async"
-                    onError={() => setLogoFailed(true)}
-                    style={{
-                      display: "block",
-                      maxWidth: "78%",
-                      maxHeight: "100%",
-                      width: "auto",
-                      height: "auto",
-                      objectFit: "contain",
-                      filter: "drop-shadow(0 2px 5px rgba(0,0,0,.82))",
-                    }}
-                  />
-                ) : title ? (
-                  <div
-                    style={{
-                      maxWidth: "88%",
-                      color: "#fff",
-                      fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
-                      fontWeight: 800,
-                      fontSize: "clamp(10px, .78vw, 17px)",
-                      lineHeight: 1.02,
-                      textAlign: "center",
-                      letterSpacing: "-.025em",
-                      textShadow: "0 2px 5px rgba(0,0,0,.95)",
-                      overflow: "hidden",
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                    }}
-                  >
-                    {title}
-                  </div>
-                ) : null}
+                <img
+                  src={logoUrl || ""}
+                  alt=""
+                  draggable={false}
+                  decoding="async"
+                  onError={() => setLogoFailed(true)}
+                  style={{
+                    display: "block",
+                    maxWidth: "78%",
+                    maxHeight: "100%",
+                    width: "auto",
+                    height: "auto",
+                    objectFit: "contain",
+                    filter: "drop-shadow(0 2px 5px rgba(0,0,0,.82))",
+                  }}
+                />
               </div>
-            )}
+            ) : null}
 
             {watch && Number(watch.percent || 0) > 0 && (
               <div
