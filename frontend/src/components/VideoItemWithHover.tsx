@@ -124,9 +124,6 @@ export default function VideoItemWithHover({
     [automaticAssets, deferredAssets]
   );
 
-  // Only explicitly Netflix-labelled fields belong in this tier. Generic
-  // artwork/image fields are legacy project assets and must stay behind the
-  // historical CDN mapping.
   const existingNetflixArtwork = firstNonTmdbArtwork(
     video?.netflix_artwork_url,
     video?.netflixArtworkUrl,
@@ -158,10 +155,6 @@ export default function VideoItemWithHover({
   const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
   const resolvedArtwork = nonTmdbArtwork(netflixArtwork?.artwork?.url);
 
-  // useAutomaticMediaAssets already enforces the visual source policy:
-  // Netflix -> existing mapped CDN -> saved non-TMDB -> nothing. These values
-  // were previously fetched correctly but never inserted into the card's image
-  // candidate list, leaving many tiles as text-only placeholders.
   const automaticLandscape = firstNonTmdbArtwork(
     automaticAssets?.netflix_artwork_url,
     automaticAssets?.backdrop_path,
@@ -230,6 +223,9 @@ export default function VideoItemWithHover({
        assets?.preview_video_url)
     : null;
 
+  // nf-scrape exposes titleLogoUnbranded/titleLogoBranded independently from
+  // storyArt/boxart. Keep that same model: the original Netflix logo is layered
+  // on top of the artwork, rather than baking text into a lower-quality image.
   const hoverLogoUrl = firstNonTmdbArtwork(
     netflixArtwork?.logo?.url,
     automaticAssets?.netflix_logo_url,
@@ -250,6 +246,7 @@ export default function VideoItemWithHover({
         imageUrl={imageCandidates[0] || null}
         imageCandidates={imageCandidates.slice(1)}
         fallbackImageUrl={null}
+        logoUrl={hoverLogoUrl}
         title={title}
         href={detailHref}
         onClick={goDetail}
@@ -287,9 +284,6 @@ export default function VideoItemWithHover({
               cover: null,
               poster_path: hoverPoster || null,
               poster: null,
-              // When a trailer exists, HoverTrailerOverlay exclusively owns the
-              // title treatment. This prevents the static logo underneath from
-              // reappearing after the five-second logo fade during the same hover.
               logo_path: trailerUrl ? null : (hoverLogoUrl || null),
               logo: null,
               title_logo_path: null,
