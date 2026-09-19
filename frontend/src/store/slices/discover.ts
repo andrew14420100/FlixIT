@@ -102,7 +102,7 @@ const extendedApi = tmdbApi.injectEndpoints({
         url: `/${mediaType}/${id}`,
         params: {
           api_key: TMDB_V3_API_KEY,
-          append_to_response: "credits",
+          append_to_response: "credits,keywords",
           language: "it-IT",
         },
       }),
