@@ -32,10 +32,13 @@ import {
   msUntilNextRomeRefresh,
 } from "src/utils/dailyRefresh";
 
-const INITIAL_ROWS = 2;
-const ROWS_PER_LOAD = 2;
-const ROW_ITEM_LIMIT = 42;
-const HOME_CACHE_PREFIX = "flix-home-v9";
+// All macro rows are mounted immediately so their metadata/artwork batches start
+// together. Individual cards/images remain lazy inside each slider, so this does
+// not mean mounting hundreds of video/card components at once.
+const INITIAL_ROWS = 1000;
+const ROWS_PER_LOAD = 1000;
+const ROW_ITEM_LIMIT = 100;
+const HOME_CACHE_PREFIX = "flix-home-v10";
 const DYNAMIC_SHARE_DEFAULT = 0.25;
 const DYNAMIC_SHARE_FAST_ROWS = 0.50;
 const FLIXIT_TOP10_URL = "/api/public/flixit-top10?hours=48";
@@ -205,8 +208,6 @@ function buildEngagementMap(payload) {
     const key = itemKey(item);
     if (!key) return;
 
-    // The new endpoint already exposes a real recent FlixIT score. Fall back to
-    // robust generic signals so older cached payloads remain usable during SWR.
     if (Number.isFinite(Number(item?.flixit_score))) {
       map[key] = Math.max(0, Math.min(100, Number(item.flixit_score)));
       return;
@@ -322,11 +323,18 @@ function buildDailySnapshot(incomingData, type) {
   const valid = uniqueItems(incomingData?.items || []);
   return {
     ...(incomingData || {}),
-    items: valid.slice(0, type === "top10" ? 10 : Math.max(ROW_ITEM_LIMIT, 80)),
+    items: valid.slice(0, type === "top10" ? 10 : 120),
   };
 }
 
+// These endpoints are all asked for multiple pages. Endpoints that ignore the
+// page parameter simply dedupe back to their normal result; endpoints that
+// support pagination give the row enough candidates to publish ~50 complete
+// title-treatment cards after artwork validation and cross-row dedupe.
 const PAGED_TYPES = new Set([
+  "trending",
+  "new_releases",
+  "new_seasons",
   "genre",
   "popular",
   "top_rated",
@@ -345,9 +353,11 @@ async function fetchSectionPayload(section, url, refreshBucket) {
       withPage("/api/public/tmdb/now_playing", 1),
       withPage("/api/public/tmdb/now_playing", 2),
       withPage("/api/public/tmdb/now_playing", 3),
+      withPage("/api/public/tmdb/now_playing", 4),
       withPage("/api/public/tmdb/on_the_air", 1),
       withPage("/api/public/tmdb/on_the_air", 2),
       withPage("/api/public/tmdb/on_the_air", 3),
+      withPage("/api/public/tmdb/on_the_air", 4),
     ];
     const parts = await Promise.all(
       urls.map((candidate) => freshFetchJson(candidate, { items: [] }, refreshBucket))
@@ -363,7 +373,7 @@ async function fetchSectionPayload(section, url, refreshBucket) {
 
   if (PAGED_TYPES.has(type)) {
     const pages = await Promise.all(
-      [1, 2, 3].map((page) =>
+      [1, 2, 3, 4].map((page) =>
         freshFetchJson(withPage(url, page), { items: [] }, refreshBucket)
       )
     );
@@ -447,7 +457,7 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
   const cacheIsCurrent = cacheBelongsToCurrentRomeWindow(initialCache?.savedAt);
 
   const { data, isPending } = useQuery({
-    queryKey: ["home-row-v9", refreshBucket, sectionSignature(section), url],
+    queryKey: ["home-row-v10", refreshBucket, sectionSignature(section), url],
     queryFn: async () => {
       const incoming = await fetchSectionPayload(section, url, refreshBucket);
       const snapshot = buildDailySnapshot(incoming, type);
@@ -535,7 +545,7 @@ export function Component() {
   );
   const engagementCurrent = cacheBelongsToCurrentRomeWindow(initialEngagement?.savedAt);
   const { data: engagementPayload = initialEngagement?.data || {} } = useQuery({
-    queryKey: ["home-engagement-v9", refreshBucket],
+    queryKey: ["home-engagement-v10", refreshBucket],
     queryFn: async () => {
       const payload = await freshFetchJson(
         FLIXIT_TOP10_URL,
@@ -567,7 +577,7 @@ export function Component() {
   const feedCacheCurrent = cacheBelongsToCurrentRomeWindow(initialFeedCache?.savedAt);
 
   const { data: feed = null } = useQuery({
-    queryKey: ["home-feed-v9", refreshBucket, userId, preferenceSignature],
+    queryKey: ["home-feed-v10", refreshBucket, userId, preferenceSignature],
     queryFn: async () => {
       const [secData, tplData] = await Promise.all([
         freshFetchJson("/api/public/sections", { sections: [] }, refreshBucket),
@@ -585,8 +595,6 @@ export function Component() {
         userId
       );
       const all = [...admin, ...automatic];
-      // Keep the macro structure stable and pin Top 10 high without otherwise
-      // shuffling administrator-defined vertical section order.
       const top10 = all.filter((s) => (s.section_type || s.apiString) === "top10");
       const rest = all.filter((s) => (s.section_type || s.apiString) !== "top10");
       const nextFeed = [...top10, ...rest];
@@ -720,11 +728,11 @@ export function Component() {
         <Box
           ref={sentinelRef}
           data-testid="infinite-scroll-sentinel"
-          sx={{ display: "flex", justifyContent: "center", py: 2, minHeight: 40 }}
+          sx={{ display: "flex", justifyContent: "center", py: 0, minHeight: 1 }}
         >
           {hasMore && (
             <CircularProgress
-              size={26}
+              size={20}
               sx={{ color: "#E50914" }}
               data-testid="infinite-scroll-loader"
             />
