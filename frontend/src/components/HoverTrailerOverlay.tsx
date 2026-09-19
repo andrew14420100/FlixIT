@@ -15,10 +15,8 @@ const LOGO_FADE_MS = 300;
  * - then it dissolves for 300ms and stays hidden for that trailer session;
  * - when playback ends/fails the underlying artwork + logo returns immediately.
  *
- * The trailer deliberately keeps the classic 16:9 video surface instead of
- * stretching to the full mini-modal player shell. The shell is fractionally
- * taller, leaving the same thin artwork/merchandising strip visible above the
- * metadata panel that Netflix shows in the reference hover.
+ * The trailer fills the whole visual area of the expanded card so no coloured
+ * artwork strip remains between the video and the metadata/description panel.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -127,10 +125,9 @@ export default function HoverTrailerOverlay({
       }}
       style={{
         position: "absolute",
-        left: 0,
-        right: 0,
-        top: 0,
-        aspectRatio: "16 / 9",
+        inset: 0,
+        width: "100%",
+        height: "100%",
         overflow: "hidden",
         borderRadius: "6px 6px 0 0",
         background: playing ? "#000" : "transparent",
