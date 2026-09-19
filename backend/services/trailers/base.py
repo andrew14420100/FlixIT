@@ -199,18 +199,17 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Rank by native quality first, then use language/editorial metadata as tie breakers."""
+    """Rank by native resolution first, then display compatibility and bitrate."""
     height = int(candidate.height or 0)
     bitrate = int(candidate.bitrate or 0)
-    hdr_score = 1 if (hdr_supported and (candidate.hdr or candidate.dolby_vision)) else 0
-    # If HDR is not supported, SDR wins only when native resolution/bitrate are
-    # otherwise comparable; a lower-resolution SDR candidate never hides 4K.
-    if not hdr_supported and (candidate.hdr or candidate.dolby_vision):
+    is_hdr = bool(candidate.hdr or candidate.dolby_vision)
+    hdr_score = 1 if (hdr_supported and is_hdr) else 0
+    if not hdr_supported and is_hdr:
         hdr_score = -1
     return (
         height,
-        bitrate,
         hdr_score,
+        bitrate,
         codec_rank(candidate.codec),
         language_rank(candidate.audio_language),
         type_rank(candidate.trailer_type),
