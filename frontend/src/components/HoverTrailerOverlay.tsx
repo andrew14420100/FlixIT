@@ -7,14 +7,17 @@ const LOGO_VISIBLE_MS = 5000;
 const LOGO_FADE_MS = 300;
 
 /**
- * Netflix-style hover trailer. The title treatment appears when playback really
- * starts, remains fully visible for exactly five seconds, then dissolves and
- * never reappears during the same hover session.
+ * Netflix-style hover trailer.
+ * - logo appears only when the video really fires `playing`;
+ * - subtle entrance from the lower-left;
+ * - exactly 5 seconds fully visible, then a 300ms dissolve;
+ * - it stays hidden for the rest of that trailer session;
+ * - when playback ends/fails the underlying artwork + logo is immediately visible.
  */
 export default function HoverTrailerOverlay({
   url,
   logoUrl,
-  delay = 90,
+  delay = 70,
   onOpen,
 }: {
   url?: string;
@@ -27,8 +30,21 @@ export default function HoverTrailerOverlay({
   const [muted, setMuted] = useState(true);
   const [failed, setFailed] = useState(false);
   const [logoVisible, setLogoVisible] = useState(true);
+  const [logoEntered, setLogoEntered] = useState(false);
   const logoTimerRef = useRef<number | null>(null);
+  const entryFrameRef = useRef<number | null>(null);
   const logoTimerStartedRef = useRef(false);
+
+  const clearTimers = () => {
+    if (logoTimerRef.current !== null) {
+      window.clearTimeout(logoTimerRef.current);
+      logoTimerRef.current = null;
+    }
+    if (entryFrameRef.current !== null) {
+      window.cancelAnimationFrame(entryFrameRef.current);
+      entryFrameRef.current = null;
+    }
+  };
 
   useEffect(() => {
     setReady(false);
@@ -36,21 +52,15 @@ export default function HoverTrailerOverlay({
     setMuted(true);
     setFailed(false);
     setLogoVisible(true);
+    setLogoEntered(false);
     logoTimerStartedRef.current = false;
-
-    if (logoTimerRef.current !== null) {
-      window.clearTimeout(logoTimerRef.current);
-      logoTimerRef.current = null;
-    }
+    clearTimers();
 
     if (!url) return;
     const timer = window.setTimeout(() => setReady(true), delay);
     return () => {
       window.clearTimeout(timer);
-      if (logoTimerRef.current !== null) {
-        window.clearTimeout(logoTimerRef.current);
-        logoTimerRef.current = null;
-      }
+      clearTimers();
     };
   }, [url, delay]);
 
@@ -60,10 +70,32 @@ export default function HoverTrailerOverlay({
 
     logoTimerStartedRef.current = true;
     setLogoVisible(true);
+    setLogoEntered(false);
+    entryFrameRef.current = window.requestAnimationFrame(() => {
+      entryFrameRef.current = window.requestAnimationFrame(() => {
+        setLogoEntered(true);
+        entryFrameRef.current = null;
+      });
+    });
     logoTimerRef.current = window.setTimeout(() => {
       setLogoVisible(false);
       logoTimerRef.current = null;
     }, LOGO_VISIBLE_MS);
+  };
+
+  const handleEnded = () => {
+    clearTimers();
+    setPlaying(false);
+    setLogoVisible(true);
+    setLogoEntered(false);
+  };
+
+  const handleError = () => {
+    clearTimers();
+    setPlaying(false);
+    setFailed(true);
+    setLogoVisible(true);
+    setLogoEntered(false);
   };
 
   if (!url || !ready || failed) return null;
@@ -110,7 +142,8 @@ export default function HoverTrailerOverlay({
         loop={false}
         zoom={1.02}
         onPlaying={handlePlaying}
-        onError={() => setFailed(true)}
+        onEnded={handleEnded}
+        onError={handleError}
       />
 
       {logoUrl ? (
@@ -118,16 +151,19 @@ export default function HoverTrailerOverlay({
           aria-hidden="true"
           style={{
             position: "absolute",
-            left: 14,
-            bottom: 13,
+            left: "5.5%",
+            bottom: "7%",
             zIndex: 11,
-            width: "43%",
-            maxHeight: 58,
+            width: "42%",
+            height: "29%",
             display: "flex",
             alignItems: "flex-end",
-            opacity: showLogo ? 1 : 0,
-            transform: showLogo ? "translateY(0)" : "translateY(3px)",
-            transition: `opacity ${LOGO_FADE_MS}ms ease, transform ${LOGO_FADE_MS}ms ease`,
+            justifyContent: "flex-start",
+            opacity: showLogo && logoEntered ? 1 : 0,
+            transform: showLogo && logoEntered
+              ? "translate3d(0,0,0) scale(1)"
+              : "translate3d(0,7px,0) scale(.985)",
+            transition: `opacity ${LOGO_FADE_MS}ms ease, transform ${LOGO_FADE_MS}ms cubic-bezier(.21,0,.07,1)`,
             pointerEvents: "none",
           }}
         >
@@ -139,12 +175,12 @@ export default function HoverTrailerOverlay({
             style={{
               display: "block",
               maxWidth: "100%",
-              maxHeight: 56,
+              maxHeight: "100%",
               width: "auto",
               height: "auto",
               objectFit: "contain",
               objectPosition: "left bottom",
-              filter: "drop-shadow(0 2px 5px rgba(0,0,0,.78))",
+              filter: "drop-shadow(0 2px 6px rgba(0,0,0,.84))",
             }}
           />
         </div>
