@@ -71,9 +71,6 @@ export default function VideoItemWithHover({
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
   const id = video?.id || video?.tmdbId || video?.tmdb_id;
 
-  // Warm only cards close to the viewport. The previous 800/1200px margin could
-  // start artwork work for many rows at once. This tighter window still gives
-  // enough time to have the trailer ready before the 300ms hover expansion.
   useEffect(() => {
     const node = ref.current;
     if (!node || typeof IntersectionObserver === "undefined") {
@@ -87,7 +84,7 @@ export default function VideoItemWithHover({
           observer.disconnect();
         }
       },
-      { rootMargin: "280px 480px" }
+      { rootMargin: "220px 360px" }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -103,22 +100,21 @@ export default function VideoItemWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // One artwork request per title. The unified backend resolver already checks
-  // Netflix/Apple/Prime/IMDb and a supplemental genuine logo source, so the
-  // separate Netflix hook was duplicate network work and could contradict the
-  // chosen complete artwork.
+  // Artwork is normally hydrated in one row-level batch. The individual query
+  // remains as a cache-compatible fallback for cards rendered outside a batch.
   const automaticAssets = useAutomaticMediaAssets(
     { ...video, id },
     mType,
     nearViewport || intent || open
   );
 
-  // Prefetch the direct trailer while the card is close to the viewport, not
-  // after the mini-modal is already visible.
+  // Trailer resolution starts on pointer intent, not for every near-viewport
+  // card. The 300ms mini-modal delay is therefore the debounce window: quick
+  // cursor passes consume no video bandwidth.
   const deferredAssets = useDeferredMediaAssets(
     { ...video, id },
     mType,
-    nearViewport || intent || open
+    intent || open
   );
   const assets = useMemo(
     () => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }),
@@ -143,18 +139,21 @@ export default function VideoItemWithHover({
     video?.image_url,
     video?.thumbnail_url
   );
-  const legacyPoster = firstNonTmdbArtwork(
-    video?.netflix_ranked_artwork_url,
-    video?.netflixRankedArtworkUrl,
-    video?.poster_path,
-    video?.poster,
-    video?.cover_path,
-    video?.cover
+  const legacyLandscapeEmbedded = !!(
+    video?.backdrop_embedded_title_treatment ||
+    video?.embedded_title_treatment ||
+    video?.has_embedded_title_treatment
   );
+  const safeLegacyLandscape = legacyLandscapeEmbedded ? legacyLandscape : null;
 
   const automaticLandscape = firstNonTmdbArtwork(
     automaticAssets?.backdrop_path,
     automaticAssets?.titled_backdrop_path
+  );
+  const heroLandscape = firstNonTmdbArtwork(
+    automaticAssets?.hero_backdrop_path,
+    automaticAssets?.detail_backdrop_path,
+    automaticLandscape
   );
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
 
@@ -162,12 +161,9 @@ export default function VideoItemWithHover({
     () => unique([
       automaticLandscape,
       mappedBackdrop,
-      legacyLandscape,
-      automaticPoster,
-      mappedPoster,
-      legacyPoster,
+      safeLegacyLandscape,
     ]),
-    [automaticLandscape, mappedBackdrop, legacyLandscape, automaticPoster, mappedPoster, legacyPoster]
+    [automaticLandscape, mappedBackdrop, safeLegacyLandscape]
   );
 
   const title = automaticAssets?.title || video?.title || video?.name || "";
@@ -208,6 +204,20 @@ export default function VideoItemWithHover({
        assets?.preview_video_url)
     : null;
 
+  // During the pointer-intent delay warm only an HLS manifest. TrailerPlayer is
+  // not mounted until the mini-modal opens, so media segments are not requested
+  // during a quick pass across the row.
+  useEffect(() => {
+    if (!intent || open || !trailerUrl || !/\.m3u8(?:$|\?)/i.test(String(trailerUrl))) return;
+    const controller = new AbortController();
+    fetch(String(trailerUrl), {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*" },
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [intent, open, trailerUrl]);
+
   const hoverLogoUrl = firstNonTmdbArtwork(
     automaticAssets?.logo_path,
     assets?.logo_path,
@@ -216,9 +226,16 @@ export default function VideoItemWithHover({
     video?.logo
   );
 
-  const hoverArtwork = automaticLandscape || mappedBackdrop || legacyLandscape || automaticPoster || mappedPoster || legacyPoster;
-  const hoverPoster = automaticPoster || mappedPoster || legacyPoster || hoverArtwork;
-  const staticEmbedded = !!automaticAssets?.backdrop_embedded_title_treatment;
+  const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || safeLegacyLandscape;
+  const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
+  const staticReady = !!(
+    automaticAssets?.card_ready ||
+    mappedBackdrop ||
+    safeLegacyLandscape
+  );
+
+  // A public card is never rendered while it only has a clean/untitled image.
+  if (!staticReady || !imageCandidates.length) return null;
 
   return (
     <>
@@ -227,8 +244,8 @@ export default function VideoItemWithHover({
         imageUrl={imageCandidates[0] || null}
         imageCandidates={imageCandidates.slice(1)}
         fallbackImageUrl={null}
-        logoUrl={hoverLogoUrl}
-        embeddedTitleTreatment={staticEmbedded}
+        logoUrl={null}
+        embeddedTitleTreatment
         title={title}
         href={detailHref}
         onClick={goDetail}
@@ -266,9 +283,6 @@ export default function VideoItemWithHover({
               cover: null,
               poster_path: hoverPoster || null,
               poster: null,
-              // Keep the underlying expanded-card logo alive even when a trailer
-              // exists. When the trailer ends/fails, the artwork and logo return
-              // immediately instead of revealing a logo-less card.
               logo_path: hoverLogoUrl || null,
               logo: null,
               title_logo_path: null,
