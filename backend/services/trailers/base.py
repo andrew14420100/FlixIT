@@ -1,9 +1,10 @@
 """Shared trailer types, matching and ranking rules.
 
 The multi-provider trailer pipeline is intentionally independent from the main
-movie/episode player.  It rejects YouTube in the new resolver, never upscales,
-and only considers native >=1080p candidates unless an admin explicitly sets a
-manual URL.
+movie/episode player. It rejects YouTube in the native resolver, never upscales,
+and always prefers the highest verified native resolution exposed by providers.
+2160p/4K is the preferred target when available; lower native resolutions remain
+valid fallbacks instead of making the trailer disappear completely.
 """
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ BLOCKED_HOST_SUFFIXES = (
     "youtu.be",
     "youtube-nocookie.com",
 )
-MIN_TRAILER_HEIGHT = 1080
+MIN_TRAILER_HEIGHT = 720
+PREFERRED_TRAILER_HEIGHT = 2160
 
 
 def now_iso() -> str:
@@ -94,7 +96,7 @@ def codec_rank(value: Optional[str]) -> int:
 def confidence_for_identity(identity: dict, title: Any, year: Any, media_type: Optional[str]) -> float:
     """Conservative title/year/type confidence.
 
-    External IDs are handled by individual providers before this fallback.  A
+    External IDs are handled by individual providers before this fallback. A
     title alone is never considered an automatic high-confidence match.
     """
     expected_type = "tv" if identity.get("type") == "tv" else "movie"
@@ -197,33 +199,31 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Quality is dominant; language only breaks ties at the same native height."""
+    """Rank by native quality first, then use language/editorial metadata as tie breakers."""
     height = int(candidate.height or 0)
-    hdr_score = 1 if (hdr_supported and candidate.hdr) else 0
-    # If HDR is not supported, SDR should win at equal native resolution.
-    if not hdr_supported and candidate.hdr:
+    bitrate = int(candidate.bitrate or 0)
+    hdr_score = 1 if (hdr_supported and (candidate.hdr or candidate.dolby_vision)) else 0
+    # If HDR is not supported, SDR wins only when native resolution/bitrate are
+    # otherwise comparable; a lower-resolution SDR candidate never hides 4K.
+    if not hdr_supported and (candidate.hdr or candidate.dolby_vision):
         hdr_score = -1
     return (
         height,
+        bitrate,
+        hdr_score,
+        codec_rank(candidate.codec),
         language_rank(candidate.audio_language),
         type_rank(candidate.trailer_type),
         1 if candidate.official else 0,
         round(float(candidate.confidence or 0), 4),
-        int(candidate.bitrate or 0),
-        hdr_score,
-        codec_rank(candidate.codec),
         int(candidate.audio_bitrate or 0),
         float(candidate.fps or 0),
     )
 
 
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
+    """Pick the maximum native-quality usable candidate without an artificial 1080p ceiling."""
     usable = [c for c in candidates if candidate_is_usable(c)]
-    if not hdr_supported:
-        sdr = [c for c in usable if not c.hdr and not c.dolby_vision]
-        # Prefer a same-resolution SDR fallback when HDR playback support is uncertain.
-        if sdr:
-            usable = sdr
     if not usable:
         return None
     return max(usable, key=lambda c: candidate_sort_key(c, hdr_supported=hdr_supported))
@@ -233,7 +233,7 @@ def perfect_candidate(candidate: TrailerCandidate) -> bool:
     return bool(
         candidate.verified
         and candidate.browser_compatible
-        and int(candidate.height or 0) >= 2160
+        and int(candidate.height or 0) >= PREFERRED_TRAILER_HEIGHT
         and language_rank(candidate.audio_language) == 3
         and candidate.official
         and type_rank(candidate.trailer_type) >= 5
