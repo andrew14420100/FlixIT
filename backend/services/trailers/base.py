@@ -2,9 +2,9 @@
 
 The multi-provider trailer pipeline is intentionally independent from the main
 movie/episode player. It rejects YouTube in the native resolver, never upscales,
-and always prefers the highest verified native resolution exposed by providers
-up to 2160p/4K UHD. Lower native resolutions remain valid fallbacks instead of
-making the trailer disappear completely.
+and prefers real trailer-length media before comparing native resolution up to
+2160p/4K UHD. Lower native resolutions remain valid fallbacks instead of making
+the trailer disappear completely.
 """
 from __future__ import annotations
 
@@ -24,6 +24,10 @@ BLOCKED_HOST_SUFFIXES = (
 MIN_TRAILER_HEIGHT = 720
 PREFERRED_TRAILER_HEIGHT = 2160
 MAX_TRAILER_HEIGHT = 2160
+# Provider pages sometimes expose 5-10 second autoplay previews. When duration
+# is known, those are not treated as trailers. Unknown duration remains usable
+# so providers that cannot expose runtime are not accidentally disabled.
+MIN_KNOWN_TRAILER_DURATION_SECONDS = 20.0
 
 
 def now_iso() -> str:
@@ -63,7 +67,7 @@ def type_rank(value: str) -> int:
         return 3
     if "teaser" in text:
         return 2
-    if "clip" in text:
+    if "clip" in text or "preview" in text or "promo" in text or "featurette" in text:
         return 1
     if "trailer" in text:
         return 4
@@ -140,6 +144,7 @@ class TrailerCandidate:
     bitrate: Optional[int] = None
     codec: Optional[str] = None
     fps: Optional[float] = None
+    duration_seconds: Optional[float] = None
     hdr: bool = False
     dolby_vision: bool = False
     audio_language: Optional[str] = None
@@ -182,17 +187,37 @@ class TrailerCandidate:
         return cls(**{k: v for k, v in (data or {}).items() if k in allowed})
 
 
+def _known_duration(candidate: TrailerCandidate) -> Optional[float]:
+    try:
+        value = float(candidate.duration_seconds) if candidate.duration_seconds is not None else None
+    except Exception:
+        return None
+    return value if value and value > 0 else None
+
+
+def duration_rank(candidate: TrailerCandidate) -> int:
+    duration = _known_duration(candidate)
+    if duration is None:
+        return 1
+    if duration >= 45:
+        return 3
+    if duration >= MIN_KNOWN_TRAILER_DURATION_SECONDS:
+        return 2
+    return 0
+
+
 def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = False) -> bool:
     url = candidate.trailer_url or candidate.manifest_url
     if not url or is_blocked_url(url):
         return False
     height = int(candidate.height or 0)
-    # A known rendition above 2160p is deliberately not selected. The player
-    # target is native UHD/4K at most; lower native renditions remain fallbacks.
     if height > MAX_TRAILER_HEIGHT:
         return False
     if allow_manual:
         return True
+    duration = _known_duration(candidate)
+    if duration is not None and duration < MIN_KNOWN_TRAILER_DURATION_SECONDS:
+        return False
     if candidate.confidence < 0.90:
         return False
     if not candidate.verified:
@@ -205,7 +230,7 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Rank by native resolution first, then display compatibility and bitrate."""
+    """Prefer full/real trailers, then choose the best native quality."""
     height = int(candidate.height or 0)
     bitrate = int(candidate.bitrate or 0)
     is_hdr = bool(candidate.hdr or candidate.dolby_vision)
@@ -213,13 +238,14 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
     if not hdr_supported and is_hdr:
         hdr_score = -1
     return (
+        duration_rank(candidate),
+        type_rank(candidate.trailer_type),
+        1 if candidate.official else 0,
         height,
         hdr_score,
         bitrate,
         codec_rank(candidate.codec),
         language_rank(candidate.audio_language),
-        type_rank(candidate.trailer_type),
-        1 if candidate.official else 0,
         round(float(candidate.confidence or 0), 4),
         int(candidate.audio_bitrate or 0),
         float(candidate.fps or 0),
@@ -227,7 +253,7 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
 
 
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
-    """Pick the maximum native-quality usable candidate, capped at 2160p/4K UHD."""
+    """Pick a real trailer first, then max native quality up to 2160p/4K UHD."""
     usable = [c for c in candidates if candidate_is_usable(c)]
     if not usable:
         return None
@@ -236,10 +262,12 @@ def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False
 
 def perfect_candidate(candidate: TrailerCandidate) -> bool:
     height = int(candidate.height or 0)
+    duration = _known_duration(candidate)
     return bool(
         candidate.verified
         and candidate.browser_compatible
         and PREFERRED_TRAILER_HEIGHT <= height <= MAX_TRAILER_HEIGHT
+        and (duration is None or duration >= MIN_KNOWN_TRAILER_DURATION_SECONDS)
         and language_rank(candidate.audio_language) == 3
         and candidate.official
         and type_rank(candidate.trailer_type) >= 5
