@@ -43,6 +43,8 @@ const discoverSlice = createSlice({
           mediaType,
           itemKey,
         } = action.payload;
+        if (!state[mediaType]) state[mediaType] = {};
+        if (!state[mediaType][itemKey]) state[mediaType][itemKey] = { ...initialItemState };
         state[mediaType][itemKey].page = page;
         state[mediaType][itemKey].results.push(...results);
         state[mediaType][itemKey].total_pages = total_pages;
