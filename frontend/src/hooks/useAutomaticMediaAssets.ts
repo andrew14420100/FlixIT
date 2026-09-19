@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v6-it";
+const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v7-shape-fallback";
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -95,10 +95,8 @@ export default function useAutomaticMediaAssets(
     type: typeSlug,
     title: item?.title || item?.name || "",
     backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
-    poster_path: netflixPoster || mappedPoster || savedPoster || null,
+    poster_path: netflixPoster || netflixLandscape || mappedPoster || savedPoster || null,
     titled_backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
-    // Title logos are intentionally not inherited from generic legacy fields.
-    // The live Netflix resolver returns only Italian/language-neutral logos.
     logo_path: null,
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
@@ -167,7 +165,9 @@ export default function useAutomaticMediaAssets(
         ...metadataOnly,
         backdrop_path: netflixArtwork || fallback.backdrop_path,
         titled_backdrop_path: netflixArtwork || fallback.titled_backdrop_path,
-        poster_path: fallback.poster_path,
+        // If Netflix has no dedicated portrait in this response, crop the same
+        // native artwork instead of leaving Top 10 / poster surfaces blank.
+        poster_path: netflixArtwork || fallback.poster_path,
         logo_path: netflixLogo || null,
         netflix_artwork_url: netflixArtwork || null,
         netflix_logo_url: netflixLogo || null,
