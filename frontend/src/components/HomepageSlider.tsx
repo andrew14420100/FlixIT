@@ -13,7 +13,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import useArtworkBatch from "src/hooks/useArtworkBatch";
 
 const TARGET_ROW_ITEMS = 50;
-const ARTWORK_CANDIDATE_LIMIT = 100;
+const ARTWORK_CANDIDATE_LIMIT = 200;
 
 const RootStyle = styled("div")(() => ({
   position: "relative",
@@ -112,9 +112,9 @@ export default function HomepageSlider({
 
   const isTop10 = /top\s*10/i.test(title);
 
-  // Resolve a much deeper candidate pool up-front. Previously only the first
-  // ~14 candidates were checked for complete artwork, so a row could get stuck
-  // at 4-5 published cards even when valid cards existed later in the source.
+  // Give the resolver a deep pool so strict title-treatment validation can
+  // still publish ~50 cards. The batch hook resolves the first screen with high
+  // priority and the rest in the background instead of blocking the whole row.
   const artworkCandidates = useMemo(
     () => visibleItems.slice(0, isTop10 ? 10 : ARTWORK_CANDIDATE_LIMIT),
     [visibleItems, isTop10]
@@ -130,9 +130,6 @@ export default function HomepageSlider({
     [artworkCandidates, artworkBatch.data, isTop10]
   );
 
-  // Mount only about two screens of card components at a time, while the
-  // artwork for the whole row is already resolved in the background. This keeps
-  // the Home responsive without making later pages wait for provider lookups.
   const minimumBatch = Math.min(readyItems.length, Math.max(tiles * 2 + 2, 14));
   const [renderedCount, setRenderedCount] = useState(minimumBatch);
 
@@ -209,6 +206,8 @@ export default function HomepageSlider({
     ensureRenderedThrough(activeSlideIndex + tiles);
     window.setTimeout(() => sliderRef.current?.slickNext(), 0);
   };
+
+  const waitingForFirstCards = readyItems.length === 0 && artworkBatch.isFetching;
 
   return (
     <Box
@@ -354,67 +353,94 @@ export default function HomepageSlider({
             overflow: "visible",
           }}
         >
-          <RootStyle className="slider-content">
-            <CustomNavigation
-              isEnd={isEnd}
-              arrowWidth={ARROW_MAX_WIDTH}
-              onNext={handleNext}
-              onPrevious={() => sliderRef.current?.slickPrev()}
-              activeSlideIndex={activeSlideIndex}
+          {waitingForFirstCards ? (
+            <Box
+              aria-hidden="true"
+              sx={{
+                display: "flex",
+                gap: { xs: "4px", md: "7.64px" },
+                overflow: "hidden",
+                width: "100%",
+              }}
             >
-              <StyledSlider ref={sliderRef} {...settings} theme={theme}>
-                {publishedItems.map((item, index) => {
-                  const key = sliderItemKey(item) || `item-${index}`;
-                  const suppressHover = isSliding;
-                  const originalRank = Math.max(1, readyItems.indexOf(item) + 1);
+              {Array.from({ length: Math.max(7, Math.ceil(visibleTiles) + 1) }).map((_, index) => (
+                <Box
+                  key={index}
+                  sx={{
+                    flex: `0 0 ${100 / Math.max(2, visibleTiles)}%`,
+                    maxWidth: `calc(${100 / Math.max(2, visibleTiles)}% - 7px)`,
+                    aspectRatio: isTop10 ? "1.7 / 1" : "342 / 192",
+                    borderRadius: "4px",
+                    bgcolor: "#222",
+                    opacity: 0.72,
+                    animation: "flixPulse 1.15s ease-in-out infinite",
+                  }}
+                />
+              ))}
+            </Box>
+          ) : (
+            <RootStyle className="slider-content">
+              <CustomNavigation
+                isEnd={isEnd}
+                arrowWidth={ARROW_MAX_WIDTH}
+                onNext={handleNext}
+                onPrevious={() => sliderRef.current?.slickPrev()}
+                activeSlideIndex={activeSlideIndex}
+              >
+                <StyledSlider ref={sliderRef} {...settings} theme={theme}>
+                  {publishedItems.map((item, index) => {
+                    const key = sliderItemKey(item) || `item-${index}`;
+                    const suppressHover = isSliding;
+                    const originalRank = Math.max(1, readyItems.indexOf(item) + 1);
 
-                  return (
-                    <Box
-                      className="slider-item"
-                      key={key}
-                      sx={{
-                        px: { xs: "2px", sm: "3px", md: "3.82005px" },
-                        boxSizing: "border-box",
-                        position: "relative",
-                      }}
-                    >
-                      {isTop10 ? (
-                        <NetflixRankedCardWithHover
-                          item={{
-                            ...item,
-                            id: item.id || item.tmdbId,
-                            title: item.title || item.name,
-                            name: item.title || item.name,
-                          }}
-                          rank={originalRank}
-                          mediaType={
-                            item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
-                          }
-                          watch={item.watch}
-                          suppressHover={suppressHover}
-                        />
-                      ) : (
-                        <VideoItemWithHover
-                          video={{
-                            ...item,
-                            id: item.id || item.tmdbId,
-                            title: item.title || item.name,
-                            name: item.title || item.name,
-                            genre_ids: item.genre_ids || [],
-                          }}
-                          mediaType={
-                            item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
-                          }
-                          watch={item.watch}
-                          suppressHover={suppressHover}
-                        />
-                      )}
-                    </Box>
-                  );
-                })}
-              </StyledSlider>
-            </CustomNavigation>
-          </RootStyle>
+                    return (
+                      <Box
+                        className="slider-item"
+                        key={key}
+                        sx={{
+                          px: { xs: "2px", sm: "3px", md: "3.82005px" },
+                          boxSizing: "border-box",
+                          position: "relative",
+                        }}
+                      >
+                        {isTop10 ? (
+                          <NetflixRankedCardWithHover
+                            item={{
+                              ...item,
+                              id: item.id || item.tmdbId,
+                              title: item.title || item.name,
+                              name: item.title || item.name,
+                            }}
+                            rank={originalRank}
+                            mediaType={
+                              item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
+                            }
+                            watch={item.watch}
+                            suppressHover={suppressHover}
+                          />
+                        ) : (
+                          <VideoItemWithHover
+                            video={{
+                              ...item,
+                              id: item.id || item.tmdbId,
+                              title: item.title || item.name,
+                              name: item.title || item.name,
+                              genre_ids: item.genre_ids || [],
+                            }}
+                            mediaType={
+                              item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
+                            }
+                            watch={item.watch}
+                            suppressHover={suppressHover}
+                          />
+                        )}
+                      </Box>
+                    );
+                  })}
+                </StyledSlider>
+              </CustomNavigation>
+            </RootStyle>
+          )}
         </Box>
       </Box>
     </Box>
