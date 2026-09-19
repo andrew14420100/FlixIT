@@ -55,6 +55,19 @@ def _page_identity(html: str, data: dict) -> tuple[str, int | None]:
     return title, year
 
 
+def _video_quality_rank(value: str) -> int:
+    quality = str(value or "").strip().upper()
+    if quality in {"UHD", "4K", "2160P"}:
+        return 4
+    if quality in {"QHD", "1440P", "2K"}:
+        return 3
+    if quality in {"HD", "FHD", "1080P"}:
+        return 2
+    if quality:
+        return 1
+    return 0
+
+
 def _pick_manifest(payload: dict, wanted_lang: str = "it") -> tuple[str | None, str | None, list[dict]]:
     playback = payload.get("playbackUrls") or {}
     tracks = playback.get("audioTracks") or []
@@ -73,15 +86,18 @@ def _pick_manifest(payload: dict, wanted_lang: str = "it") -> tuple[str | None, 
             continue
         track_id = manifest.get("audioTrackId")
         quality = str(manifest.get("videoQuality") or "")
-        score = (2 if audio_id and track_id in (audio_id, "ALL", None, "") else 0) + (1 if quality.upper() in ("UHD", "HD") else 0)
-        scored.append((score, url))
+        audio_match = 1 if audio_id and track_id in (audio_id, "ALL", None, "") else 0
+        # Keep the selected language when possible, but never collapse UHD and
+        # HD into the same score. With the same audio compatibility, native UHD
+        # is always inspected before HD/SD.
+        scored.append((audio_match, _video_quality_rank(quality), url))
     scored.sort(reverse=True)
     subtitles = [
         {"language": x.get("languageCode"), "url": x.get("url")}
         for x in (payload.get("subtitleUrls") or [])
         if x.get("url") and (not audio or x.get("trackGroupId") == audio.get("trackGroupId"))
     ]
-    return (scored[0][1] if scored else None), (audio or {}).get("languageCode"), subtitles
+    return (scored[0][2] if scored else None), (audio or {}).get("languageCode"), subtitles
 
 
 class PrimeVideoTrailerProvider:
