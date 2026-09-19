@@ -1,15 +1,15 @@
 """
-Omni resolver: TMDB id -> IMDb id -> Omni /stream resource -> best HTTP(S) stream.
+Omni resolver: TMDB id -> IMDb id -> embedded/remote Omni -> best HTTP(S) stream.
 
 The stable resolver id remains `stremio_addon` for backward compatibility with
-existing Admin settings and saved resolver order, while Omni is the runtime
-implementation used by FLIX-IT.
+existing Admin settings and saved resolver order.
 """
 import logging
 from typing import Optional
 
 from .base import BaseResolver
 from .. import stremio
+from .. import omni_embedded
 
 logger = logging.getLogger("player.omni")
 
@@ -17,9 +17,7 @@ logger = logging.getLogger("player.omni")
 class StremioAddonResolver(BaseResolver):
     id = "stremio_addon"
     label = "Omni"
-    # Force Omni immediately after AdminSource in ResolverRegistry. This makes
-    # Omni the primary network source even if an older saved resolver order had
-    # VixSrc or Internet Archive before the Stremio slot.
+    # Omni is the primary network/source layer immediately after AdminSource.
     always_active = True
     configurable = True
 
@@ -45,17 +43,26 @@ class StremioAddonResolver(BaseResolver):
         if not imdb_id:
             return None
 
-        try:
-            streams = await stremio.fetch_streams(
-                cfg["url"],
-                media_type,
+        if cfg.get("source") == "embedded":
+            streams = omni_embedded.resolve_streams(
+                self._db,
                 imdb_id,
+                media_type,
                 season,
                 episode,
             )
-        except stremio.StremioError as e:
-            logger.warning("Omni failed for %s/%s: %s", media_type, tmdb_id, e)
-            return None
+        else:
+            try:
+                streams = await stremio.fetch_streams(
+                    cfg["url"],
+                    media_type,
+                    imdb_id,
+                    season,
+                    episode,
+                )
+            except stremio.StremioError as e:
+                logger.warning("Omni failed for %s/%s: %s", media_type, tmdb_id, e)
+                return None
 
         best = stremio.pick_best(streams)
         if not best:
@@ -68,7 +75,8 @@ class StremioAddonResolver(BaseResolver):
             "stream": stream_url,
             "type": best.get("type") or "hls",
             "source": self.id,
-            "provider": "omni",
+            "provider": "omni_embedded" if cfg.get("source") == "embedded" else "omni",
+            "omni_mode": cfg.get("source") or "unknown",
             "imdb_id": imdb_id,
             "stream_name": best.get("name") or "Omni",
             "stream_title": best.get("title") or "",
