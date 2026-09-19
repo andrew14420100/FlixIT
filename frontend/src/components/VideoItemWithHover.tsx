@@ -100,17 +100,12 @@ export default function VideoItemWithHover({
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Artwork is normally hydrated in one row-level batch. The individual query
-  // remains as a cache-compatible fallback for cards rendered outside a batch.
   const automaticAssets = useAutomaticMediaAssets(
     { ...video, id },
     mType,
     nearViewport || intent || open
   );
 
-  // Trailer resolution starts on pointer intent, not for every near-viewport
-  // card. The 300ms mini-modal delay is therefore the debounce window: quick
-  // cursor passes consume no video bandwidth.
   const deferredAssets = useDeferredMediaAssets(
     { ...video, id },
     mType,
@@ -144,7 +139,6 @@ export default function VideoItemWithHover({
     video?.embedded_title_treatment ||
     video?.has_embedded_title_treatment
   );
-  const safeLegacyLandscape = legacyLandscapeEmbedded ? legacyLandscape : null;
 
   const automaticLandscape = firstNonTmdbArtwork(
     automaticAssets?.backdrop_path,
@@ -161,9 +155,9 @@ export default function VideoItemWithHover({
     () => unique([
       automaticLandscape,
       mappedBackdrop,
-      safeLegacyLandscape,
+      legacyLandscape,
     ]),
-    [automaticLandscape, mappedBackdrop, safeLegacyLandscape]
+    [automaticLandscape, mappedBackdrop, legacyLandscape]
   );
 
   const title = automaticAssets?.title || video?.title || video?.name || "";
@@ -176,8 +170,7 @@ export default function VideoItemWithHover({
       window.scrollTo(0, 0);
       const ep = watch && typeSlug === "tv" ? `?s=${watch.season || 1}&e=${watch.episode || 1}` : "";
       navigate(`/${MAIN_PATH.watch}/${typeSlug}/${id}${ep}`);
-    },
-    [navigate, typeSlug, id, watch]
+    }, [navigate, typeSlug, id, watch]
   );
 
   const goDetail = useCallback(
@@ -186,15 +179,13 @@ export default function VideoItemWithHover({
       event?.stopPropagation?.();
       window.scrollTo(0, 0);
       navigate(detailHref);
-    },
-    [navigate, detailHref]
+    }, [navigate, detailHref]
   );
 
   const handleEnter = useCallback(
     (event?: any) => {
       if (!suppressHover) onEnter(event);
-    },
-    [suppressHover, onEnter]
+    }, [suppressHover, onEnter]
   );
 
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
@@ -204,9 +195,6 @@ export default function VideoItemWithHover({
        assets?.preview_video_url)
     : null;
 
-  // During the pointer-intent delay warm only an HLS manifest. TrailerPlayer is
-  // not mounted until the mini-modal opens, so media segments are not requested
-  // during a quick pass across the row.
   useEffect(() => {
     if (!intent || open || !trailerUrl || !/\.m3u8(?:$|\?)/i.test(String(trailerUrl))) return;
     const controller = new AbortController();
@@ -226,15 +214,20 @@ export default function VideoItemWithHover({
     video?.logo
   );
 
-  const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || safeLegacyLandscape;
+  const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
   const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
   const staticReady = !!(
     automaticAssets?.card_ready ||
+    automaticLandscape ||
     mappedBackdrop ||
-    safeLegacyLandscape
+    legacyLandscape
+  );
+  const embeddedTitleTreatment = !!(
+    automaticAssets?.backdrop_embedded_title_treatment ||
+    (!automaticLandscape && !!mappedBackdrop) ||
+    (!automaticLandscape && !mappedBackdrop && legacyLandscapeEmbedded)
   );
 
-  // A public card is never rendered while it only has a clean/untitled image.
   if (!staticReady || !imageCandidates.length) return null;
 
   return (
@@ -244,8 +237,8 @@ export default function VideoItemWithHover({
         imageUrl={imageCandidates[0] || null}
         imageCandidates={imageCandidates.slice(1)}
         fallbackImageUrl={null}
-        logoUrl={null}
-        embeddedTitleTreatment
+        logoUrl={hoverLogoUrl}
+        embeddedTitleTreatment={embeddedTitleTreatment}
         title={title}
         href={detailHref}
         onClick={goDetail}
