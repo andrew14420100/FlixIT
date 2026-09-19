@@ -85,13 +85,17 @@ def _annotate(asset: Optional[dict]) -> Optional[dict]:
 
 
 def _logo_locale(asset: dict) -> str:
-    """Return it / other / neutral from the Netflix artwork key."""
+    """Classify Netflix title logos for IT -> EN -> neutral -> other priority."""
     key = str(asset.get("key") or "").strip().lower()
     match = re.search(r"\|([a-z]{2}(?:-[a-z]{2})?)$", key)
     if not match:
         return "neutral"
     lang = match.group(1)
-    return "it" if lang == "it" or lang.startswith("it-") else "other"
+    if lang == "it" or lang.startswith("it-"):
+        return "it"
+    if lang == "en" or lang.startswith("en-"):
+        return "en"
+    return "other"
 
 
 def _best_logo(assets: list[dict], _existing=None) -> Optional[dict]:
@@ -103,10 +107,12 @@ def _best_logo(assets: list[dict], _existing=None) -> Optional[dict]:
         return None
 
     italian = [a for a in logos if _logo_locale(a) == "it"]
+    english = [a for a in logos if _logo_locale(a) == "en"]
     neutral = [a for a in logos if _logo_locale(a) == "neutral"]
-    logos = italian or neutral
-    if not logos:
-        return None
+    # Match the Detail-page behavior requested by the project: prefer Italian,
+    # then English, then a language-neutral treatment, and finally any genuine
+    # Netflix title logo instead of fabricating text over the card.
+    logos = italian or english or neutral or logos
 
     kind_weight = {
         "titleLogoUnbranded": 3,
