@@ -17,6 +17,13 @@ from server_core import *  # noqa: F401,F403 - preserve existing imports/contrac
 if getattr(_core, "TMDB_API_KEY", None):
     os.environ.setdefault("TMDB_API_KEY", str(_core.TMDB_API_KEY))
 
+# Upgrade the existing public media-assets pipeline in place. The wrapper keeps
+# the same API contract, but lazily refreshes each cached title once and selects
+# the largest native TMDB poster/backdrop/logo available. No artificial upscale.
+from services.media_asset_quality import install_max_quality_media_assets
+
+install_max_quality_media_assets(_core)
+
 from services.omni_process import omni_lifespan, omni_status
 
 
