@@ -1,0 +1,33 @@
+[data-testid="hero-audio-toggle"],
+[data-testid$="-toggle-mute"] {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  min-height: 34px !important;
+  border-radius: 50% !important;
+  border: 2px solid rgba(255,255,255,.68) !important;
+  background: rgba(24,24,24,.55) !important;
+  color: #fff !important;
+  padding: 7px !important;
+  display: inline-grid !important;
+  place-items: center !important;
+  backdrop-filter: blur(3px) !important;
+  -webkit-backdrop-filter: blur(3px) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+[data-testid="hero-audio-toggle"]:hover,
+[data-testid$="-toggle-mute"]:hover {
+  border-color: #fff !important;
+  background: rgba(42,42,42,.82) !important;
+  transform: none !important;
+}
+
+[data-testid="hero-audio-toggle"] svg,
+[data-testid$="-toggle-mute"] svg {
+  width: 100% !important;
+  height: 100% !important;
+  font-size: 20px !important;
+  display: block !important;
+}
