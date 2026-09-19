@@ -11,18 +11,6 @@ import HoverTrailerOverlay from "./HoverTrailerOverlay";
 import "./NetflixMiniModalExact.css";
 import NetflixTop10RankSvg from "./NetflixTop10RankSvg";
 
-function responsivePosterSet(url?: string | null) {
-  if (!url) return undefined;
-  const match = String(url).match(/^(https:\/\/image\.tmdb\.org\/t\/p\/)(?:original|w\d+)(\/.*)$/i);
-  if (!match) return undefined;
-  const [, base, path] = match;
-  return [
-    `${base}w342${path} 342w`,
-    `${base}w500${path} 500w`,
-    `${base}w780${path} 780w`,
-  ].join(", ");
-}
-
 function unique(values: Array<string | null | undefined>) {
   const seen = new Set<string>();
   return values.filter((value): value is string => {
@@ -124,7 +112,6 @@ export default function NetflixRankedCardWithHover({
   const [posterIndex, setPosterIndex] = useState(0);
   useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
   const posterUrl = posterCandidates[posterIndex] || "";
-  const posterSrcSet = useMemo(() => responsivePosterSet(posterUrl), [posterUrl]);
 
   const title = automaticAssets?.title || item?.title || item?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${normalizedId}`;
@@ -192,8 +179,6 @@ export default function NetflixRankedCardWithHover({
             {posterUrl ? (
               <img
                 src={posterUrl}
-                srcSet={posterSrcSet}
-                sizes="(max-width: 800px) 25vw, 9vw"
                 alt=""
                 draggable={false}
                 loading="lazy"
