@@ -12,6 +12,7 @@ is still preserved as metadata and is never used to enable playback.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from services.netflix_artwork import (
@@ -83,11 +84,31 @@ def _annotate(asset: Optional[dict]) -> Optional[dict]:
     }
 
 
+def _logo_locale(asset: dict) -> str:
+    """Return it / other / neutral from the Netflix artwork key."""
+    key = str(asset.get("key") or "").strip().lower()
+    match = re.search(r"\|([a-z]{2}(?:-[a-z]{2})?)$", key)
+    if not match:
+        return "neutral"
+    lang = match.group(1)
+    return "it" if lang == "it" or lang.startswith("it-") else "other"
+
+
 def _best_logo(assets: list[dict], _existing=None) -> Optional[dict]:
     logos = [
         a for a in (assets or [])
         if a.get("available", True) and a.get("url") and a.get("type") in LOGO_TYPES
     ]
+    if not logos:
+        return None
+
+    # Netflix is requested with x-netflix.context.locales=it-IT. When the asset
+    # key explicitly carries a language, never surface an English/foreign title
+    # logo on the Italian UI. Neutral keys are retained only as a fallback for
+    # language-independent artwork.
+    italian = [a for a in logos if _logo_locale(a) == "it"]
+    neutral = [a for a in logos if _logo_locale(a) == "neutral"]
+    logos = italian or neutral
     if not logos:
         return None
 
@@ -297,9 +318,6 @@ async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int)
             if not nid:
                 continue
 
-            # Search suggestions can omit releaseYear even for an exact title.
-            # Resolve metadata first so the automatic match remains title+year
-            # strict whenever Netflix exposes a year.
             if not _year(enriched.get("year")):
                 try:
                     entity = await self.provider.metadata(nid)
@@ -359,9 +377,6 @@ async def _search_exact_without_region_gate(self, media_type: str, tmdb_id: int)
     playable = entity.get("isAvailable")
     artwork_only = playable is False
 
-    # A successful authenticated metadata response plus a strict title/year
-    # match is sufficient for artwork. isAvailable controls playback/catalog
-    # availability only; it must not blank an otherwise valid cover/logo.
     return {
         **base,
         "status": "matched",
