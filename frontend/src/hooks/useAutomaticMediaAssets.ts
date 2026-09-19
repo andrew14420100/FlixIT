@@ -4,9 +4,9 @@ import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
-// Kept for compatibility with older imports. Public artwork no longer resolves
-// relative/TMDB paths through this base URL.
-export const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/";
+// Compatibility export for older components. It is intentionally empty so a
+// legacy relative image path can never be expanded into an image.tmdb.org URL.
+export const TMDB_IMAGE_BASE = "";
 const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v4";
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
