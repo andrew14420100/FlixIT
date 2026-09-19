@@ -23,16 +23,17 @@ function heroViewport() {
 }
 
 /**
- * Hero identity/detail/assets come from the public automatic backend cache.
- * Trailer playback has its own shared React Query key inside HeroSection, so
- * this hook deliberately does not issue duplicate trailer/artwork/admin calls.
+ * Hero identity/detail/custom editorial fields come from /api/public/hero.
+ * Visual assets deliberately do not: HeroSection must use the exact same unified
+ * non-TMDB resolver as cards, Top 10 and Detail so provider choice/logo quality
+ * never diverges between surfaces.
  */
 export function useHeroData() {
   const profile = heroProfile();
   const viewport = heroViewport();
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings', profile, viewport],
+    queryKey: ['hero-settings-v2', profile, viewport],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
@@ -42,7 +43,12 @@ export function useHeroData() {
         if (!response.ok) return null;
         const data = await response.json();
         if (!data?.contentId) return null;
-        return { ...data, mediaType: data.mediaType || 'tv' };
+        const { assets: _legacyVisualAssets, ...editorial } = data;
+        return {
+          ...editorial,
+          assets: null,
+          mediaType: data.mediaType || 'tv',
+        };
       } catch {
         return null;
       }
