@@ -24,9 +24,6 @@ BLOCKED_HOST_SUFFIXES = (
 MIN_TRAILER_HEIGHT = 720
 PREFERRED_TRAILER_HEIGHT = 2160
 MAX_TRAILER_HEIGHT = 2160
-# Provider pages sometimes expose 5-10 second autoplay previews. When duration
-# is known, those are not treated as trailers. Unknown duration remains usable
-# so providers that cannot expose runtime are not accidentally disabled.
 MIN_KNOWN_TRAILER_DURATION_SECONDS = 20.0
 
 
@@ -230,7 +227,7 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Prefer full/real trailers, then choose the best native quality."""
+    """Prefer Italian audio, then full trailers and the best native quality."""
     height = int(candidate.height or 0)
     bitrate = int(candidate.bitrate or 0)
     is_hdr = bool(candidate.hdr or candidate.dolby_vision)
@@ -238,6 +235,7 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
     if not hdr_supported and is_hdr:
         hdr_score = -1
     return (
+        language_rank(candidate.audio_language),
         duration_rank(candidate),
         type_rank(candidate.trailer_type),
         1 if candidate.official else 0,
@@ -245,7 +243,6 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
         hdr_score,
         bitrate,
         codec_rank(candidate.codec),
-        language_rank(candidate.audio_language),
         round(float(candidate.confidence or 0), 4),
         int(candidate.audio_bitrate or 0),
         float(candidate.fps or 0),
@@ -253,11 +250,14 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
 
 
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
-    """Pick a real trailer first, then max native quality up to 2160p/4K UHD."""
+    """Pick Italian audio whenever present, then the best real/native trailer."""
     usable = [c for c in candidates if candidate_is_usable(c)]
     if not usable:
         return None
-    return max(usable, key=lambda c: candidate_sort_key(c, hdr_supported=hdr_supported))
+
+    italian = [c for c in usable if language_rank(c.audio_language) == 3]
+    pool = italian or usable
+    return max(pool, key=lambda c: candidate_sort_key(c, hdr_supported=hdr_supported))
 
 
 def perfect_candidate(candidate: TrailerCandidate) -> bool:
