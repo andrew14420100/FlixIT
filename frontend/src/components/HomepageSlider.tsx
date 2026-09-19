@@ -10,6 +10,7 @@ import NetflixRankedCardWithHover from "src/components/NetflixRankedCardWithHove
 import { ARROW_MAX_WIDTH } from "src/constant";
 import NetflixNavigationLink from "src/components/NetflixNavigationLink";
 import { MEDIA_TYPE } from "src/types/Common";
+import useArtworkBatch from "src/hooks/useArtworkBatch";
 
 const RootStyle = styled("div")(() => ({
   position: "relative",
@@ -106,10 +107,11 @@ export default function HomepageSlider({
     });
   }, [items]);
 
-  // React Slick's own lazyLoad delays <img> loading, but all 40-60 card React
-  // components were still mounted immediately. Each card carries observers,
-  // artwork queries and hover state. Keep about two screens plus a buffer alive
-  // and append more before the user reaches them.
+  const isTop10 = /top\s*10/i.test(title);
+
+  // React Slick's lazy image loading is not enough: without this cap every row
+  // still mounts dozens of card hooks. Keep about two screens alive and append
+  // more just before navigation reaches them.
   const minimumBatch = Math.min(visibleItems.length, Math.max(tiles * 2 + 2, 14));
   const [renderedCount, setRenderedCount] = useState(minimumBatch);
 
@@ -137,15 +139,25 @@ export default function HomepageSlider({
     [visibleItems, renderedCount]
   );
 
-  const isTop10 = /top\s*10/i.test(title);
-  const pageCount = Math.max(1, Math.ceil(visibleItems.length / tiles));
+  // One POST per <=40 titles seeds all individual card query keys. A title that
+  // still has no embedded title-treatment is deliberately not mounted at all.
+  const artworkBatch = useArtworkBatch(renderedItems, renderedItems.length > 0);
+  const publishedItems = useMemo(
+    () =>
+      renderedItems.filter((item) =>
+        artworkBatch.isReady(item, isTop10 ? "poster" : "landscape")
+      ),
+    [renderedItems, artworkBatch.data, isTop10]
+  );
+
+  const pageCount = Math.max(1, Math.ceil(publishedItems.length / tiles));
   const activePage = Math.min(
     pageCount - 1,
     Math.floor(activeSlideIndex / Math.max(1, tiles))
   );
   const isEnd =
-    visibleItems.length <= tiles ||
-    activeSlideIndex >= Math.max(0, visibleItems.length - tiles);
+    publishedItems.length <= tiles ||
+    activeSlideIndex >= Math.max(0, publishedItems.length - tiles);
 
   const settings: Settings = {
     speed: 750,
@@ -185,8 +197,6 @@ export default function HomepageSlider({
 
   const handleNext = () => {
     ensureRenderedThrough(activeSlideIndex + tiles);
-    // Give React Slick one task to observe the newly appended children before
-    // asking it to advance into them.
     window.setTimeout(() => sliderRef.current?.slickNext(), 0);
   };
 
@@ -343,9 +353,10 @@ export default function HomepageSlider({
               activeSlideIndex={activeSlideIndex}
             >
               <StyledSlider ref={sliderRef} {...settings} theme={theme}>
-                {renderedItems.map((item, index) => {
+                {publishedItems.map((item, index) => {
                   const key = sliderItemKey(item) || `item-${index}`;
                   const suppressHover = isSliding;
+                  const originalRank = Math.max(1, visibleItems.indexOf(item) + 1);
 
                   return (
                     <Box
@@ -365,7 +376,7 @@ export default function HomepageSlider({
                             title: item.title || item.name,
                             name: item.title || item.name,
                           }}
-                          rank={index + 1}
+                          rank={originalRank}
                           mediaType={
                             item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
                           }
