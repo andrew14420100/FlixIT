@@ -5,12 +5,11 @@ Static catalogue cards are intentionally stricter than Hero/Detail:
   contains a title treatment;
 - a Top 10 poster is published only when its portrait image already contains the
   title treatment;
+- every published card must also have a genuine separate logo available for its
+  hover trailer;
 - clean artwork + a separate logo remains valid for Hero, Detail and hover;
 - Italian merchandising art outranks higher-resolution foreign art;
 - no TMDB image URL is introduced here.
-
-The policy is installed as a small monkey-patch so the provider implementations
-remain isolated in ``official_artwork.py``.
 """
 from __future__ import annotations
 
@@ -39,7 +38,6 @@ def _provider_locale(provider: dict, role: str) -> str:
         return "neutral"
 
     source = str(provider.get("source") or "")
-    # Apple is explicitly queried through the Italian storefront/locale.
     if source == "apple_itunes_it":
         return "it"
 
@@ -52,7 +50,7 @@ def _provider_locale(provider: dict, role: str) -> str:
 
 
 def _locale_rank(value: str) -> int:
-    # User-facing merchandising language is more important than resolution.
+    # Merchandising language comes before resolution by explicit product policy.
     return {
         "it": 500,
         "neutral": 350,
@@ -81,12 +79,7 @@ def _integer(value: Any) -> int:
 
 
 def _exact_visual(provider: dict, role: str, *, embedded_only: bool) -> Optional[dict]:
-    """Build a candidate without rotating poster<->landscape.
-
-    Static cards never crop a portrait into a landscape or vice versa. If the
-    right official variant does not exist yet, the card simply waits for the
-    next provider/daily refresh.
-    """
+    """Build a candidate without rotating poster<->landscape."""
     url = _safe_url(provider.get(f"{role}_url"))
     if not url:
         return None
@@ -130,7 +123,7 @@ def _choose_static(providers: list[dict], role: str) -> Optional[dict]:
     if not candidates:
         return None
 
-    # Language first by design: Italian 1080p beats English/unknown 4K.
+    # Italian 1080p intentionally beats English/unknown 4K.
     return max(
         candidates,
         key=lambda row: (
@@ -143,11 +136,32 @@ def _choose_static(providers: list[dict], role: str) -> Optional[dict]:
     )
 
 
+def _hero_visual(provider: dict) -> Optional[dict]:
+    """Prefer an explicit clean Hero variant when a provider exposes one."""
+    url = _safe_url(provider.get("hero_landscape_url"))
+    if url:
+        width = _integer(provider.get("hero_landscape_width") or provider.get("landscape_width"))
+        height = _integer(provider.get("hero_landscape_height") or provider.get("landscape_height"))
+        if not width or not height or width / max(1, height) >= 1.35:
+            return {
+                "url": url,
+                "source": provider.get("source"),
+                "locale": _provider_locale(provider, "landscape"),
+                "width": width,
+                "height": height,
+                "native_long_edge": max(width, height),
+                "area": width * height,
+                "embedded_title_treatment": bool(provider.get("hero_embedded_title_treatment")),
+                "orientation_score": 3 if width and height else 1,
+            }
+    return _exact_visual(provider, "landscape", embedded_only=False)
+
+
 def _choose_hero(providers: list[dict], logo_url: Optional[str]) -> Optional[dict]:
     """Hero/Detail may use clean 16:9 art plus the genuine separate logo."""
     candidates = []
     for provider in providers:
-        row = _exact_visual(provider, "landscape", embedded_only=False)
+        row = _hero_visual(provider)
         if not row:
             continue
         clean_with_logo = bool(logo_url and not row.get("embedded_title_treatment"))
@@ -158,8 +172,6 @@ def _choose_hero(providers: list[dict], logo_url: Optional[str]) -> Optional[dic
     return max(
         candidates,
         key=lambda row: (
-            # Netflix-style clean background + title treatment is preferred for
-            # Hero/Detail when it actually exists.
             1 if row.get("clean_with_logo") else 0,
             _locale_rank(row.get("locale")),
             int(row.get("native_long_edge") or 0),
@@ -175,8 +187,6 @@ def install_artwork_card_policy() -> None:
         return
     _INSTALLED = True
 
-    # _cached() reads this module-global value at runtime, so bumping it here
-    # invalidates v3/v3b decisions without deleting Mongo data.
     artwork_module.SOURCE_VERSION = POLICY_VERSION
 
     async def resolve(self: OfficialArtworkResolver, media_type: str, tmdb_id: int, *, force: bool = False) -> dict:
@@ -206,6 +216,12 @@ def install_artwork_card_policy() -> None:
             static_poster = _choose_static(providers, "poster")
             hero_landscape = _choose_hero(providers, logo_url) or static_landscape
 
+            # A title-bearing image is mandatory for static cards, and a separate
+            # genuine logo is also mandatory because the hover trailer always uses
+            # that logo during its first five seconds.
+            landscape_ready = bool(static_landscape and logo_url)
+            poster_ready = bool(static_poster and logo_url)
+
             resolved = {
                 "active": bool(static_landscape or static_poster or hero_landscape or logo_url),
                 "type": media_type,
@@ -213,8 +229,6 @@ def install_artwork_card_policy() -> None:
                 "title": identity.get("title"),
                 "year": identity.get("year"),
 
-                # Backward-compatible public card fields: these are now strictly
-                # title-bearing merchandising variants.
                 "backdrop_url": (static_landscape or {}).get("url"),
                 "poster_url": (static_poster or {}).get("url"),
                 "backdrop_source": (static_landscape or {}).get("source"),
@@ -228,12 +242,11 @@ def install_artwork_card_policy() -> None:
                 "backdrop_embedded_title_treatment": bool(static_landscape),
                 "poster_embedded_title_treatment": bool(static_poster),
                 "embedded_title_treatment": bool(static_landscape),
-                "landscape_card_ready": bool(static_landscape),
-                "poster_card_ready": bool(static_poster),
-                "card_ready": bool(static_landscape),
-                "top10_ready": bool(static_poster),
+                "landscape_card_ready": landscape_ready,
+                "poster_card_ready": poster_ready,
+                "card_ready": landscape_ready,
+                "top10_ready": poster_ready,
 
-                # Hero/Detail/hover may keep the Netflix-style two-layer layout.
                 "hero_backdrop_url": (hero_landscape or {}).get("url"),
                 "detail_backdrop_url": (hero_landscape or {}).get("url"),
                 "hero_backdrop_source": (hero_landscape or {}).get("source"),
@@ -245,7 +258,7 @@ def install_artwork_card_policy() -> None:
                 "logo_source": logo_source,
                 "logo_locale": logo_locale,
 
-                "complete": bool(static_landscape and static_poster),
+                "complete": bool(landscape_ready and poster_ready),
                 "providers": [
                     {
                         "source": provider.get("source"),
@@ -259,7 +272,7 @@ def install_artwork_card_policy() -> None:
                     }
                     for provider in providers
                 ],
-                "policy": "static_embedded-title-treatment_it-first_then-native-quality_no-tmdb-images",
+                "policy": "static-embedded-title-treatment_plus-hover-logo_it-first_then-native-quality_no-tmdb-images",
                 "version": POLICY_VERSION,
             }
 
