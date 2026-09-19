@@ -2,8 +2,7 @@
 /**
  * CatalogPage - griglia con filtri per genere, riutilizzata da Film e Serie TV.
  * Gestisce la paginazione a scorrimento infinito appoggiandosi allo slice `discover`
- * (stesse chiamate TMDB usate dalle righe della home), con barra filtri (categorie
- * predefinite + generi TMDB) e le stesse card hover del resto del sito.
+ * e pubblica soltanto card che hanno già un vero title-treatment incorporato.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Box from "@mui/material/Box";
@@ -25,6 +24,7 @@ import {
 import VideoItemWithHover from "src/components/VideoItemWithHover";
 import useIntersectionObserver from "src/hooks/useIntersectionObserver";
 import { useAvailableItems } from "src/hooks/useAvailability";
+import useArtworkBatch from "src/hooks/useArtworkBatch";
 
 interface CatalogPageProps {
   mediaType: MEDIA_TYPE;
@@ -36,7 +36,6 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
   const dispatch = useAppDispatch();
   const { data: genres = [] } = useGetGenresQuery(mediaType);
 
-  // active filter: a predefined category (apiString) or a TMDB genre (numeric id)
   const [active, setActive] = useState(() => ({ type: "custom", value: categories[0]?.apiString }));
 
   const itemKey = active.type === "genre" ? active.value : active.value;
@@ -79,7 +78,11 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
 
   const results = pageState?.results ?? [];
   const availableResults = useAvailableItems(results, mediaType);
-  const visible = useMemo(() => availableResults.filter((v) => !!v.backdrop_path || !!v.poster_path), [availableResults]);
+  const artworkBatch = useArtworkBatch(availableResults, availableResults.length > 0);
+  const visible = useMemo(
+    () => availableResults.filter((item) => artworkBatch.isReady(item, "landscape")),
+    [availableResults, artworkBatch.data]
+  );
 
   const isActiveFilter = (type: string, value: any) => active.type === type && active.value === value;
   const chipSx = (selected: boolean) => ({
@@ -95,6 +98,8 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
     if (isActiveFilter(type, value)) return;
     setActive({ type, value });
   };
+
+  const waitingForArtwork = availableResults.length > 0 && artworkBatch.isPending && visible.length === 0;
 
   return (
     <Box data-testid="catalog-page" sx={{ minHeight: "100vh", bgcolor: "#050505", pt: `${APP_BAR_HEIGHT + 24}px`, pb: 6 }}>
@@ -115,13 +120,13 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
           ))}
         </Stack>
 
-        {!pageState || (pageState.page === 0 && visible.length === 0) ? (
+        {!pageState || (pageState.page === 0 && availableResults.length === 0) || waitingForArtwork ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 10 }}>
             <CircularProgress sx={{ color: "#E50914" }} />
           </Box>
         ) : visible.length === 0 ? (
           <Typography data-testid="catalog-empty" sx={{ color: "rgba(255,255,255,0.6)", py: 8, textAlign: "center" }}>
-            Nessun titolo disponibile per questo filtro.
+            Nessun titolo con artwork completo disponibile per questo filtro.
           </Typography>
         ) : (
           <Grid container spacing={2} data-testid="catalog-grid">
