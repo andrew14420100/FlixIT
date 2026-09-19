@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "direct-it-v3";
+const TRAILER_QUERY_VERSION = "direct-it-en-v4";
 
 function directTrailerUrl(data: any) {
   for (const value of [data?.trailer_url, data?.manifest_url, data?.trailer_key]) {
@@ -66,9 +66,8 @@ export default function useResolvedTrailer(
   const candidateUrl = directTrailerUrl(data);
   const resolverEnabled = data?.enabled !== false;
   const resolverAvailable = data?.available !== false;
-  // FLIX-IT now accepts only direct MP4/HLS trailer media here. A legacy
-  // YouTube id may still exist in old backend cache, but it is deliberately not
-  // surfaced to Hero/hover and therefore can never become the playback source.
+  // Only direct MP4/HLS media is accepted. The backend resolves Italian first,
+  // then English; YouTube ids are never surfaced as playback sources.
   const url = resolverEnabled && resolverAvailable ? candidateUrl : null;
 
   return {
