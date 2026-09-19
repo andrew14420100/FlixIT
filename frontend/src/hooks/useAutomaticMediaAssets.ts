@@ -4,10 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
-// Compatibility export for older components. It is intentionally empty so a
-// legacy relative image path can never be expanded into an image.tmdb.org URL.
 export const TMDB_IMAGE_BASE = "";
-const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v5";
+const MEDIA_ASSET_QUALITY_VERSION = "netflix-native-v6-it";
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -34,10 +32,6 @@ export function nonTmdbImageUrl(value: any) {
   return text;
 }
 
-/**
- * Compatibility helper retained under the old name. It now deliberately
- * rejects TMDB/relative paths and returns only already-resolved non-TMDB assets.
- */
 export function tmdbImageUrl(value: any, _size = "original") {
   return nonTmdbImageUrl(value);
 }
@@ -95,25 +89,17 @@ export default function useAutomaticMediaAssets(
     item?.image,
     item?.artwork
   );
-  const savedLogo = firstNonTmdbArtwork(
-    item?.contextualArtwork?.logo,
-    item?.logo_path,
-    item?.logo,
-    item?.title_logo_path,
-    item?.titleLogoPath
-  );
 
   const fallback = useMemo(() => ({
     tmdbId: id,
     type: typeSlug,
     title: item?.title || item?.name || "",
-    // Required source priority: Netflix -> historical mapping/CDN -> other
-    // saved non-TMDB artwork -> nothing. Lower-resolution Netflix artwork is
-    // kept when it is the best Netflix variant available.
     backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
     poster_path: netflixPoster || mappedPoster || savedPoster || null,
     titled_backdrop_path: netflixLandscape || mappedBackdrop || savedLandscape || null,
-    logo_path: savedLogo || null,
+    // Title logos are intentionally not inherited from generic legacy fields.
+    // The live Netflix resolver returns only Italian/language-neutral logos.
+    logo_path: null,
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
@@ -130,7 +116,6 @@ export default function useAutomaticMediaAssets(
     mappedPoster,
     savedLandscape,
     savedPoster,
-    savedLogo,
     item?.runtime,
     item?.number_of_seasons,
     item?.certification,
@@ -164,9 +149,6 @@ export default function useAutomaticMediaAssets(
       const media = metadataResult.status === "fulfilled" ? (metadataResult.value || {}) : {};
       const netflix = netflixResult.status === "fulfilled" ? (netflixResult.value || {}) : {};
 
-      // Keep metadata/trailer information from /media-assets, but deliberately
-      // drop every image field produced by that endpoint so TMDB can never become
-      // a visual fallback anywhere that consumes this shared hook.
       const {
         backdrop_path: _dropBackdrop,
         poster_path: _dropPoster,
@@ -186,7 +168,7 @@ export default function useAutomaticMediaAssets(
         backdrop_path: netflixArtwork || fallback.backdrop_path,
         titled_backdrop_path: netflixArtwork || fallback.titled_backdrop_path,
         poster_path: fallback.poster_path,
-        logo_path: netflixLogo || fallback.logo_path,
+        logo_path: netflixLogo || null,
         netflix_artwork_url: netflixArtwork || null,
         netflix_logo_url: netflixLogo || null,
         image_quality: netflix?.artwork?.quality_label || "max-native",
