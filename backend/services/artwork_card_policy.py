@@ -50,7 +50,6 @@ def _provider_locale(provider: dict, role: str) -> str:
 
 
 def _locale_rank(value: str) -> int:
-    # Merchandising language comes before resolution by explicit product policy.
     return {
         "it": 500,
         "neutral": 350,
@@ -79,7 +78,6 @@ def _integer(value: Any) -> int:
 
 
 def _exact_visual(provider: dict, role: str, *, embedded_only: bool) -> Optional[dict]:
-    """Build a candidate without rotating poster<->landscape."""
     url = _safe_url(provider.get(f"{role}_url"))
     if not url:
         return None
@@ -137,7 +135,6 @@ def _choose_static(providers: list[dict], role: str) -> Optional[dict]:
 
 
 def _hero_visual(provider: dict) -> Optional[dict]:
-    """Prefer an explicit clean Hero variant when a provider exposes one."""
     url = _safe_url(provider.get("hero_landscape_url"))
     if url:
         width = _integer(provider.get("hero_landscape_width") or provider.get("landscape_width"))
@@ -158,14 +155,14 @@ def _hero_visual(provider: dict) -> Optional[dict]:
 
 
 def _choose_hero(providers: list[dict], logo_url: Optional[str]) -> Optional[dict]:
-    """Hero/Detail may use clean 16:9 art plus the genuine separate logo."""
     candidates = []
     for provider in providers:
         row = _hero_visual(provider)
         if not row:
             continue
-        clean_with_logo = bool(logo_url and not row.get("embedded_title_treatment"))
-        row["clean_with_logo"] = clean_with_logo
+        row["clean_with_logo"] = bool(
+            logo_url and not row.get("embedded_title_treatment")
+        )
         candidates.append(row)
     if not candidates:
         return None
@@ -188,6 +185,79 @@ def install_artwork_card_policy() -> None:
     _INSTALLED = True
 
     artwork_module.SOURCE_VERSION = POLICY_VERSION
+
+    # The base Apple adapter previously fell back from coverArt16X9/coverArt to
+    # shelfImage/previewFrame and then marked every fallback as title-bearing.
+    # That is too loose for static Netflix-style cards. Keep the exact Italian
+    # merchandising variants for static use, while exposing shelf/preview only as
+    # a Hero/Detail background where a separate title logo is allowed.
+    async def strict_apple(self: OfficialArtworkResolver, identity: dict) -> dict:
+        if identity.get("type") != "movie":
+            return {}
+        try:
+            async with artwork_module.provider_client() as http:
+                matched = await self.apple._match_store_movie(http, identity)
+                if not matched:
+                    return {}
+                item, confidence = matched
+                movie_id = str(item.get("id") or "")
+                if not movie_id:
+                    return {}
+                detail = await self.apple._json(
+                    http,
+                    f"uts/v3/movies/{movie_id}",
+                    includePreviewAssets="true",
+                )
+                content = ((detail or {}).get("data") or {}).get("content") or {}
+                images = {}
+                images.update(item.get("images") or {})
+                images.update(content.get("images") or {})
+
+                poster = artwork_module._apple_template(
+                    images.get("coverArt"), width=1200, height=1800
+                )
+                landscape = artwork_module._apple_template(
+                    images.get("coverArt16X9"), width=1920, height=1080
+                )
+
+                hero = None
+                hero_embedded = False
+                for key in ("coverArt16X9", "shelfImage", "previewFrame", "coverArt"):
+                    hero = artwork_module._apple_template(
+                        images.get(key), width=1920, height=1080
+                    )
+                    if hero:
+                        hero_embedded = key == "coverArt16X9"
+                        break
+
+                logo = artwork_module._logo_from_apple_images(images)
+                if not poster and not landscape and not hero and not logo:
+                    return {}
+                return {
+                    "source": "apple_itunes_it",
+                    "provider_id": movie_id,
+                    "confidence": round(float(confidence or 0), 4),
+                    "landscape_url": landscape,
+                    "poster_url": poster,
+                    "hero_landscape_url": hero,
+                    "logo_url": logo,
+                    "logo_locale": "it" if logo else None,
+                    "landscape_locale": "it" if landscape else None,
+                    "poster_locale": "it" if poster else None,
+                    "landscape_width": 1920 if landscape else None,
+                    "landscape_height": 1080 if landscape else None,
+                    "poster_width": 1200 if poster else None,
+                    "poster_height": 1800 if poster else None,
+                    "hero_landscape_width": 1920 if hero else None,
+                    "hero_landscape_height": 1080 if hero else None,
+                    "landscape_embedded_title_treatment": bool(landscape),
+                    "poster_embedded_title_treatment": bool(poster),
+                    "hero_embedded_title_treatment": hero_embedded,
+                }
+        except Exception:
+            return {}
+
+    OfficialArtworkResolver._apple = strict_apple
 
     async def resolve(self: OfficialArtworkResolver, media_type: str, tmdb_id: int, *, force: bool = False) -> dict:
         media_type = "tv" if media_type == "tv" else "movie"
@@ -216,9 +286,6 @@ def install_artwork_card_policy() -> None:
             static_poster = _choose_static(providers, "poster")
             hero_landscape = _choose_hero(providers, logo_url) or static_landscape
 
-            # A title-bearing image is mandatory for static cards, and a separate
-            # genuine logo is also mandatory because the hover trailer always uses
-            # that logo during its first five seconds.
             landscape_ready = bool(static_landscape and logo_url)
             poster_ready = bool(static_poster and logo_url)
 
@@ -228,7 +295,6 @@ def install_artwork_card_policy() -> None:
                 "tmdbId": tmdb_id,
                 "title": identity.get("title"),
                 "year": identity.get("year"),
-
                 "backdrop_url": (static_landscape or {}).get("url"),
                 "poster_url": (static_poster or {}).get("url"),
                 "backdrop_source": (static_landscape or {}).get("source"),
@@ -246,7 +312,6 @@ def install_artwork_card_policy() -> None:
                 "poster_card_ready": poster_ready,
                 "card_ready": landscape_ready,
                 "top10_ready": poster_ready,
-
                 "hero_backdrop_url": (hero_landscape or {}).get("url"),
                 "detail_backdrop_url": (hero_landscape or {}).get("url"),
                 "hero_backdrop_source": (hero_landscape or {}).get("source"),
@@ -257,7 +322,6 @@ def install_artwork_card_policy() -> None:
                 "logo_url": logo_url,
                 "logo_source": logo_source,
                 "logo_locale": logo_locale,
-
                 "complete": bool(landscape_ready and poster_ready),
                 "providers": [
                     {
