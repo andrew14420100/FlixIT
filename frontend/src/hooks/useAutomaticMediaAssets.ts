@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
 
 export const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/";
+const MEDIA_ASSET_QUALITY_VERSION = "max-quality-v2";
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -11,9 +12,27 @@ export function mediaTypeSlug(mediaType: any, item?: any) {
     : "movie";
 }
 
+/**
+ * Return the highest-resolution TMDB asset requested by the caller.
+ *
+ * Legacy rows can already contain a fully-qualified TMDB URL such as w342,
+ * w500, w780 or w1280. Those URLs used to bypass the size argument and kept
+ * cards stuck on the old lower-resolution rendition. Normalize them back to the
+ * same file path and request `original` (the default) so cards, hover artwork,
+ * Top 10 and logos can use the maximum native asset TMDB actually exposes.
+ * Non-TMDB remote assets are kept untouched: we never fake an upscale.
+ */
 export function tmdbImageUrl(value: any, size = "original") {
   if (!value) return null;
   const raw = String(value);
+
+  const tmdbAbsolute = raw.match(
+    /^https:\/\/image\.tmdb\.org\/t\/p\/(?:original|w\d+)(\/.*)$/i
+  );
+  if (tmdbAbsolute) {
+    return `${TMDB_IMAGE_BASE}${size}${tmdbAbsolute[1]}`;
+  }
+
   if (/^https?:\/\//i.test(raw) || raw.startsWith("data:") || raw.startsWith("blob:")) {
     return raw;
   }
@@ -95,6 +114,7 @@ export default function useAutomaticMediaAssets(
     runtime: item?.runtime,
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
+    image_quality: "original",
   }), [
     id,
     typeSlug,
@@ -111,7 +131,10 @@ export default function useAutomaticMediaAssets(
   ]);
 
   const query = useQuery({
-    queryKey: ["media-assets", typeSlug, id],
+    // Versioning the key invalidates the previous 342/500/780/1280-oriented
+    // client cache once after deploy and automatically re-hydrates every card
+    // encountered by the UI from the authoritative media-assets endpoint.
+    queryKey: ["media-assets", MEDIA_ASSET_QUALITY_VERSION, typeSlug, id],
     queryFn: async ({ signal }: any) => {
       if (!id) return fallback;
       const response = await fetch(`/api/public/media-assets/${typeSlug}/${id}`, {
@@ -132,6 +155,7 @@ export default function useAutomaticMediaAssets(
         titled_backdrop_path:
           data?.titled_backdrop_path || fallback.titled_backdrop_path,
         logo_path: data?.logo_path || fallback.logo_path,
+        image_quality: "original",
       };
     },
     enabled: !!id && !!enabled,
