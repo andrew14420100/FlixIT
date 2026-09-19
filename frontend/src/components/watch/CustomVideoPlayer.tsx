@@ -39,9 +39,9 @@ const HLS_CONFIG = {
   maxBufferLength: 30,
   maxMaxBufferLength: 120,
   maxBufferSize: 60 * 1000 * 1000,
-  startFragPrefetch: true,       // fetch the first fragment while the level playlist is still parsing
-  capLevelToPlayerSize: true,    // never download 1080p into a 720px box
-  abrEwmaDefaultEstimate: 2_000_000, // start around 720p on unknown networks, ABR adjusts within seconds
+  startFragPrefetch: true,
+  capLevelToPlayerSize: true,
+  abrEwmaDefaultEstimate: 2_000_000,
   abrBandWidthUpFactor: 0.8,
   manifestLoadingTimeOut: 15000, manifestLoadingMaxRetry: 2, manifestLoadingRetryDelay: 800,
   levelLoadingTimeOut: 15000, levelLoadingMaxRetry: 3, levelLoadingRetryDelay: 800,
@@ -135,9 +135,37 @@ export default function CustomVideoPlayer({
     setAudioTrackId(-1);
 
     const useHls = type === "hls" || /\.m3u8(\?|$)/i.test(src) || /\/proxy\/hls/i.test(src);
-    const canNative = video.canPlayType("application/vnd.apple.mpegurl");
     let hls = null;
     let recoveryTimer = null;
+
+    // First try audible autoplay. If the browser rejects it because of autoplay
+    // policy, immediately retry muted so clicking "Guarda" still starts video.
+    const startAutoplay = () => {
+      if (!autoPlay || !video.paused) return;
+      video.autoplay = true;
+      setBuffering(true);
+      video.play().then(() => {
+        setBuffering(false);
+        setFatalError(null);
+      }).catch(async (err) => {
+        console.warn("[PLAYER] autoplay con audio fallito:", err?.name, err?.message);
+        if (err?.name !== "NotAllowedError") {
+          setBuffering(false);
+          return;
+        }
+        try {
+          video.muted = true;
+          setMuted(true);
+          await video.play();
+          setBuffering(false);
+          setFatalError(null);
+          console.info("[PLAYER] autoplay avviato muted per policy browser");
+        } catch (mutedErr) {
+          console.warn("[PLAYER] autoplay muted fallito:", mutedErr?.name, mutedErr?.message);
+          setBuffering(false);
+        }
+      });
+    };
 
     if (useHls && Hls.isSupported()) {
       hls = new Hls(HLS_CONFIG);
@@ -145,10 +173,6 @@ export default function CustomVideoPlayer({
       let networkRecoveries = 0;
       let mediaRecoveries = 0;
       const fail = (_msg) => {
-        // HLS fatal events are not allowed to create the player error overlay.
-        // hls.js may recover/reload the manifest or media after the event.
-        // The explicit video.play() promise is the source of truth for a
-        // user-visible playback failure.
         setBuffering(true);
         clearTimeout(fatalErrorTimerRef.current);
       };
@@ -158,34 +182,12 @@ export default function CustomVideoPlayer({
         const italian = tracks.findIndex(isItalianTrack);
         if (italian >= 0) hls.audioTrack = italian;
         setAudioTrackId(italian >= 0 ? italian : hls.audioTrack);
-
-        if (autoPlay) {
-          // Autoplay is intentionally audible, as in the original player.
-          // Do not force mute: if the browser permits autoplay, playback starts
-          // with the current volume. A browser autoplay rejection is not a
-          // player error and must never replace the player with an error screen.
-          video.autoplay = true;
-          setBuffering(true);
-          const start = () => {
-            if (!video.paused) return;
-            video.play().then(() => {
-              setBuffering(false);
-              setFatalError(null);
-            }).catch((err) => {
-              console.warn("[PLAYER] autoplay fallito:", err?.name, err?.message);
-              // The browser may reject audible autoplay. Leave the player
-              // mounted and let the user's Play button retry with a gesture.
-            });
-          };
-          if (video.readyState >= 2) start();
-          else video.addEventListener("canplay", start, { once: true });
-        }
+        startAutoplay();
       });
       hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_e, data) => setAudioTrackId(data?.id ?? hls.audioTrack));
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data?.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          // bounded recovery with backoff: 4 attempts max, then a clear error (never an endless spinner)
           if (networkRecoveries >= MAX_NETWORK_RECOVERIES) return fail("Connessione allo stream persa. Riprova.");
           networkRecoveries += 1;
           setBuffering(true);
@@ -207,22 +209,8 @@ export default function CustomVideoPlayer({
       // Safari/iOS native HLS or plain mp4
       video.src = src;
       if (autoPlay) {
-        // Keep autoplay audible; never force video.muted = true.
-        video.autoplay = true;
-        setBuffering(true);
-        const start = () => {
-          if (!video.paused) return;
-          video.play().then(() => {
-            setBuffering(false);
-            setFatalError(null);
-          }).catch((err) => {
-              console.warn("[PLAYER] autoplay fallito:", err?.name, err?.message);
-            // Audible autoplay can be rejected by the browser. This is not a
-            // playback error; the manual Play button remains available.
-          });
-        };
-        if (video.readyState >= 2) start();
-        else video.addEventListener("canplay", start, { once: true });
+        if (video.readyState >= 2) startAutoplay();
+        else video.addEventListener("canplay", startAutoplay, { once: true });
       }
     }
 
@@ -230,6 +218,7 @@ export default function CustomVideoPlayer({
       clearTimeout(recoveryTimer);
       clearTimeout(fatalErrorTimerRef.current);
       if (hls) { hls.destroy(); hlsRef.current = null; }
+      video.removeEventListener("canplay", startAutoplay);
       video.removeAttribute("src");
       video.load();
     };
@@ -281,15 +270,12 @@ export default function CustomVideoPlayer({
     const onEnd = () => { setPlaying(false); writeSavedTime(storageKey, video.duration || 0, video.duration || 0); onProgress?.(video.duration || 0, video.duration || 0); onEnded?.(); };
     const onVolume = () => { setMuted(video.muted); setVolume(video.volume); };
     const onErr = () => {
-      if (hlsRef.current) return; // hls.js reports its own errors
+      if (hlsRef.current) return;
       if (!userRequestedPlayRef.current) {
         setBuffering(true);
         return;
       }
       setBuffering(true);
-      // Do not show the fatal overlay here. A native media error can be
-      // emitted while the source is still attaching/loading.
-      // Explicit play() failure below handles genuine playback failures.
     };
 
     video.addEventListener("loadedmetadata", onLoadedMeta);
@@ -318,7 +304,6 @@ export default function CustomVideoPlayer({
       video.removeEventListener("volumechange", onVolume);
       video.removeEventListener("error", onErr);
     };
-    // volume/muted intentionally excluded: they are pushed imperatively below
   }, [storageKey, resumeTarget, onProgress, onEnded, onError, src]);
 
   // Save on unmount / tab hide
@@ -344,23 +329,17 @@ export default function CustomVideoPlayer({
         clearTimeout(fatalErrorTimerRef.current);
         setFatalError(null);
       }).catch((err) => {
-        // Do not replace the player with an error immediately. Some browsers
-        // reject play() while HLS is still attaching/loading. Keep the player
-        // in its loading state and let media/HLS events settle.
         const message = err?.name === "NotAllowedError"
           ? "La riproduzione è stata bloccata dal browser."
           : null;
 
         if (message) {
-          // A browser autoplay policy is not a stream failure. Keep the player
-          // visible; a later user click on Play can start it with audio.
           setBuffering(false);
           setFatalError(null);
         } else {
           setBuffering(true);
           setFatalError(null);
         }
-        // Never propagate autoplay/playback rejections to the parent page.
       });
     } else {
       v.pause();
@@ -390,7 +369,7 @@ export default function CustomVideoPlayer({
     if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
     if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
     else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-    else if (v?.webkitEnterFullscreen) v.webkitEnterFullscreen(); // iOS Safari
+    else if (v?.webkitEnterFullscreen) v.webkitEnterFullscreen();
   }, []);
   const selectAudioTrack = useCallback((id) => {
     if (hlsRef.current) hlsRef.current.audioTrack = id;
@@ -471,14 +450,12 @@ export default function CustomVideoPlayer({
         style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}
       />
 
-      {/* Buffering */}
       {buffering && !fatalError && (
         <Box data-testid="player-buffering" sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
           <CircularProgress size={64} thickness={3} sx={{ color: "#e50914" }} />
         </Box>
       )}
 
-      {/* Center play glyph when paused */}
       {!playing && !buffering && (
         <Box onClick={togglePlay} data-testid="player-center-play"
           sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", cursor: "pointer" }}>
@@ -488,10 +465,6 @@ export default function CustomVideoPlayer({
         </Box>
       )}
 
-      {/* Error */}
-      
-
-      {/* Top bar */}
       <Box sx={{ position: "absolute", top: 0, left: 0, right: 0, p: { xs: 2, md: 3 }, display: "flex", alignItems: "center", gap: 2,
         background: "linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)",
         opacity: showOverlay ? 1 : 0, transform: showOverlay ? "translateY(0)" : "translateY(-12px)", transition: "opacity 280ms ease, transform 280ms ease", pointerEvents: showOverlay ? "auto" : "none" }}>
@@ -507,7 +480,6 @@ export default function CustomVideoPlayer({
         </Box>
       </Box>
 
-      {/* Bottom controls */}
       <Box data-testid="player-controls" sx={{ position: "absolute", left: 0, right: 0, bottom: 0, px: { xs: 2, md: 4 }, pb: { xs: 1.5, md: 2.5 }, pt: 8,
         background: "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 55%, rgba(0,0,0,0) 100%)",
         opacity: showOverlay ? 1 : 0, transform: showOverlay ? "translateY(0)" : "translateY(12px)", transition: "opacity 280ms ease, transform 280ms ease", pointerEvents: showOverlay ? "auto" : "none" }}>
