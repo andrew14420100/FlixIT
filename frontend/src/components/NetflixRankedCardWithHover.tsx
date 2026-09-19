@@ -139,9 +139,6 @@ export default function NetflixRankedCardWithHover({
   const rankedResolved = nonTmdbArtwork(rankedArtwork?.artwork?.url);
   const hoverResolved = nonTmdbArtwork(hoverArtwork?.artwork?.url);
 
-  // The shared automatic hook already enforces Netflix -> existing mapped CDN
-  // -> saved non-TMDB. Include its resolved values in the actual card candidates;
-  // previously they were fetched but ignored by this component.
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
   const automaticBackdrop = firstNonTmdbArtwork(
     automaticAssets?.netflix_artwork_url,
@@ -214,6 +211,9 @@ export default function NetflixRankedCardWithHover({
        assets?.preview_video_url)
     : null;
 
+  // nf-scrape exposes Netflix artwork and title treatment separately. Reuse the
+  // original transparent title logo as an overlay so the Top 10 tile keeps the
+  // same high-quality source image while visually matching Netflix's treatment.
   const hoverLogoUrl = firstNonTmdbArtwork(
     hoverArtwork?.logo?.url,
     rankedArtwork?.logo?.url,
@@ -247,17 +247,68 @@ export default function NetflixRankedCardWithHover({
           <div className="netflix-ranked-card-rank">
             <NetflixTop10RankSvg rank={rank} className="netflix-ranked-card-rank-svg" opacity={0.5} />
           </div>
-          <div className="netflix-ranked-card-poster-wrap">
+          <div className="netflix-ranked-card-poster-wrap" style={{ position: "absolute" }}>
             {posterUrl ? (
-              <img
-                src={posterUrl}
-                alt=""
-                draggable={false}
-                loading="lazy"
-                decoding="async"
-                onError={() => setPosterIndex((index) => index + 1)}
-                className="netflix-ranked-card-poster"
-              />
+              <>
+                <img
+                  src={posterUrl}
+                  alt=""
+                  draggable={false}
+                  loading="lazy"
+                  decoding="async"
+                  onError={() => setPosterIndex((index) => index + 1)}
+                  className="netflix-ranked-card-poster"
+                />
+                {hoverLogoUrl ? (
+                  <img
+                    src={hoverLogoUrl}
+                    alt=""
+                    aria-hidden="true"
+                    draggable={false}
+                    decoding="async"
+                    onError={(event) => {
+                      event.currentTarget.style.display = "none";
+                    }}
+                    style={{
+                      position: "absolute",
+                      left: "10%",
+                      right: "10%",
+                      bottom: "7%",
+                      margin: "0 auto",
+                      maxWidth: "72%",
+                      maxHeight: "26%",
+                      width: "auto",
+                      height: "auto",
+                      objectFit: "contain",
+                      objectPosition: "center bottom",
+                      filter: "drop-shadow(0 2px 5px rgba(0,0,0,.85))",
+                      pointerEvents: "none",
+                      zIndex: 2,
+                    }}
+                  />
+                ) : title ? (
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      left: "8%",
+                      right: "8%",
+                      bottom: "7%",
+                      color: "#fff",
+                      fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
+                      fontSize: "clamp(9px, .67vw, 15px)",
+                      lineHeight: 1.02,
+                      fontWeight: 800,
+                      textAlign: "center",
+                      textShadow: "0 2px 5px rgba(0,0,0,.95)",
+                      pointerEvents: "none",
+                      zIndex: 2,
+                    }}
+                  >
+                    {title}
+                  </div>
+                ) : null}
+              </>
             ) : (
               <div className="netflix-ranked-card-placeholder">{title}</div>
             )}
