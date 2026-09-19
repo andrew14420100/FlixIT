@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Slider from "react-slick";
 import { styled, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -11,6 +11,7 @@ import CustomNavigation from "./slick-slider/CustomNavigation";
 import { ARROW_MAX_WIDTH } from "src/constant";
 import { MEDIA_TYPE } from "src/types/Common";
 import NetflixRankedCardWithHover from "./NetflixRankedCardWithHover";
+import useArtworkBatch from "src/hooks/useArtworkBatch";
 
 const StyledSlider = styled(Slider)(({ theme, padding }) => ({
   display: "flex !important",
@@ -53,12 +54,18 @@ export default function Top10Slider({ title, items }) {
   const up600 = useMediaQuery("(min-width:600px)");
   const tiles = up1536 ? 6 : up1200 ? 5 : up900 ? 4 : up600 ? 3 : 2;
 
-  const list = (items || []).slice(0, 10);
+  const list = useMemo(() => (items || []).slice(0, 10), [items]);
+  const artworkBatch = useArtworkBatch(list, list.length > 0);
+  const published = useMemo(
+    () => list.filter((item) => artworkBatch.isReady(item, "poster")),
+    [list, artworkBatch.data]
+  );
+
   if (!list.length) return null;
 
   const isEnd =
-    list.length <= tiles ||
-    activeSlideIndex >= Math.max(0, list.length - tiles);
+    published.length <= tiles ||
+    activeSlideIndex >= Math.max(0, published.length - tiles);
 
   const settings = {
     speed: 750,
@@ -138,14 +145,15 @@ export default function Top10Slider({ title, items }) {
             padding={ARROW_MAX_WIDTH}
             theme={theme}
           >
-            {list.map((item, index) => {
+            {published.map((item) => {
               const id = item.id || item.tmdbId || item.tmdb_id;
               const mediaType =
                 item.type === "tv" || item.media_type === "tv"
                   ? MEDIA_TYPE.Tv
                   : MEDIA_TYPE.Movie;
+              const originalIndex = Math.max(0, list.indexOf(item));
               const suppressHover =
-                isSliding || (activeSlideIndex > 0 && index === activeSlideIndex);
+                isSliding || (activeSlideIndex > 0 && originalIndex === activeSlideIndex);
 
               return (
                 <div key={`${item.type || item.media_type || "movie"}-${id}`}>
@@ -156,7 +164,7 @@ export default function Top10Slider({ title, items }) {
                       title: item.title || item.name,
                       name: item.title || item.name,
                     }}
-                    rank={index + 1}
+                    rank={originalIndex + 1}
                     mediaType={mediaType}
                     watch={item.watch}
                     suppressHover={suppressHover}
