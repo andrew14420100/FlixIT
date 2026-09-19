@@ -17,11 +17,11 @@ import {
   msUntilNextRomeRefresh,
 } from "src/utils/dailyRefresh";
 
-const CACHE_PREFIX = "flix-home-smart-v8";
+const CACHE_PREFIX = "flix-home-smart-v9";
 const WATCH_AGAIN_DAYS = 28;
 const RECENT_DAYS = 14;
 const MAX_HISTORY = 12;
-const MAX_ROW_ITEMS = 36;
+const MAX_ROW_ITEMS = 50;
 
 const toMediaType = (type) =>
   type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
@@ -152,7 +152,7 @@ async function genrePool(genreId, mediaType) {
   if (!genreId) return [];
   const slug = toSlug(mediaType);
   const pages = await Promise.all(
-    [1, 2, 3].map((page) =>
+    [1, 2, 3, 4, 5].map((page) =>
       fetchJson(
         `/api/public/tmdb/genre/${genreId}/${slug}?page=${page}`,
         { items: [] }
@@ -167,8 +167,12 @@ async function freshCataloguePool() {
     "/api/public/homepage/latest",
     "/api/public/tmdb/now_playing?page=1",
     "/api/public/tmdb/now_playing?page=2",
+    "/api/public/tmdb/now_playing?page=3",
+    "/api/public/tmdb/now_playing?page=4",
     "/api/public/tmdb/on_the_air?page=1",
     "/api/public/tmdb/on_the_air?page=2",
+    "/api/public/tmdb/on_the_air?page=3",
+    "/api/public/tmdb/on_the_air?page=4",
   ];
   const parts = await Promise.all(
     urls.map((url) => fetchJson(url, { items: [] }))
@@ -202,8 +206,6 @@ export default function HomeSmartSections() {
   const [loadDetails] = useLazyGetAppendedVideosQuery();
   const requestRef = useRef(0);
   const key = cacheKey();
-  // Paint the last good personalization snapshot immediately even after 06:00;
-  // a stale snapshot is refreshed silently instead of blanking the Home.
   const initialCache = useMemo(() => readCache(key), [key]);
   const initial = initialCache?.data || {};
 
@@ -417,8 +419,6 @@ export default function HomeSmartSections() {
     refresh(false);
   }, [historyKey, refresh]);
 
-  // Keep a long-lived tab aligned with the same 06:00 Europe/Rome window as
-  // catalogue, artwork and trailer maintenance.
   useEffect(() => {
     const timer = window.setTimeout(() => refresh(true), msUntilNextRomeRefresh() + 2000);
     return () => window.clearTimeout(timer);
