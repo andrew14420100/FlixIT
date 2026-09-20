@@ -1,0 +1,393 @@
+@media (max-width: 899px) {
+  html.flixit-mobile-sc,
+  html.flixit-mobile-sc body,
+  html.flixit-mobile-sc #root {
+    width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
+  }
+
+  html.flixit-mobile-sc body {
+    padding-bottom: calc(66px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Header: remove desktop/mobile menu chrome. Keep only logo + search + login/avatar. */
+  [data-testid="main-header"] {
+    height: 56px !important;
+    min-height: 56px !important;
+    padding: 0 12px !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    background: linear-gradient(to bottom, rgba(0,0,0,.78), rgba(0,0,0,.12)) !important;
+  }
+  [data-testid="main-header"] .MuiToolbar-root {
+    height: 56px !important;
+    min-height: 56px !important;
+    gap: 8px !important;
+  }
+  [data-testid="main-header"] .MuiToolbar-root > .MuiBox-root:nth-child(2) {
+    display: none !important;
+  }
+  [data-testid="main-header"] .flixit-logo {
+    margin-right: auto !important;
+    flex: 0 0 auto !important;
+  }
+  [data-testid="main-header"] .flixit-logo svg {
+    height: 26px !important;
+    width: auto !important;
+  }
+  [data-testid="main-header"] [data-testid="search-box"] > div {
+    width: 36px !important;
+    min-width: 36px !important;
+    max-width: 36px !important;
+    height: 36px !important;
+    padding: 0 !important;
+    justify-content: center !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+  [data-testid="main-header"] [data-testid="search-box"] input { display: none !important; }
+  [data-testid="main-header"] [data-testid="header-login-button"] {
+    height: 36px !important;
+    padding: 0 14px !important;
+    border-radius: 6px !important;
+    font-size: 13px !important;
+  }
+  [data-testid="main-header"] [data-testid="header-avatar"],
+  [data-testid="main-header"] [data-testid="avatar-menu-button"] {
+    width: 34px !important;
+    height: 34px !important;
+  }
+
+  /* Home / Cinema / Serie TV share the same invasive hero geometry. */
+  [data-testid="hero-section"],
+  [data-testid="hub-hero"] {
+    height: 72svh !important;
+    min-height: 560px !important;
+    max-height: 710px !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-backdrop"],
+  [data-testid="hub-hero"] > img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center top !important;
+  }
+  [data-testid="hero-section"] .info-wrap,
+  [data-testid="hub-hero"] > .MuiBox-root:last-child {
+    left: 16px !important;
+    right: 16px !important;
+    bottom: 26px !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-logo"],
+  [data-testid="hub-hero"] > .MuiBox-root:last-child img {
+    width: auto !important;
+    max-width: 68vw !important;
+    max-height: 112px !important;
+    object-fit: contain !important;
+    object-position: left bottom !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-title"] {
+    max-width: 76vw !important;
+    font-size: clamp(28px, 8vw, 44px) !important;
+    line-height: 1 !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-overview"] { display: none !important; }
+  [data-testid="hero-section"] .info-buttons {
+    margin-top: 14px !important;
+    gap: 8px !important;
+    justify-content: flex-start !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-play-button"],
+  [data-testid="hero-section"] [data-testid="hero-info-button"],
+  [data-testid="hub-hero"] [data-testid="hub-hero-play"],
+  [data-testid="hub-hero"] [data-testid="hub-hero-info"] {
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 14px !important;
+    border-radius: 4px !important;
+    font-size: 13px !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-controls"] {
+    right: 14px !important;
+    bottom: 9% !important;
+    transform: scale(.84) !important;
+    transform-origin: right bottom !important;
+  }
+  [data-testid="hub-hero"] .MuiTypography-root,
+  [data-testid="hub-hero"] [data-testid="hub-catalog-link"] { display: none !important; }
+
+  /* Shelves: compact SC phone rhythm. */
+  .slider-row {
+    height: auto !important;
+    margin-top: 18px !important;
+    margin-bottom: 22px !important;
+    overflow: visible !important;
+    contain: layout style !important;
+  }
+  .slider-row.compact-row {
+    margin-top: 8px !important;
+    margin-bottom: 16px !important;
+  }
+  .slider-row .row-header {
+    padding-left: 14px !important;
+    padding-right: 10px !important;
+    margin-bottom: 8px !important;
+    min-height: 24px !important;
+  }
+  .slider-row .row-header .label {
+    font-size: 18px !important;
+    line-height: 1.2 !important;
+    font-weight: 700 !important;
+  }
+  .slider-row .slick-list {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none !important;
+    -webkit-overflow-scrolling: touch !important;
+    scroll-snap-type: x proximity !important;
+  }
+  .slider-row .slick-list::-webkit-scrollbar { display: none !important; }
+  .slider-row .slick-track {
+    display: flex !important;
+    width: max-content !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+  .slider-row .slick-slide {
+    float: none !important;
+    height: auto !important;
+    scroll-snap-align: start !important;
+  }
+  .slider-row .slick-slide > div {
+    height: auto !important;
+    padding: 0 3px !important;
+    box-sizing: border-box !important;
+  }
+  .slider-row .slick-arrow,
+  .slider-row .tab-indicator,
+  .slider-row [class*="navigation"] { display: none !important; }
+
+  /* Standard mobile rows: true portrait posters, about 3.2 visible. */
+  .slider-row:not(.top10-row):not(#continua) .slick-slide {
+    width: 30.5vw !important;
+    min-width: 30.5vw !important;
+    max-width: 30.5vw !important;
+  }
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-root,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-link,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-frame,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-image-wrap {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 2 / 3 !important;
+  }
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+    aspect-ratio: 2 / 3 !important;
+    object-fit: cover !important;
+    border-radius: 3px !important;
+  }
+
+  /* Continue Watching remains landscape and smaller: about 2.2 cards visible. */
+  #continua .slick-slide {
+    width: 44vw !important;
+    min-width: 44vw !important;
+    max-width: 44vw !important;
+  }
+  #continua .netflix-standard-card-root,
+  #continua .netflix-standard-card-link,
+  #continua .netflix-standard-card-frame,
+  #continua .netflix-standard-card-image-wrap,
+  #continua .netflix-standard-card-image {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 342 / 192 !important;
+  }
+  #continua .netflix-standard-card-image { object-fit: cover !important; }
+  #continua .netflix-standard-card-progress-track {
+    left: 4% !important;
+    right: 4% !important;
+    bottom: 3px !important;
+    height: 3px !important;
+  }
+
+  /* Top 10: large number and real vertical poster, not tiny thumbnails. */
+  .top10-row .slick-slide {
+    width: 48vw !important;
+    min-width: 48vw !important;
+    max-width: 48vw !important;
+  }
+  .top10-row .netflix-ranked-card-root {
+    width: 100% !important;
+    height: 190px !important;
+    min-height: 190px !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  .top10-row .netflix-ranked-card-link {
+    position: relative !important;
+    inset: auto !important;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+  }
+  .top10-row .netflix-ranked-card-rank {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 52% !important;
+    height: 100% !important;
+  }
+  .top10-row .netflix-ranked-card-rank-svg {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .top10-row .netflix-ranked-card-poster-wrap {
+    position: absolute !important;
+    right: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 58% !important;
+    height: 100% !important;
+    border-radius: 3px !important;
+  }
+  .top10-row .netflix-ranked-card-poster {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+
+  /* Touch never opens desktop hover. First tap follows the detail link. */
+  [data-testid^="hover-overlay-"],
+  .previewModal--container { display: none !important; pointer-events: none !important; }
+
+  /* Detail page: phone sheet, same visual language as the home hero. */
+  [data-testid="detail-page-redesign"] {
+    padding-bottom: 72px !important;
+    overflow-x: hidden !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child {
+    height: 68svh !important;
+    min-height: 560px !important;
+    max-height: 700px !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center top !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) {
+    left: 14px !important;
+    right: 14px !important;
+    bottom: 24px !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) > img {
+    max-width: 70vw !important;
+    max-height: 112px !important;
+    margin-bottom: 10px !important;
+  }
+  [data-testid="detail-page-redesign"] [data-testid="detail-play"],
+  [data-testid="detail-page-redesign"] [data-testid="detail-my-list"] {
+    min-height: 40px !important;
+    padding: 0 14px !important;
+    border-radius: 4px !important;
+    font-size: 13px !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:nth-child(2) {
+    width: 100% !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    margin-top: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  /* My List / account poster grids. */
+  [data-testid^="horizontal-card-"] {
+    transition: none !important;
+    transform: none !important;
+  }
+  [data-testid^="horizontal-card-"].flixit-mobile-list-poster {
+    aspect-ratio: 2 / 3 !important;
+    min-width: calc((100vw - 54px) / 3) !important;
+    max-width: calc((100vw - 54px) / 3) !important;
+    overflow: hidden !important;
+    border-radius: 4px !important;
+  }
+  [data-testid^="horizontal-card-"] .card-expanded { display: none !important; }
+
+  [data-testid="account-page"] {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    padding-bottom: 82px !important;
+  }
+
+  /* Search sheet */
+  [data-testid="search-box"] > .MuiBox-root + .MuiBox-root {
+    position: fixed !important;
+    left: 10px !important;
+    right: 10px !important;
+    top: 60px !important;
+    width: auto !important;
+    max-height: calc(100svh - 136px) !important;
+    overflow-y: auto !important;
+    border-radius: 8px !important;
+  }
+
+  /* Player: portrait letterbox, full-width landscape after rotation. */
+  [data-testid="watch-page"],
+  [data-testid="custom-video-player"] {
+    width: 100vw !important;
+    height: 100svh !important;
+    background: #000 !important;
+  }
+  [data-testid="native-video"] {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+    background: #000 !important;
+  }
+
+  /* Bottom nav */
+  .flixit-mobile-bottom-nav {
+    height: calc(62px + env(safe-area-inset-bottom, 0px)) !important;
+    padding: 4px 4px env(safe-area-inset-bottom, 0px) !important;
+  }
+  .flixit-mobile-bottom-nav > button { height: 54px !important; }
+  .flixit-mobile-bottom-nav > button svg { width: 23px !important; height: 23px !important; }
+  .flixit-mobile-bottom-nav > button span { font-size: 10.5px !important; }
+
+  footer { display: none !important; }
+}
+
+@media (max-width: 430px) {
+  .slider-row:not(.top10-row):not(#continua) .slick-slide {
+    width: 31vw !important;
+    min-width: 31vw !important;
+    max-width: 31vw !important;
+  }
+  #continua .slick-slide {
+    width: 45vw !important;
+    min-width: 45vw !important;
+    max-width: 45vw !important;
+  }
+  .top10-row .slick-slide {
+    width: 50vw !important;
+    min-width: 50vw !important;
+    max-width: 50vw !important;
+  }
+  .top10-row .netflix-ranked-card-root {
+    height: 176px !important;
+    min-height: 176px !important;
+  }
+}
