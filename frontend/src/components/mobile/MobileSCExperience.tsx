@@ -51,9 +51,10 @@ function normalizeType(value: any) {
   return raw === "tv" || raw.includes("serie") || raw.includes("show") ? "tv" : "movie";
 }
 
+type PosterBucket = { movie?: string; tv?: string; any?: string };
 type PosterIndex = {
   byArtwork: Map<string, string>;
-  byTitle: Map<string, { movie?: string; tv?: string; any?: string }>;
+  byTitle: Map<string, PosterBucket>;
   byTmdb: Map<string, string>;
 };
 
@@ -74,7 +75,7 @@ async function loadPosterIndex(): Promise<PosterIndex> {
       const rows = Array.isArray(payload?.titles) ? payload.titles : [];
       const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
       const byArtwork = new Map<string, string>();
-      const byTitle = new Map<string, { movie?: string; tv?: string; any?: string }>();
+      const byTitle = new Map<string, PosterBucket>();
       const byTmdb = new Map<string, string>();
 
       rows.forEach((row: any) => {
@@ -89,6 +90,8 @@ async function loadPosterIndex(): Promise<PosterIndex> {
           images.cover_mobile,
           images.background,
           images.backdrop,
+          images.hero_background,
+          images.detail_background,
           images.poster,
           images.poster_mobile,
         ].forEach((asset) => {
@@ -102,15 +105,22 @@ async function loadPosterIndex(): Promise<PosterIndex> {
         );
         if (tmdbId) byTmdb.set(`${type}:${tmdbId}`, poster);
 
-        const titleKey = normalize(
-          row?.name || row?.title || row?.slug?.replace(/-/g, " ")
-        );
-        if (!titleKey) return;
+        const aliases = [
+          row?.name,
+          row?.title,
+          row?.original_title,
+          row?.original_name,
+          row?.slug?.replace(/-/g, " "),
+        ];
 
-        const bucket = byTitle.get(titleKey) || {};
-        if (!bucket[type]) bucket[type] = poster;
-        if (!bucket.any) bucket.any = poster;
-        byTitle.set(titleKey, bucket);
+        aliases.forEach((alias) => {
+          const titleKey = normalize(alias);
+          if (!titleKey) return;
+          const bucket = byTitle.get(titleKey) || {};
+          if (!bucket[type]) bucket[type] = poster;
+          if (!bucket.any) bucket.any = poster;
+          byTitle.set(titleKey, bucket);
+        });
       });
 
       return { byArtwork, byTitle, byTmdb };
@@ -137,11 +147,22 @@ function routeIdentity(href: string) {
   return match ? { type: match[1].toLowerCase(), id: Number(match[2]) } : null;
 }
 
+function setPoster(root: HTMLElement, img: HTMLImageElement, poster: string) {
+  root.classList.add("flixit-mobile-poster");
+  root.classList.remove("flixit-mobile-no-poster");
+  root.closest(".slick-slide")?.classList.remove("flixit-mobile-no-poster-slide");
+  img.removeAttribute("srcset");
+  if (img.src !== poster) img.src = poster;
+}
+
+function markMissingHomePoster(root: HTMLElement) {
+  if (!root.closest('[data-testid="home-page"]')) return;
+  root.classList.add("flixit-mobile-no-poster");
+  root.closest(".slick-slide")?.classList.add("flixit-mobile-no-poster-slide");
+}
+
 function hydrateMobilePosters(index: PosterIndex) {
   document.querySelectorAll<HTMLElement>(".netflix-standard-card-root").forEach((root) => {
-    // Approved Home exception: Continue Watching keeps the landscape artwork.
-    if (root.closest("#continua")) return;
-
     const link = root.querySelector<HTMLAnchorElement>('a[data-uia="standard-card"]');
     const img = root.querySelector<HTMLImageElement>("img.netflix-standard-card-image");
     if (!link || !img) return;
@@ -152,9 +173,12 @@ function hydrateMobilePosters(index: PosterIndex) {
       index.byArtwork.get(assetKey(img.currentSrc || img.src)) ||
       titlePoster(index, link.getAttribute("aria-label") || "", identity?.type || null);
 
-    if (!poster) return;
-    root.classList.add("flixit-mobile-poster");
-    if (img.src !== poster) img.src = poster;
+    if (!poster) {
+      markMissingHomePoster(root);
+      return;
+    }
+
+    setPoster(root, img, poster);
   });
 
   document.querySelectorAll<HTMLElement>('[data-testid^="horizontal-card-"]').forEach((root) => {
@@ -172,6 +196,7 @@ function hydrateMobilePosters(index: PosterIndex) {
 
     if (!poster) return;
     root.classList.add("flixit-mobile-list-poster");
+    img.removeAttribute("srcset");
     if (img.src !== poster) img.src = poster;
   });
 
