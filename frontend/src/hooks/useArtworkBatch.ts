@@ -10,7 +10,7 @@ import {
 
 const SC_CATALOG_URL = "/sc-artwork-catalog.json";
 const LEGACY_SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/";
-const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v4-top10-poster-only"];
+const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v5-poster-deep-match"];
 
 type NormalizedEntry = {
   item: any;
@@ -23,6 +23,7 @@ type CatalogIndex = {
   count: number;
   cdnBase: string;
   byTitle: Map<string, any[]>;
+  byTmdb: Map<string, any[]>;
 };
 
 let catalogPromise: Promise<CatalogIndex> | null = null;
@@ -62,36 +63,43 @@ function uniqueItems(items: any[]) {
   return out;
 }
 
-function titleVariants(item: any) {
-  const raw = [item?.title, item?.name, item?.original_title, item?.original_name].filter(Boolean);
-  const out = new Set<string>();
-  raw.forEach((value) => {
-    const text = String(value || "").trim();
-    if (!text) return;
-    [
-      text,
-      text.split(/[:|–—]/, 1)[0],
-      text.replace(/\([^)]*\)/g, " "),
-      text.replace(/\b(?:il|lo|la|i|gli|le|un|uno|una)\b/gi, " "),
-    ].forEach((candidate) => {
-      const normalized = normalizeText(candidate);
-      if (normalized) out.add(normalized);
-    });
+function addTextVariants(out: Set<string>, value: any) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  [
+    text,
+    text.split(/[:|–—]/, 1)[0],
+    text.replace(/\([^)]*\)/g, " "),
+    text.replace(/\b(?:il|lo|la|i|gli|le|un|uno|una|the|a|an)\b/gi, " "),
+    text.replace(/\b(?:stagione|season)\s+\d+\b/gi, " "),
+  ].forEach((candidate) => {
+    const normalized = normalizeText(candidate);
+    if (normalized) out.add(normalized);
   });
+}
+
+function titleVariants(item: any) {
+  const out = new Set<string>();
+  [
+    item?.title,
+    item?.name,
+    item?.original_title,
+    item?.original_name,
+    item?.display_title,
+  ].forEach((value) => addTextVariants(out, value));
   return [...out];
 }
 
 function rowAliases(row: any) {
-  const values = [row?.name, row?.title, row?.slug];
   const out = new Set<string>();
-  values.forEach((value) => {
-    const text = String(value || "").trim();
-    if (!text) return;
-    [text, text.replace(/-/g, " "), text.replace(/\([^)]*\)/g, " ")].forEach((candidate) => {
-      const normalized = normalizeText(candidate);
-      if (normalized) out.add(normalized);
-    });
-  });
+  [
+    row?.name,
+    row?.title,
+    row?.original_title,
+    row?.original_name,
+    row?.slug,
+    row?.slug?.replace(/-/g, " "),
+  ].forEach((value) => addTextVariants(out, value));
   return [...out];
 }
 
@@ -101,20 +109,51 @@ function normalizeCdnBase(value: any) {
   return `${raw.replace(/\/+$/, "")}/`;
 }
 
+function recordType(row: any) {
+  const raw = String(row?.type || "").toLowerCase();
+  if (raw === "tv" || raw.includes("serie") || raw.includes("show")) return "tv";
+  if (raw === "movie" || raw.includes("film")) return "movie";
+  return null;
+}
+
+function rowTmdbId(row: any) {
+  return Number(
+    row?.tmdb_id ||
+    row?.tmdbId ||
+    row?.ids?.tmdb_id ||
+    row?.ids?.tmdbId ||
+    row?.tmdb?.id ||
+    0
+  );
+}
+
 function buildIndex(payload: any): CatalogIndex {
   const rows = Array.isArray(payload?.titles) ? payload.titles : [];
   const byTitle = new Map<string, any[]>();
+  const byTmdb = new Map<string, any[]>();
+
   rows.forEach((row: any) => {
     rowAliases(row).forEach((key) => {
       const bucket = byTitle.get(key) || [];
       bucket.push(row);
       byTitle.set(key, bucket);
     });
+
+    const type = recordType(row);
+    const id = rowTmdbId(row);
+    if (type && id) {
+      const key = `${type}:${id}`;
+      const bucket = byTmdb.get(key) || [];
+      bucket.push(row);
+      byTmdb.set(key, bucket);
+    }
   });
+
   return {
     count: Number(payload?.count || rows.length || 0),
     cdnBase: normalizeCdnBase(payload?.cdn_base_url),
     byTitle,
+    byTmdb,
   };
 }
 
@@ -141,7 +180,12 @@ async function loadCatalog(): Promise<CatalogIndex> {
       return index;
     })
     .catch(() => {
-      const empty = { count: 0, cdnBase: LEGACY_SC_CDN_BASE, byTitle: new Map<string, any[]>() };
+      const empty = {
+        count: 0,
+        cdnBase: LEGACY_SC_CDN_BASE,
+        byTitle: new Map<string, any[]>(),
+        byTmdb: new Map<string, any[]>(),
+      };
       catalogMemory = empty;
       return empty;
     });
@@ -149,17 +193,20 @@ async function loadCatalog(): Promise<CatalogIndex> {
   return catalogPromise;
 }
 
-function recordType(row: any) {
-  const raw = String(row?.type || "").toLowerCase();
-  if (raw === "tv" || raw.includes("serie") || raw.includes("show")) return "tv";
-  if (raw === "movie" || raw.includes("film")) return "movie";
-  return null;
-}
-
 function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
   const variants = titleVariants(entry.item);
   const candidates: any[] = [];
   const seen = new Set<any>();
+
+  // Strongest path: exact TMDB identity from the SC catalogue.
+  (index.byTmdb.get(entry.key) || []).forEach((row) => {
+    if (!seen.has(row)) {
+      seen.add(row);
+      candidates.push(row);
+    }
+  });
+
+  // Fallback: all normalized localized/original title aliases.
   variants.forEach((variant) => {
     (index.byTitle.get(variant) || []).forEach((row) => {
       if (!seen.has(row)) {
@@ -168,24 +215,30 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
       }
     });
   });
+
   if (!candidates.length) return null;
 
   const expectedYear = extractYear(entry.item?.release_date || entry.item?.first_air_date || entry.item?.year);
   return candidates
     .map((row) => {
       let score = 0;
+      const rowId = rowTmdbId(row);
+      if (rowId && rowId === entry.id) score += 1000;
+
       const type = recordType(row);
-      if (type) score += type === entry.type ? 30 : -40;
-      const rowYear = extractYear(row?.year);
+      if (type) score += type === entry.type ? 40 : -100;
+
+      const rowYear = extractYear(row?.year || row?.release_date || row?.first_air_date);
       if (expectedYear && rowYear) {
-        if (expectedYear === rowYear) score += 15;
-        else if (Math.abs(expectedYear - rowYear) === 1) score += 4;
-        else score -= 8;
+        if (expectedYear === rowYear) score += 18;
+        else if (Math.abs(expectedYear - rowYear) === 1) score += 5;
+        else score -= 10;
       }
+
       const images = row?.images || {};
-      if (images.poster || images.poster_mobile) score += 28;
-      if (images.cover || images.cover_desktop) score += 20;
-      if (images.cover_mobile) score += 6;
+      if (images.poster || images.poster_mobile) score += 45;
+      if (images.cover || images.cover_desktop) score += 18;
+      if (images.cover_mobile) score += 7;
       if (images.background) score += 4;
       if (images.logo) score += 3;
       return { row, score };
@@ -212,10 +265,6 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogInd
   if (!row) return null;
   const images = row?.images || {};
   const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile"], index.cdnBase);
-
-  // Top 10 must use the real vertical SC poster asset. Do not promote
-  // cover/cover_mobile to poster: those are card covers and were the reason the
-  // ranked row showed cropped cover artwork instead of the actual poster.
   const poster = role(images, ["poster", "poster_mobile"], index.cdnBase);
   if (!landscape && !poster) return null;
 
@@ -257,7 +306,7 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogInd
     sc_catalog_cdn: index.cdnBase,
     sc_provider_id: row?.id || row?.slug || null,
     sc_provider_name: row?.name || null,
-    version: "official-artwork-v15-top10-true-poster-only",
+    version: "official-artwork-v16-sc-poster-deep-match",
   };
 }
 
