@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
@@ -11,6 +12,7 @@ import ExpandedCard from "./ExpandedCard";
 import HoverTrailerOverlay from "./HoverTrailerOverlay";
 import "./NetflixMiniModalExact.css";
 import NetflixTop10RankSvg from "./NetflixTop10RankSvg";
+import StreamingCommunityTop10RankSvg from "./StreamingCommunityTop10RankSvg";
 
 function unique(values: Array<string | null | undefined>) {
   const seen = new Set<string>();
@@ -57,6 +59,7 @@ export default function NetflixRankedCardWithHover({
   suppressHover = false,
 }: any) {
   const navigate = useNavigate();
+  const isMobile = useMediaQuery("(max-width:899px)");
   const ref = useRef<HTMLDivElement>(null);
   const [nearViewport, setNearViewport] = useState(false);
   const [posterIndex, setPosterIndex] = useState(0);
@@ -163,10 +166,6 @@ export default function NetflixRankedCardWithHover({
     item?.logo
   );
 
-  // Ranked cards must be real vertical posters. The legacy SC mapping stored the
-  // same landscape cover in both "poster" and "backdrop"; never accept that as
-  // a Top 10 poster. The same guard also blocks any provider response that has
-  // silently copied its cover into poster_url.
   const posterCandidates = useMemo(
     () => unique([
       automaticPosterEmbedded && automaticPoster && automaticPoster !== automaticBackdrop
@@ -259,7 +258,18 @@ export default function NetflixRankedCardWithHover({
           onClick={goDetail}
         >
           <div className="netflix-ranked-card-rank">
-            <NetflixTop10RankSvg rank={rank} className="netflix-ranked-card-rank-svg" opacity={0.5} />
+            {isMobile ? (
+              <StreamingCommunityTop10RankSvg
+                rank={rank}
+                className="netflix-ranked-card-rank-svg"
+              />
+            ) : (
+              <NetflixTop10RankSvg
+                rank={rank}
+                className="netflix-ranked-card-rank-svg"
+                opacity={0.5}
+              />
+            )}
           </div>
           <div className="netflix-ranked-card-poster-wrap" style={{ position: "absolute", overflow: "hidden" }}>
             <img
