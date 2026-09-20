@@ -134,11 +134,6 @@ export default function VideoItemWithHover({
     video?.image_url,
     video?.thumbnail_url
   );
-  const legacyLandscapeEmbedded = !!(
-    video?.backdrop_embedded_title_treatment ||
-    video?.embedded_title_treatment ||
-    video?.has_embedded_title_treatment
-  );
 
   const automaticLandscape = firstNonTmdbArtwork(
     automaticAssets?.backdrop_path,
@@ -216,17 +211,12 @@ export default function VideoItemWithHover({
 
   const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
   const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
-  const staticReady = !!(
-    automaticAssets?.card_ready ||
-    automaticLandscape ||
-    mappedBackdrop ||
-    legacyLandscape
-  );
-  const embeddedTitleTreatment = !!(
-    automaticAssets?.backdrop_embedded_title_treatment ||
-    (!automaticLandscape && !!mappedBackdrop) ||
-    (!automaticLandscape && !mappedBackdrop && legacyLandscapeEmbedded)
-  );
+
+  // Do not bypass the artwork policy with a raw backdrop. `card_ready` is true
+  // only when the card already contains its title treatment or has a real logo
+  // available for the overlay.
+  const staticReady = !!automaticAssets?.card_ready;
+  const embeddedTitleTreatment = !!automaticAssets?.backdrop_embedded_title_treatment;
 
   if (!staticReady || !imageCandidates.length) return null;
 
