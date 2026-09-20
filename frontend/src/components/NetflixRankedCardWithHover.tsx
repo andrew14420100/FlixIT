@@ -60,6 +60,7 @@ export default function NetflixRankedCardWithHover({
   const ref = useRef<HTMLDivElement>(null);
   const [nearViewport, setNearViewport] = useState(false);
   const [posterIndex, setPosterIndex] = useState(0);
+  const [logoFailed, setLogoFailed] = useState(false);
 
   const normalizedId = item?.id || item?.tmdbId || item?.tmdb_id;
   const mType = mediaType ||
@@ -127,10 +128,6 @@ export default function NetflixRankedCardWithHover({
     item?.cover_path,
     item?.cover
   );
-  const legacyPosterEmbedded = !!(
-    item?.poster_embedded_title_treatment ||
-    item?.has_embedded_poster_title_treatment
-  );
 
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
   const automaticBackdrop = firstNonTmdbArtwork(
@@ -150,6 +147,10 @@ export default function NetflixRankedCardWithHover({
     item?.logo_path,
     item?.logo
   );
+
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [logoUrl]);
 
   const posterCandidates = useMemo(
     () => unique([
@@ -209,19 +210,16 @@ export default function NetflixRankedCardWithHover({
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
-  const staticReady = !!(
-    automaticAssets?.top10_ready ||
-    automaticPoster ||
-    mappedPoster ||
-    legacyPoster
-  );
-  const posterEmbedded = !!(
-    automaticAssets?.poster_embedded_title_treatment ||
-    (!automaticPoster && !!mappedPoster) ||
-    (!automaticPoster && !mappedPoster && legacyPosterEmbedded)
+  // Top 10 follows the same hard rule as normal cards: never bypass the
+  // resolver with a raw poster that has no title treatment.
+  const staticReady = !!automaticAssets?.top10_ready;
+  const posterEmbedded = !!automaticAssets?.poster_embedded_title_treatment;
+  const visualReady = !!(
+    posterUrl &&
+    (posterEmbedded || (logoUrl && !logoFailed))
   );
 
-  if (!staticReady || !posterUrl) return null;
+  if (!staticReady || !visualReady) return null;
 
   return (
     <>
@@ -252,7 +250,7 @@ export default function NetflixRankedCardWithHover({
               onError={() => setPosterIndex((index) => index + 1)}
               className="netflix-ranked-card-poster"
             />
-            {!posterEmbedded && logoUrl ? (
+            {!posterEmbedded && logoUrl && !logoFailed ? (
               <div
                 aria-hidden="true"
                 style={{
@@ -273,6 +271,7 @@ export default function NetflixRankedCardWithHover({
                   alt=""
                   draggable={false}
                   decoding="async"
+                  onError={() => setLogoFailed(true)}
                   style={{
                     display: "block",
                     maxWidth: "88%",
