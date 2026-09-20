@@ -2,6 +2,7 @@
 import { useEffect } from "react";
 import { Outlet, useLocation, useNavigation } from "react-router-dom";
 import Box from "@mui/material/Box";
+import useMediaQuery from "@mui/material/useMediaQuery";
 
 import VideoPortalContainer from "src/components/VideoPortalContainer";
 import PortalProvider from "src/providers/PortalProvider";
@@ -22,6 +23,7 @@ import "src/components/mobile/mobile-home-finish.css";
 export default function MainLayout() {
   const location = useLocation();
   const navigation = useNavigation();
+  const isMobile = useMediaQuery("(max-width:899px)");
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -43,10 +45,12 @@ export default function MainLayout() {
       <MobileGlobalBottomNav />
       <AuthModal />
       <SessionGuards />
-      {navigation.state !== "idle" && <MainLoadingScreen />}
+      {!isMobile && navigation.state !== "idle" && <MainLoadingScreen />}
       <DetailModalProvider>
         <PortalProvider>
-          <Outlet />
+          <Box className="flixit-route-stage">
+            <Outlet />
+          </Box>
           <VideoPortalContainer />
         </PortalProvider>
       </DetailModalProvider>
