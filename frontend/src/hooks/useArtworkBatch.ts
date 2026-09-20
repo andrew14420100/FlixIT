@@ -10,13 +10,10 @@ import {
 } from "./useAutomaticMediaAssets";
 
 const MAX_BATCH = 40;
-const PRIMARY_BATCH_SIZE = 32;
-const MAX_ACTIVE_BATCHES = 2;
+const PRIMARY_BATCH_SIZE = 40;
+const MAX_ACTIVE_BATCHES = 4;
 const STORAGE_PREFIX = `flix-artwork-raw:${MEDIA_ASSET_QUALITY_VERSION}:`;
 
-// One scheduler is shared by every Home row. This prevents 10-20 rows from each
-// opening several /batch requests at the same time while still letting the first
-// visible candidates of every row resolve before the deep background pool.
 const memoryCache = new Map<string, { savedAt: number; value: any }>();
 const pendingJobs = new Map<string, any>();
 const inFlightJobs = new Map<string, any>();
@@ -70,9 +67,7 @@ function writeStored(entry: any, value: any) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(STORAGE_PREFIX + entry.key, JSON.stringify(record));
-  } catch {
-    // Storage pressure must never block the Home.
-  }
+  } catch {}
 }
 
 function cachedValues(entries: any[]) {
@@ -130,7 +125,6 @@ async function runBatch(jobs: any[]) {
       job.waiters.forEach((resolve: any) => resolve(value));
     }
   } catch {
-    // Do not cache transport failures. A later query/reload can retry them.
     jobs.forEach((job) => job.waiters.forEach((resolve: any) => resolve(null)));
   } finally {
     jobs.forEach((job) => inFlightJobs.delete(job.entry.key));
@@ -184,15 +178,12 @@ function mergeRaw(...groups: any[][]) {
 }
 
 /**
- * Progressive Netflix-like artwork hydration.
+ * Progressive artwork hydration.
  *
- * - first 32 candidates of every row are priority 0 and paint quickly;
- * - the remaining candidate pool is priority 1 and fills the row toward 50;
- * - duplicate IDs across rows are coalesced, including while already in flight;
- * - only two browser batch requests are active at once;
- * - successful raw provider decisions survive reloads for 24h in localStorage;
- * - individual useAutomaticMediaAssets query keys are still seeded for complete
- *   compatibility with cards, Hero, Cinema, Serie TV and Catalogo.
+ * The first 40 candidates of each row are urgent. Four browser batches may be
+ * active so several visible Home rows can progress together instead of later
+ * rows appearing permanently empty. Duplicate title requests are still
+ * coalesced globally and successful provider decisions remain cached for 24h.
  */
 export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const queryClient = useQueryClient();
@@ -211,8 +202,8 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     gcTime: DAILY_ARTWORK_REFRESH_MS * 7,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 1,
+    refetchOnReconnect: true,
+    retry: 2,
   });
 
   const backgroundQuery = useQuery({
@@ -224,8 +215,8 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     gcTime: DAILY_ARTWORK_REFRESH_MS * 7,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: 1,
+    refetchOnReconnect: true,
+    retry: 2,
   });
 
   const data = useMemo(
