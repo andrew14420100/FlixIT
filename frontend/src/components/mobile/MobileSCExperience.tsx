@@ -8,90 +8,51 @@ import MovieCreationOutlinedIcon from "@mui/icons-material/MovieCreationOutlined
 import LiveTvOutlinedIcon from "@mui/icons-material/LiveTvOutlined";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import AccountCircleOutlinedIcon from "@mui/icons-material/AccountCircleOutlined";
-import "./mobile-sc.css";
 
 const MOBILE_QUERY = "(max-width:899px)";
 const CATALOG_URL = "/sc-artwork-catalog.json";
 
 function normalize(value: any) {
-  return String(value || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
+  return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
 }
-
 function assetKey(value: any) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
+  const raw = String(value || "").trim(); if (!raw) return "";
   const clean = raw.split("?")[0].split("#")[0].replace(/\/+$/, "");
-  const filename = clean.slice(clean.lastIndexOf("/") + 1);
-  return filename.replace(/\.(?:webp|jpe?g|png|avif)$/i, "").toLowerCase();
+  return clean.slice(clean.lastIndexOf("/") + 1).replace(/\.(?:webp|jpe?g|png|avif)$/i, "").toLowerCase();
 }
-
 function absoluteAsset(value: any, cdnBase: string) {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
+  const raw = String(value || "").trim(); if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
   return `${cdnBase.replace(/\/+$/, "")}/${raw.replace(/^\/+/, "")}`;
 }
-
 function normalizeType(value: any) {
   const raw = String(value || "").toLowerCase();
   return raw === "tv" || raw.includes("serie") || raw.includes("show") ? "tv" : "movie";
 }
 
-type PosterIndex = {
-  byArtwork: Map<string, string>;
-  byTitle: Map<string, { movie?: string; tv?: string; any?: string }>;
-  byTmdb: Map<string, string>;
-};
-
+type PosterIndex = { byArtwork: Map<string, string>; byTitle: Map<string, { movie?: string; tv?: string; any?: string }>; byTmdb: Map<string, string>; };
 let posterIndexPromise: Promise<PosterIndex> | null = null;
 
 async function loadPosterIndex(): Promise<PosterIndex> {
   if (posterIndexPromise) return posterIndexPromise;
-  posterIndexPromise = fetch(CATALOG_URL, {
-    cache: "force-cache",
-    headers: { Accept: "application/json" },
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
-      return response.json();
-    })
+  posterIndexPromise = fetch(CATALOG_URL, { cache: "force-cache", headers: { Accept: "application/json" } })
+    .then(async (response) => { if (!response.ok) throw new Error(`SC catalog ${response.status}`); return response.json(); })
     .then((payload) => {
       const rows = Array.isArray(payload?.titles) ? payload.titles : [];
       const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
       const byArtwork = new Map<string, string>();
       const byTitle = new Map<string, { movie?: string; tv?: string; any?: string }>();
       const byTmdb = new Map<string, string>();
-
       rows.forEach((row: any) => {
         const images = row?.images || {};
-        const posterRaw = images.poster || images.poster_mobile;
-        const poster = absoluteAsset(posterRaw, cdnBase);
+        const poster = absoluteAsset(images.poster || images.poster_mobile, cdnBase);
         if (!poster) return;
-
-        [
-          images.cover,
-          images.cover_desktop,
-          images.card,
-          images.cover_mobile,
-          images.background,
-          images.backdrop,
-          images.poster,
-          images.poster_mobile,
-        ].forEach((asset) => {
-          const key = assetKey(asset);
-          if (key) byArtwork.set(key, poster);
+        [images.cover, images.cover_desktop, images.card, images.cover_mobile, images.background, images.backdrop, images.poster, images.poster_mobile].forEach((asset) => {
+          const key = assetKey(asset); if (key) byArtwork.set(key, poster);
         });
-
         const type = normalizeType(row?.type);
         const tmdbId = Number(row?.tmdb_id || row?.tmdbId || row?.ids?.tmdbId || row?.ids?.tmdb_id || 0);
         if (tmdbId) byTmdb.set(`${type}:${tmdbId}`, poster);
-
         const titleKey = normalize(row?.name || row?.title || row?.slug?.replace(/-/g, " "));
         if (!titleKey) return;
         const bucket = byTitle.get(titleKey) || {};
@@ -99,7 +60,6 @@ async function loadPosterIndex(): Promise<PosterIndex> {
         if (!bucket.any) bucket.any = poster;
         byTitle.set(titleKey, bucket);
       });
-
       return { byArtwork, byTitle, byTmdb };
     })
     .catch(() => ({ byArtwork: new Map(), byTitle: new Map(), byTmdb: new Map() }));
@@ -107,85 +67,50 @@ async function loadPosterIndex(): Promise<PosterIndex> {
 }
 
 function titlePoster(index: PosterIndex, title: string, type?: string | null) {
-  const bucket = index.byTitle.get(normalize(title));
-  if (!bucket) return "";
+  const bucket = index.byTitle.get(normalize(title)); if (!bucket) return "";
   if (type === "tv") return bucket.tv || bucket.any || "";
   if (type === "movie") return bucket.movie || bucket.any || "";
   return bucket.any || bucket.movie || bucket.tv || "";
 }
-
 function routeIdentity(href: string) {
   const match = String(href || "").match(/\/browse\/(movie|tv)\/(\d+)/i);
-  if (!match) return null;
-  return { type: match[1].toLowerCase(), id: Number(match[2]) };
+  return match ? { type: match[1].toLowerCase(), id: Number(match[2]) } : null;
 }
 
 function hydrateMobilePosters(index: PosterIndex) {
   document.querySelectorAll<HTMLElement>(".netflix-standard-card-root").forEach((root) => {
-    if (root.closest("#continua")) {
-      root.classList.remove("flixit-mobile-poster");
-      return;
-    }
-
+    if (root.closest("#continua")) return;
     const link = root.querySelector<HTMLAnchorElement>('a[data-uia="standard-card"]');
     const img = root.querySelector<HTMLImageElement>("img.netflix-standard-card-image");
     if (!link || !img) return;
-
     const identity = routeIdentity(link.getAttribute("href") || "");
-    const currentKey = assetKey(img.currentSrc || img.src);
-    const poster =
-      (identity ? index.byTmdb.get(`${identity.type}:${identity.id}`) : "") ||
-      index.byArtwork.get(currentKey) ||
-      titlePoster(index, link.getAttribute("aria-label") || "", identity?.type || null);
-
-    if (!poster) {
-      root.classList.add("flixit-mobile-poster-missing");
-      return;
-    }
-
-    root.classList.remove("flixit-mobile-poster-missing");
+    const poster = (identity ? index.byTmdb.get(`${identity.type}:${identity.id}`) : "") || index.byArtwork.get(assetKey(img.currentSrc || img.src)) || titlePoster(index, link.getAttribute("aria-label") || "", identity?.type || null);
+    if (!poster) return;
     root.classList.add("flixit-mobile-poster");
     if (img.src !== poster) img.src = poster;
-    const rect = root.getBoundingClientRect();
-    if (rect.top < window.innerHeight * 2.25) {
-      img.loading = "eager";
-      try { (img as any).fetchPriority = "high"; } catch {}
-    }
   });
 
   document.querySelectorAll<HTMLElement>('[data-testid^="horizontal-card-"]').forEach((root) => {
-    const img = root.querySelector<HTMLImageElement>("img");
-    if (!img) return;
+    const img = root.querySelector<HTMLImageElement>("img"); if (!img) return;
     const id = Number((root.getAttribute("data-testid") || "").replace("horizontal-card-", ""));
-    const currentKey = assetKey(img.currentSrc || img.src);
-    const poster =
-      index.byTmdb.get(`movie:${id}`) ||
-      index.byTmdb.get(`tv:${id}`) ||
-      index.byArtwork.get(currentKey) ||
-      titlePoster(index, img.alt || "");
+    const poster = index.byTmdb.get(`movie:${id}`) || index.byTmdb.get(`tv:${id}`) || index.byArtwork.get(assetKey(img.currentSrc || img.src)) || titlePoster(index, img.alt || "");
     if (!poster) return;
-    root.classList.add("flixit-mobile-list-poster");
-    if (img.src !== poster) img.src = poster;
+    root.classList.add("flixit-mobile-list-poster"); if (img.src !== poster) img.src = poster;
   });
 
   document.querySelectorAll<HTMLElement>('[data-testid^="account-item-"]').forEach((root) => {
-    const img = root.querySelector<HTMLImageElement>("img");
-    const id = Number((root.getAttribute("data-testid") || "").replace("account-item-", ""));
+    const img = root.querySelector<HTMLImageElement>("img"); const id = Number((root.getAttribute("data-testid") || "").replace("account-item-", ""));
     if (!img || !id) return;
     const poster = index.byTmdb.get(`movie:${id}`) || index.byTmdb.get(`tv:${id}`) || titlePoster(index, img.alt || "");
     if (poster && img.src !== poster) img.src = poster;
   });
 
   document.querySelectorAll<HTMLElement>('[data-testid^="search-result-"]').forEach((row) => {
-    const img = row.querySelector<HTMLImageElement>("img");
-    const titleNode = row.querySelector<HTMLElement>(".MuiTypography-root");
+    const img = row.querySelector<HTMLImageElement>("img"); const titleNode = row.querySelector<HTMLElement>(".MuiTypography-root");
     const id = Number((row.getAttribute("data-testid") || "").replace("search-result-", ""));
     if (!img || !titleNode) return;
-    const allText = row.textContent || "";
-    const type = /Serie TV/i.test(allText) ? "tv" : /Film/i.test(allText) ? "movie" : null;
-    const poster =
-      (id && type ? index.byTmdb.get(`${type}:${id}`) : "") ||
-      titlePoster(index, titleNode.textContent || "", type);
+    const allText = row.textContent || ""; const type = /Serie TV/i.test(allText) ? "tv" : /Film/i.test(allText) ? "movie" : null;
+    const poster = (id && type ? index.byTmdb.get(`${type}:${id}`) : "") || titlePoster(index, titleNode.textContent || "", type);
     if (poster && img.src !== poster) img.src = poster;
   });
 }
@@ -203,86 +128,47 @@ export default function MobileSCExperience() {
 
   useEffect(() => {
     const root = document.documentElement;
-    if (!isMobile) {
-      root.classList.remove("flixit-mobile-sc");
-      return;
-    }
+    if (!isMobile) { root.classList.remove("flixit-mobile-sc"); return; }
     root.classList.add("flixit-mobile-sc");
     return () => root.classList.remove("flixit-mobile-sc");
   }, [isMobile]);
 
   useEffect(() => {
     if (!isMobile) return;
-    let cancelled = false;
-    let observer: MutationObserver | null = null;
-    let raf = 0;
-
+    let cancelled = false; let observer: MutationObserver | null = null; let raf = 0;
     loadPosterIndex().then((index) => {
       if (cancelled) return;
-      const apply = () => {
-        cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(() => hydrateMobilePosters(index));
-      };
-      apply();
-      observer = new MutationObserver(apply);
-      observer.observe(document.body, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        attributeFilter: ["src", "href", "aria-label"],
-      });
-      window.addEventListener("resize", apply, { passive: true });
-      (observer as any)._flixitApply = apply;
+      const apply = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => hydrateMobilePosters(index)); };
+      apply(); observer = new MutationObserver(apply);
+      observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["src", "href", "aria-label"] });
+      window.addEventListener("resize", apply, { passive: true }); (observer as any)._flixitApply = apply;
     });
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-      const apply = (observer as any)?._flixitApply;
-      if (apply) window.removeEventListener("resize", apply);
-      observer?.disconnect();
-    };
+    return () => { cancelled = true; cancelAnimationFrame(raf); const apply = (observer as any)?._flixitApply; if (apply) window.removeEventListener("resize", apply); observer?.disconnect(); };
   }, [isMobile, location.pathname]);
 
-  const navItems = useMemo(
-    () => [
-      { label: "Home", path: "/browse", icon: HomeRoundedIcon },
-      { label: "Cinema", path: "/cinema", icon: MovieCreationOutlinedIcon },
-      { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
-      { label: "Cerca", path: "__search__", icon: SearchRoundedIcon },
-      { label: "Account", path: "/account", icon: AccountCircleOutlinedIcon },
-    ],
-    []
-  );
+  const navItems = useMemo(() => [
+    { label: "Home", path: "/browse", icon: HomeRoundedIcon },
+    { label: "Cinema", path: "/cinema", icon: MovieCreationOutlinedIcon },
+    { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
+    { label: "Cerca", path: "__search__", icon: SearchRoundedIcon },
+    { label: "Account", path: "/account", icon: AccountCircleOutlinedIcon },
+  ], []);
 
   if (!isMobile || isWatch) return null;
 
   const openSearch = () => {
     const container = document.querySelector<HTMLElement>('[data-testid="search-box"]');
-    const trigger = container?.firstElementChild as HTMLElement | null;
-    trigger?.click();
-    window.setTimeout(() => {
-      const input = document.querySelector<HTMLInputElement>('[data-testid="search-input"]');
-      input?.focus();
-    }, 80);
+    const trigger = container?.firstElementChild as HTMLElement | null; trigger?.click();
+    window.setTimeout(() => document.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus(), 80);
   };
 
   return (
     <Box className="flixit-mobile-bottom-nav" data-testid="mobile-bottom-nav">
       {navItems.map((item) => {
-        const Icon = item.icon;
-        const active = item.path !== "__search__" && isActivePath(location.pathname, item.path);
+        const Icon = item.icon; const active = item.path !== "__search__" && isActivePath(location.pathname, item.path);
         return (
-          <Box
-            key={item.label}
-            component="button"
-            type="button"
-            onClick={() => (item.path === "__search__" ? openSearch() : navigate(item.path))}
-            className={active ? "is-active" : ""}
-            aria-label={item.label}
-          >
-            <Icon />
-            <span>{item.label}</span>
+          <Box key={item.label} component="button" type="button" onClick={() => (item.path === "__search__" ? openSearch() : navigate(item.path))} className={active ? "is-active" : ""} aria-label={item.label}>
+            <Icon /><span>{item.label}</span>
           </Box>
         );
       })}
