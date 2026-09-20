@@ -102,7 +102,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const automaticLandscapeEmbedded = !!automaticAssets?.backdrop_embedded_title_treatment;
   const heroLandscape = firstNonTmdbArtwork(automaticAssets?.hero_backdrop_path, automaticAssets?.detail_backdrop_path, automaticLandscape);
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path, automaticAssets?.poster);
-  const legacyPoster = firstNonTmdbArtwork(video?.netflix_ranked_artwork_url, video?.poster_path, video?.poster);
+  const explicitScPoster = firstNonTmdbArtwork(video?.mobile_sc_poster_url);
 
   const landscapeCandidates = useMemo(() => unique([
     automaticLandscapeEmbedded ? automaticLandscape : null,
@@ -110,12 +110,11 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     legacyLandscapeEmbedded ? legacyLandscape : null,
   ]), [automaticLandscape, automaticLandscapeEmbedded, mappedBackdrop, legacyLandscape, legacyLandscapeEmbedded]);
 
-  // Mobile Home must never use the legacy/mapped landscape artwork as a poster.
-  // Only accept the true vertical poster resolved from the SC catalogue. This
-  // applies to Continue Watching too; the only extra element there is progress.
-  const exactScPoster = automaticAssets?.poster_source === "streamingcommunity"
-    ? automaticPoster
-    : null;
+  // Mobile Home accepts only verified SC vertical posters. Continue Watching
+  // supplies an explicit catalogue match so its historical cover can never win.
+  const exactScPoster = explicitScPoster || (
+    automaticAssets?.poster_source === "streamingcommunity" ? automaticPoster : null
+  );
   const posterCandidates = useMemo(() => unique([
     exactScPoster,
   ]), [exactScPoster]);
