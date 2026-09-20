@@ -11,6 +11,7 @@ import { Footer, MainHeader } from "src/components/layouts";
 import MainLoadingScreen from "src/components/MainLoadingScreen";
 import AuthModal from "src/components/auth/AuthModal";
 import SessionGuards from "src/components/auth/SessionGuards";
+import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 
 export default function MainLayout() {
   const location = useLocation();
@@ -41,6 +42,7 @@ export default function MainLayout() {
       }}
     >
       <MainHeader />
+      <MobileSCExperience />
       <AuthModal />
       <SessionGuards />
       {navigation.state !== "idle" && <MainLoadingScreen />}
