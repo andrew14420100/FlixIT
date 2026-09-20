@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v9-sc-strict";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v10-sc-preferred";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -128,8 +128,8 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     isEmbeddedCardArtwork(savedLandscape)
   );
 
-  // Static cards are SC-only. Saved/provider artwork can still be used by Hero,
-  // Detail and hover, but it can no longer replace a missing SC catalogue cover.
+  // Keep only real SC mapping artwork as the immediate static fallback. Saved
+  // clean artwork remains available for Hero/Detail/hover, not for the card.
   const cardBackdrop = mappedBackdrop || null;
   const cardPoster = mappedPoster || null;
   const cardBackdropEmbedded = !!cardBackdrop;
@@ -161,7 +161,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-static-covers-only_v9_no-detail-background-as-card",
+    image_source_policy: "streamingcommunity-preferred_v10_no-detail-background-as-card",
     backdrop_source: cardBackdrop
       ? fallbackSource(cardBackdrop, !!mappedBackdrop && cardBackdrop === mappedBackdrop)
       : null,
@@ -202,14 +202,17 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     ? firstNonTmdbArtwork(fallback?.poster_path)
     : null;
 
-  // A static card can now come only from SC: live lookup first, committed SC
-  // mapping second. Other official providers remain valid for Hero/Detail/hover.
+  // SC always wins when the dynamic resolver finds its title-bearing cover.
+  // If SC is temporarily unavailable or has not resolved that title yet, keep
+  // any other provider artwork only when the backend explicitly marks the title
+  // treatment as embedded. This prevents entire rows from disappearing while
+  // still never compositing a separate logo on the static card.
   const backdrop = officialIsStreamingCommunity && officialLandscapeEmbedded
     ? officialLandscape
-    : fallbackLandscape;
+    : (fallbackLandscape || (officialLandscapeEmbedded ? officialLandscape : null));
   const poster = officialIsStreamingCommunity && officialPosterEmbedded
     ? officialPoster
-    : fallbackPoster;
+    : (fallbackPoster || (officialPosterEmbedded ? officialPoster : null));
   const hero = officialHero || fallback?.hero_backdrop_path || backdrop || null;
   const logo = officialLogo || fallback?.logo_path || null;
 
@@ -234,10 +237,10 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
       official?.backdrop_source || official?.poster_source || official?.hero_backdrop_source || null,
     backdrop_source: usingFallbackBackdrop
       ? (fallback?.backdrop_source || "streamingcommunity_mapping")
-      : (officialIsStreamingCommunity ? "streamingcommunity" : null),
+      : (official?.backdrop_source || null),
     poster_source: usingFallbackPoster
       ? (fallback?.poster_source || "streamingcommunity_mapping")
-      : (officialIsStreamingCommunity ? "streamingcommunity" : null),
+      : (official?.poster_source || null),
     hero_backdrop_source: official?.hero_backdrop_source || null,
     logo_source: official?.logo_source || (fallback?.logo_path ? "saved_non_tmdb" : null),
     logo_locale: official?.logo_locale || null,
@@ -256,7 +259,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     poster_card_ready: top10Ready,
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-static-covers-only_v9_no-detail-background-as-card",
+    image_source_policy: "streamingcommunity-preferred_v10_no-detail-background-as-card",
     upscaled: false,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
