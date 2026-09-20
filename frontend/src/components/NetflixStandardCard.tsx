@@ -6,7 +6,6 @@ interface Props {
   imageUrl?: string | null;
   fallbackImageUrl?: string | null;
   imageCandidates?: Array<string | null | undefined>;
-  logoUrl?: string | null;
   embeddedTitleTreatment?: boolean;
   title?: string;
   href?: string;
@@ -31,7 +30,6 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
     imageUrl,
     fallbackImageUrl,
     imageCandidates = [],
-    logoUrl,
     embeddedTitleTreatment = false,
     title = "",
     href = "#",
@@ -48,27 +46,16 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
     [imageUrl, imageCandidates, fallbackImageUrl]
   );
   const [candidateIndex, setCandidateIndex] = useState(0);
-  const [logoFailed, setLogoFailed] = useState(false);
 
   useEffect(() => {
     setCandidateIndex(0);
   }, [candidates.join("|")]);
 
-  useEffect(() => {
-    setLogoFailed(false);
-  }, [logoUrl]);
-
   const src = candidates[candidateIndex] || null;
-  // A provider merchandising image that already contains its own title treatment
-  // is valid as-is. Every clean image must instead have a genuine transparent
-  // logo layered over it; a missing/broken logo is never allowed to leave a
-  // backdrop-only card visible.
-  const showRealLogo = Boolean(src && logoUrl && !logoFailed && !embeddedTitleTreatment);
-  const visualReady = Boolean(
-    src && (embeddedTitleTreatment || (logoUrl && !logoFailed))
-  );
 
-  if (!visualReady) return null;
+  // Static catalogue cards must arrive already merchandised: the title/logo is
+  // part of the artwork itself. Never compose a separate logo over a clean image.
+  if (!src || !embeddedTitleTreatment) return null;
 
   return (
     <div
@@ -91,7 +78,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
             style={{ position: "relative", overflow: "hidden" }}
           >
             <img
-              src={src || ""}
+              src={src}
               alt=""
               width="342"
               height="192"
@@ -101,42 +88,6 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
               onError={() => setCandidateIndex((index) => index + 1)}
               className="standard-card tracked-card netflix-standard-card-image"
             />
-
-            {showRealLogo ? (
-              <div
-                aria-hidden="true"
-                className="netflix-standard-card-title-treatment"
-                style={{
-                  position: "absolute",
-                  left: "7%",
-                  right: "7%",
-                  bottom: watch && Number(watch.percent || 0) > 0 ? "12%" : "7%",
-                  height: "34%",
-                  display: "flex",
-                  alignItems: "flex-end",
-                  justifyContent: "center",
-                  pointerEvents: "none",
-                  zIndex: 2,
-                }}
-              >
-                <img
-                  src={logoUrl || ""}
-                  alt=""
-                  draggable={false}
-                  decoding="async"
-                  onError={() => setLogoFailed(true)}
-                  style={{
-                    display: "block",
-                    maxWidth: "78%",
-                    maxHeight: "100%",
-                    width: "auto",
-                    height: "auto",
-                    objectFit: "contain",
-                    filter: "drop-shadow(0 2px 5px rgba(0,0,0,.82))",
-                  }}
-                />
-              </div>
-            ) : null}
 
             {watch && Number(watch.percent || 0) > 0 && (
               <div className="netflix-standard-card-progress-track" aria-hidden="true">

@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v6";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v7";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -43,6 +43,37 @@ function firstNonTmdbArtwork(...values: any[]) {
     if (resolved) return resolved;
   }
   return null;
+}
+
+/**
+ * Curated card sources whose images are expected to already contain their
+ * merchandising title treatment. StreamingCommunity mappings and artwork
+ * deliberately hosted in GitHub can therefore be used without any logo layer.
+ */
+export function isEmbeddedCardArtwork(value: any) {
+  const url = firstNonTmdbArtwork(value);
+  if (!url) return false;
+  return (
+    /cdn\.streamingcommunityz\.ninja\/images\//i.test(url) ||
+    /raw\.githubusercontent\.com\//i.test(url) ||
+    /(?:^|\.)githubusercontent\.com\//i.test(url) ||
+    /github\.com\/[^/]+\/[^/]+\/(?:raw|blob)\//i.test(url) ||
+    /cdn\.jsdelivr\.net\/gh\//i.test(url)
+  );
+}
+
+function fallbackSource(url: any, mapped: boolean) {
+  if (mapped) return "streamingcommunity_mapping";
+  const text = String(url || "");
+  if (
+    /raw\.githubusercontent\.com\//i.test(text) ||
+    /(?:^|\.)githubusercontent\.com\//i.test(text) ||
+    /github\.com\/[^/]+\/[^/]+\/(?:raw|blob)\//i.test(text) ||
+    /cdn\.jsdelivr\.net\/gh\//i.test(text)
+  ) {
+    return "github_embedded";
+  }
+  return "saved_embedded";
 }
 
 export function buildMediaAssetFallback(item: any, mediaType: any) {
@@ -92,23 +123,25 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
   const savedLandscapeEmbedded = !!(
     item?.backdrop_embedded_title_treatment ||
     item?.embedded_title_treatment ||
-    item?.has_embedded_title_treatment
+    item?.has_embedded_title_treatment ||
+    isEmbeddedCardArtwork(savedLandscape)
   );
   const savedPosterEmbedded = !!(
     item?.poster_embedded_title_treatment ||
-    item?.has_embedded_poster_title_treatment
+    item?.has_embedded_poster_title_treatment ||
+    isEmbeddedCardArtwork(savedPoster)
   );
 
-  // A static catalogue card is publishable only when the title treatment is
-  // guaranteed: either it is embedded in the merchandising artwork or a real
-  // transparent logo is available to layer on top. Existing CDN card mappings
-  // are curated title-bearing card/poster assets and remain valid as embedded.
-  const cardBackdrop = mappedBackdrop || savedLandscape || null;
-  const cardPoster = mappedPoster || savedPoster || null;
-  const cardBackdropEmbedded = !!(mappedBackdrop || (savedLandscape && savedLandscapeEmbedded));
-  const cardPosterEmbedded = !!(mappedPoster || (savedPoster && savedPosterEmbedded));
-  const cardReady = !!(cardBackdrop && (cardBackdropEmbedded || savedLogo));
-  const posterReady = !!(cardPoster && (cardPosterEmbedded || savedLogo));
+  // Static cards are embedded-only. StreamingCommunity mappings are curated
+  // cover/card artwork with the title already inside the image. A saved GitHub
+  // artwork URL is also treated as curated embedded artwork. A separate logo is
+  // retained for Hero/Detail/hover but never makes a clean static card valid.
+  const cardBackdrop = mappedBackdrop || (savedLandscapeEmbedded ? savedLandscape : null);
+  const cardPoster = mappedPoster || (savedPosterEmbedded ? savedPoster : null);
+  const cardBackdropEmbedded = !!cardBackdrop;
+  const cardPosterEmbedded = !!cardPoster;
+  const cardReady = !!cardBackdrop;
+  const posterReady = !!cardPoster;
 
   return {
     tmdbId: id,
@@ -122,7 +155,9 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     logo_path: savedLogo || null,
     backdrop_embedded_title_treatment: cardBackdropEmbedded,
     poster_embedded_title_treatment: cardPosterEmbedded,
-    hero_embedded_title_treatment: cardBackdropEmbedded,
+    hero_embedded_title_treatment: !!(
+      savedLandscape && (savedLandscapeEmbedded || isEmbeddedCardArtwork(savedLandscape))
+    ),
     card_ready: cardReady,
     top10_ready: posterReady,
     landscape_card_ready: cardReady,
@@ -132,7 +167,13 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "required-title-treatment_embedded-or-real-logo_it-first_v6_no-tmdb-images",
+    image_source_policy: "embedded-title-treatment-only_streamingcommunity-or-github-first_v7_no-tmdb-images",
+    backdrop_source: cardBackdrop
+      ? fallbackSource(cardBackdrop, !!mappedBackdrop && cardBackdrop === mappedBackdrop)
+      : null,
+    poster_source: cardPoster
+      ? fallbackSource(cardPoster, !!mappedPoster && cardPoster === mappedPoster)
+      : null,
     mapped_backdrop: mappedBackdrop,
     mapped_poster: mappedPoster,
   };
@@ -148,22 +189,34 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
   );
   const officialLogo = firstNonTmdbArtwork(official?.logo_url);
 
-  const backdrop = officialLandscape || fallback?.backdrop_path || null;
-  const poster = officialPoster || fallback?.poster_path || null;
+  const officialLandscapeEmbedded = !!(
+    officialLandscape && official?.backdrop_embedded_title_treatment
+  );
+  const officialPosterEmbedded = !!(
+    officialPoster && official?.poster_embedded_title_treatment
+  );
+
+  const fallbackLandscape = fallback?.backdrop_embedded_title_treatment
+    ? firstNonTmdbArtwork(fallback?.backdrop_path)
+    : null;
+  const fallbackPoster = fallback?.poster_embedded_title_treatment
+    ? firstNonTmdbArtwork(fallback?.poster_path)
+    : null;
+
+  // Prefer the curated StreamingCommunity/GitHub fallback whenever present.
+  // Official provider artwork is accepted for a static card only if the resolver
+  // explicitly verified that its title treatment is already embedded.
+  const backdrop = fallbackLandscape || (officialLandscapeEmbedded ? officialLandscape : null);
+  const poster = fallbackPoster || (officialPosterEmbedded ? officialPoster : null);
   const hero = officialHero || fallback?.hero_backdrop_path || backdrop || null;
   const logo = officialLogo || fallback?.logo_path || null;
 
-  const backdropEmbedded = officialLandscape
-    ? !!official?.backdrop_embedded_title_treatment
-    : !!fallback?.backdrop_embedded_title_treatment;
-  const posterEmbedded = officialPoster
-    ? !!official?.poster_embedded_title_treatment
-    : !!fallback?.poster_embedded_title_treatment;
-
-  // Never publish a plain static card. A title is valid only when the selected
-  // image already contains its title treatment or a real logo can be overlaid.
-  const cardReady = !!(backdrop && (backdropEmbedded || logo));
-  const top10Ready = !!(poster && (posterEmbedded || logo));
+  const usingFallbackBackdrop = !!fallbackLandscape && backdrop === fallbackLandscape;
+  const usingFallbackPoster = !!fallbackPoster && poster === fallbackPoster;
+  const backdropEmbedded = !!backdrop;
+  const posterEmbedded = !!poster;
+  const cardReady = !!backdrop;
+  const top10Ready = !!poster;
 
   return {
     ...fallback,
@@ -177,13 +230,17 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     netflix_logo_url: official?.logo_source === "netflix" ? officialLogo : null,
     official_artwork_source:
       official?.backdrop_source || official?.poster_source || official?.hero_backdrop_source || null,
-    backdrop_source: official?.backdrop_source || (fallback?.mapped_backdrop ? "existing_mapping" : null),
-    poster_source: official?.poster_source || (fallback?.mapped_poster ? "existing_mapping" : null),
+    backdrop_source: usingFallbackBackdrop
+      ? (fallback?.backdrop_source || "embedded_fallback")
+      : (official?.backdrop_source || null),
+    poster_source: usingFallbackPoster
+      ? (fallback?.poster_source || "embedded_fallback")
+      : (official?.poster_source || null),
     hero_backdrop_source: official?.hero_backdrop_source || null,
     logo_source: official?.logo_source || (fallback?.logo_path ? "saved_non_tmdb" : null),
     logo_locale: official?.logo_locale || null,
-    backdrop_locale: official?.backdrop_locale || null,
-    poster_locale: official?.poster_locale || null,
+    backdrop_locale: usingFallbackBackdrop ? null : (official?.backdrop_locale || null),
+    poster_locale: usingFallbackPoster ? null : (official?.poster_locale || null),
     hero_backdrop_locale: official?.hero_backdrop_locale || null,
     backdrop_embedded_title_treatment: backdropEmbedded,
     poster_embedded_title_treatment: posterEmbedded,
@@ -198,7 +255,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
     image_source_policy:
-      official?.policy || "required-title-treatment_embedded-or-real-logo_it-first_v6_no-tmdb-images",
+      "embedded-title-treatment-only_streamingcommunity-or-github-first_v7_no-tmdb-images",
     upscaled: false,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
