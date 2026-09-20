@@ -1,0 +1,137 @@
+/* Final phone-only corrections taken from the real iPhone preview.
+   Nothing in this file applies at 900px or above. */
+@media (max-width: 899px) {
+  /* Do not let the first shelf climb into the hero controls. */
+  [data-testid="home-rows"] {
+    margin-top: 0 !important;
+    padding-top: 16px !important;
+    background: linear-gradient(to bottom, #050505 0, #050505 100%) !important;
+  }
+  [data-testid="home-rows"] > #continua,
+  [data-testid="home-rows"] > .compact-row:first-child {
+    margin-top: 0 !important;
+  }
+
+  /* Rails are native horizontal strips on phone. React-slick inline widths are
+     overridden so the visible geometry is deterministic on iPhone/Android. */
+  .slider-row .slick-list {
+    width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    scroll-snap-type: x proximity !important;
+  }
+  .slider-row .slick-list::-webkit-scrollbar { display: none !important; }
+  .slider-row .slick-track {
+    display: flex !important;
+    width: max-content !important;
+    min-width: max-content !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+  .slider-row .slick-slide {
+    float: none !important;
+    height: auto !important;
+    scroll-snap-align: start !important;
+  }
+
+  /* Every ordinary shelf = true vertical SC poster, three across. */
+  .slider-row:not(.top10-row):not(#continua) .slick-slide {
+    width: 31vw !important;
+    min-width: 31vw !important;
+    max-width: 31vw !important;
+  }
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-root,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-link,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-frame,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-image-wrap {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 2 / 3 !important;
+    min-height: 0 !important;
+    border-radius: 3px !important;
+    overflow: hidden !important;
+  }
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+    aspect-ratio: 2 / 3 !important;
+    object-fit: cover !important;
+    border-radius: 3px !important;
+  }
+
+  /* Continue Watching is the only landscape rail. Keep integrated-title covers
+     and progress; show about 2.4 items instead of poster sizing. */
+  #continua .slick-slide {
+    width: 41vw !important;
+    min-width: 41vw !important;
+    max-width: 41vw !important;
+  }
+  #continua .netflix-standard-card-root,
+  #continua .netflix-standard-card-link,
+  #continua .netflix-standard-card-frame,
+  #continua .netflix-standard-card-image-wrap,
+  #continua .netflix-standard-card-image {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 16 / 9 !important;
+  }
+  #continua .netflix-standard-card-image { object-fit: cover !important; }
+
+  /* Top 10 follows the SC phone composition: dominant outlined number + true
+     vertical poster. About 2.35 ranked cards are visible, with the next rank
+     deliberately peeking rather than being hard-clipped. */
+  .top10-row {
+    margin-top: 22px !important;
+    margin-bottom: 26px !important;
+  }
+  .top10-row .slick-slide {
+    width: 42vw !important;
+    min-width: 42vw !important;
+    max-width: 42vw !important;
+  }
+  .top10-row .netflix-ranked-card-root {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 1.08 / 1 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+  .top10-row .netflix-ranked-card-link {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+  }
+  .top10-row .netflix-ranked-card-rank {
+    left: -2% !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 58% !important;
+  }
+  .top10-row .netflix-ranked-card-poster-wrap {
+    right: 0 !important;
+    top: 1.5% !important;
+    bottom: 1.5% !important;
+    width: 52% !important;
+    border-radius: 3px !important;
+  }
+  .top10-row .netflix-ranked-card-poster {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+
+  /* Better vertical rhythm under the invasive hero. */
+  .slider-row { margin-top: 18px !important; margin-bottom: 22px !important; }
+  .slider-row.compact-row { margin-top: 0 !important; margin-bottom: 18px !important; }
+  .slider-row .row-header { margin-bottom: 8px !important; }
+  .slider-row .row-header .label { font-size: 16px !important; }
+
+  /* Keep the phone footer compact and away from content. */
+  .flixit-mobile-bottom-nav {
+    height: calc(58px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
