@@ -3,263 +3,292 @@ import { useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   MEDIA_ASSET_QUALITY_VERSION,
-  DAILY_ARTWORK_REFRESH_MS,
   mediaTypeSlug,
   buildMediaAssetFallback,
   mergeOfficialArtwork,
 } from "./useAutomaticMediaAssets";
 
-const MAX_BATCH = 40;
-const PRIMARY_BATCH_SIZE = 40;
-const MAX_ACTIVE_BATCHES = 4;
-const STORAGE_PREFIX = `flix-artwork-raw:${MEDIA_ASSET_QUALITY_VERSION}:`;
+const SC_CATALOG_URL = "/sc-artwork-catalog.json";
+const SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/";
+const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v1"];
 
-const memoryCache = new Map<string, { savedAt: number; value: any }>();
-const pendingJobs = new Map<string, any>();
-const inFlightJobs = new Map<string, any>();
-let activeBatches = 0;
-let sequence = 0;
-let pumpScheduled = false;
+type NormalizedEntry = {
+  item: any;
+  id: number;
+  type: "movie" | "tv";
+  key: string;
+};
 
-function normalizeItem(item: any) {
-  const id = item?.id || item?.tmdbId || item?.tmdb_id;
+type CatalogIndex = {
+  count: number;
+  byTitle: Map<string, any[]>;
+};
+
+let catalogPromise: Promise<CatalogIndex> | null = null;
+let catalogMemory: CatalogIndex | null = null;
+
+function normalizeText(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractYear(value: any) {
+  const match = String(value || "").match(/(?:19|20)\d{2}/);
+  return match ? Number(match[0]) : null;
+}
+
+function normalizeItem(item: any): NormalizedEntry | null {
+  const id = Number(item?.id || item?.tmdbId || item?.tmdb_id || 0);
   if (!id) return null;
-  const type = mediaTypeSlug(item?.media_type || item?.type, item);
-  return { item, id: Number(id), type, key: `${type}:${Number(id)}` };
+  const type = mediaTypeSlug(item?.media_type || item?.type, item) === "tv" ? "tv" : "movie";
+  return { item, id, type, key: `${type}:${id}` };
 }
 
 function uniqueItems(items: any[]) {
   const seen = new Set<string>();
-  const out: any[] = [];
+  const out: NormalizedEntry[] = [];
   for (const item of items || []) {
-    const normalized = normalizeItem(item);
-    if (!normalized || !normalized.id || seen.has(normalized.key)) continue;
-    seen.add(normalized.key);
-    out.push(normalized);
+    const entry = normalizeItem(item);
+    if (!entry || seen.has(entry.key)) continue;
+    seen.add(entry.key);
+    out.push(entry);
   }
   return out;
 }
 
-function fresh(savedAt: number) {
-  return !!savedAt && Date.now() - Number(savedAt) < DAILY_ARTWORK_REFRESH_MS;
-}
-
-function readStored(entry: any) {
-  const cached = memoryCache.get(entry.key);
-  if (cached && fresh(cached.savedAt)) return cached.value;
-  if (cached) memoryCache.delete(entry.key);
-
-  if (typeof window === "undefined") return null;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_PREFIX + entry.key) || "null");
-    if (!parsed || !fresh(parsed.savedAt) || !parsed.value) return null;
-    memoryCache.set(entry.key, parsed);
-    return parsed.value;
-  } catch {
-    return null;
-  }
-}
-
-function writeStored(entry: any, value: any) {
-  if (!value) return;
-  const record = { savedAt: Date.now(), value };
-  memoryCache.set(entry.key, record);
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_PREFIX + entry.key, JSON.stringify(record));
-  } catch {}
-}
-
-function cachedValues(entries: any[]) {
-  return entries.map(readStored).filter(Boolean);
-}
-
-function schedulePump() {
-  if (pumpScheduled) return;
-  pumpScheduled = true;
-  Promise.resolve().then(() => {
-    pumpScheduled = false;
-    pumpQueue();
+function titleVariants(item: any) {
+  const raw = [
+    item?.title,
+    item?.name,
+    item?.original_title,
+    item?.original_name,
+  ].filter(Boolean);
+  const out = new Set<string>();
+  raw.forEach((value) => {
+    const text = String(value || "").trim();
+    if (!text) return;
+    [
+      text,
+      text.split(/[:|–—]/, 1)[0],
+      text.replace(/\([^)]*\)/g, " "),
+    ].forEach((candidate) => {
+      const normalized = normalizeText(candidate);
+      if (normalized) out.add(normalized);
+    });
   });
+  return [...out];
 }
 
-function takeNextBatch() {
-  const jobs = [...pendingJobs.values()]
-    .sort((a, b) => a.priority - b.priority || a.sequence - b.sequence)
-    .slice(0, MAX_BATCH);
-  jobs.forEach((job) => {
-    pendingJobs.delete(job.entry.key);
-    inFlightJobs.set(job.entry.key, job);
+function buildIndex(payload: any): CatalogIndex {
+  const rows = Array.isArray(payload?.titles) ? payload.titles : [];
+  const byTitle = new Map<string, any[]>();
+  rows.forEach((row: any) => {
+    const key = normalizeText(row?.name || row?.title || row?.slug);
+    if (!key) return;
+    const bucket = byTitle.get(key) || [];
+    bucket.push(row);
+    byTitle.set(key, bucket);
   });
-  return jobs;
+  return { count: Number(payload?.count || rows.length || 0), byTitle };
 }
 
-async function runBatch(jobs: any[]) {
-  if (!jobs.length) return;
-  activeBatches += 1;
-  try {
-    const response = await fetch("/api/public/official-artwork/batch", {
-      method: "POST",
-      cache: "no-store",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        items: jobs.map((job) => ({ type: job.entry.type, tmdbId: job.entry.id })),
-      }),
+async function loadCatalog(): Promise<CatalogIndex> {
+  if (catalogMemory) return catalogMemory;
+  if (catalogPromise) return catalogPromise;
+
+  catalogPromise = fetch(SC_CATALOG_URL, {
+    cache: "force-cache",
+    headers: { Accept: "application/json" },
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
+      const index = buildIndex(await response.json());
+      catalogMemory = index;
+      return index;
+    })
+    .catch(() => {
+      const empty = { count: 0, byTitle: new Map<string, any[]>() };
+      catalogMemory = empty;
+      return empty;
     });
 
-    if (!response.ok) throw new Error(`artwork batch ${response.status}`);
-    const payload = await response.json();
-    const resultMap = new Map<string, any>();
-    for (const raw of payload?.items || []) {
-      const id = Number(raw?.tmdbId || raw?.tmdb_id || 0);
-      const type = raw?.type === "tv" ? "tv" : "movie";
-      if (id) resultMap.set(`${type}:${id}`, raw);
-    }
-
-    for (const job of jobs) {
-      const value = resultMap.get(job.entry.key) || null;
-      if (value) writeStored(job.entry, value);
-      job.waiters.forEach((resolve: any) => resolve(value));
-    }
-  } catch {
-    jobs.forEach((job) => job.waiters.forEach((resolve: any) => resolve(null)));
-  } finally {
-    jobs.forEach((job) => inFlightJobs.delete(job.entry.key));
-    activeBatches -= 1;
-    schedulePump();
-  }
+  return catalogPromise;
 }
 
-function pumpQueue() {
-  while (activeBatches < MAX_ACTIVE_BATCHES && pendingJobs.size > 0) {
-    const jobs = takeNextBatch();
-    if (!jobs.length) break;
-    void runBatch(jobs);
-  }
+function recordType(row: any) {
+  const raw = String(row?.type || "").toLowerCase();
+  if (raw === "tv" || raw.includes("serie") || raw.includes("show")) return "tv";
+  if (raw === "movie" || raw.includes("film")) return "movie";
+  return null;
 }
 
-function enqueue(entry: any, priority: number) {
-  const cached = readStored(entry);
-  if (cached) return Promise.resolve(cached);
+function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
+  const variants = titleVariants(entry.item);
+  const candidates: any[] = [];
+  const seen = new Set<any>();
 
-  return new Promise((resolve) => {
-    const existing = pendingJobs.get(entry.key) || inFlightJobs.get(entry.key);
-    if (existing) {
-      existing.priority = Math.min(existing.priority, priority);
-      existing.waiters.push(resolve);
-    } else {
-      pendingJobs.set(entry.key, {
-        entry,
-        priority,
-        sequence: sequence++,
-        waiters: [resolve],
-      });
-    }
-    schedulePump();
+  variants.forEach((variant) => {
+    (index.byTitle.get(variant) || []).forEach((row) => {
+      if (!seen.has(row)) {
+        seen.add(row);
+        candidates.push(row);
+      }
+    });
   });
+  if (!candidates.length) return null;
+
+  const expectedYear = extractYear(
+    entry.item?.release_date || entry.item?.first_air_date || entry.item?.year
+  );
+
+  return candidates
+    .map((row) => {
+      let score = 0;
+      const type = recordType(row);
+      if (type) score += type === entry.type ? 20 : -20;
+      const rowYear = extractYear(row?.year);
+      if (expectedYear && rowYear) {
+        if (expectedYear === rowYear) score += 12;
+        else if (Math.abs(expectedYear - rowYear) === 1) score += 3;
+        else score -= 6;
+      }
+      const images = row?.images || {};
+      if (images.cover || images.cover_desktop) score += 10;
+      if (images.cover_mobile) score += 5;
+      if (images.poster) score += 2;
+      return { row, score };
+    })
+    .sort((a, b) => b.score - a.score)[0]?.row || null;
 }
 
-async function resolveMany(entries: any[], priority: number) {
-  const values = await Promise.all(entries.map((entry) => enqueue(entry, priority)));
-  return values.filter(Boolean);
+function cdnUrl(value: any) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `${SC_CDN_BASE}${raw.replace(/^\/+/, "")}`;
 }
 
-function mergeRaw(...groups: any[][]) {
-  const map = new Map<string, any>();
-  groups.flat().forEach((raw) => {
-    const id = Number(raw?.tmdbId || raw?.tmdb_id || 0);
-    const type = raw?.type === "tv" ? "tv" : "movie";
-    if (id) map.set(`${type}:${id}`, raw);
-  });
-  return [...map.values()];
+function role(images: any, keys: string[]) {
+  for (const key of keys) {
+    const value = cdnUrl(images?.[key]);
+    if (value) return value;
+  }
+  return null;
 }
 
-/**
- * Progressive artwork hydration.
- *
- * The first 40 candidates of each row are urgent. Four browser batches may be
- * active so several visible Home rows can progress together instead of later
- * rows appearing permanently empty. Duplicate title requests are still
- * coalesced globally and successful provider decisions remain cached for 24h.
- */
+function officialFromCatalog(entry: NormalizedEntry, row: any, catalogSize: number) {
+  if (!row) return null;
+  const images = row?.images || {};
+
+  const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile", "poster"]);
+  const poster = role(images, ["cover_mobile", "cover", "poster", "poster_mobile"]);
+  if (!landscape && !poster) return null;
+
+  const card = landscape || poster;
+  const ranked = poster || landscape;
+  const background = role(images, ["background", "backdrop", "hero", "wallpaper"]) || card;
+  const logo = role(images, ["logo", "title_logo", "title-treatment", "title_treatment"]);
+
+  return {
+    active: true,
+    type: entry.type,
+    tmdbId: entry.id,
+    title: entry.item?.title || entry.item?.name || row?.name || "",
+    backdrop_url: card,
+    poster_url: ranked,
+    hero_backdrop_url: background,
+    detail_backdrop_url: background,
+    logo_url: logo,
+    backdrop_source: "streamingcommunity",
+    poster_source: "streamingcommunity",
+    hero_backdrop_source: "streamingcommunity",
+    logo_source: logo ? "streamingcommunity" : null,
+    backdrop_locale: "it",
+    poster_locale: "it",
+    hero_backdrop_locale: "it",
+    logo_locale: logo ? "it" : null,
+    backdrop_embedded_title_treatment: !!card,
+    poster_embedded_title_treatment: !!ranked,
+    hero_embedded_title_treatment: background === card || background === ranked,
+    embedded_title_treatment: !!card,
+    landscape_card_ready: !!card,
+    poster_card_ready: !!ranked,
+    card_ready: !!card,
+    top10_ready: !!ranked,
+    complete: !!card && !!ranked,
+    sc_cover_imported: true,
+    sc_catalog_hit: true,
+    sc_catalog_size: catalogSize,
+    sc_provider_id: row?.id || row?.slug || null,
+    sc_provider_name: row?.name || null,
+    version: "official-artwork-v12-static-sc-catalog",
+  };
+}
+
 export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const queryClient = useQueryClient();
   const normalized = useMemo(() => uniqueItems(items), [items]);
-  const primary = useMemo(() => normalized.slice(0, PRIMARY_BATCH_SIZE), [normalized]);
-  const background = useMemo(() => normalized.slice(PRIMARY_BATCH_SIZE), [normalized]);
-  const primarySignature = useMemo(() => primary.map((entry) => entry.key).join("|"), [primary]);
-  const backgroundSignature = useMemo(() => background.map((entry) => entry.key).join("|"), [background]);
 
-  const primaryQuery = useQuery({
-    queryKey: ["artwork-batch-primary", MEDIA_ASSET_QUALITY_VERSION, primarySignature],
-    queryFn: () => resolveMany(primary, 0),
-    enabled: !!enabled && primary.length > 0,
-    placeholderData: () => cachedValues(primary),
-    staleTime: DAILY_ARTWORK_REFRESH_MS,
-    gcTime: DAILY_ARTWORK_REFRESH_MS * 7,
+  const catalogQuery = useQuery({
+    queryKey: STATIC_CATALOG_KEY,
+    queryFn: loadCatalog,
+    enabled: !!enabled && normalized.length > 0,
+    staleTime: Infinity,
+    gcTime: Infinity,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
-    retry: 2,
+    refetchOnReconnect: false,
+    retry: 1,
   });
 
-  const backgroundQuery = useQuery({
-    queryKey: ["artwork-batch-background", MEDIA_ASSET_QUALITY_VERSION, backgroundSignature],
-    queryFn: () => resolveMany(background, 1),
-    enabled: !!enabled && background.length > 0,
-    placeholderData: () => cachedValues(background),
-    staleTime: DAILY_ARTWORK_REFRESH_MS,
-    gcTime: DAILY_ARTWORK_REFRESH_MS * 7,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
-    retry: 2,
-  });
-
-  const data = useMemo(
-    () => mergeRaw(primaryQuery.data || [], backgroundQuery.data || []),
-    [primaryQuery.data, backgroundQuery.data]
-  );
+  const data = useMemo(() => {
+    const index = catalogQuery.data;
+    if (!index || !index.count) return [];
+    return normalized
+      .map((entry) => officialFromCatalog(entry, bestRecord(entry, index), index.count))
+      .filter(Boolean);
+  }, [catalogQuery.data, normalized]);
 
   const byKey = useMemo(() => {
     const map = new Map<string, any>();
-    for (const raw of data) {
+    data.forEach((raw: any) => {
       const id = Number(raw?.tmdbId || raw?.tmdb_id || 0);
       const type = raw?.type === "tv" ? "tv" : "movie";
       if (id) map.set(`${type}:${id}`, raw);
-    }
+    });
     return map;
   }, [data]);
 
   useEffect(() => {
     if (!data.length) return;
-    for (const entry of normalized) {
+    normalized.forEach((entry) => {
       const official = byKey.get(entry.key);
-      if (!official) continue;
+      if (!official) return;
       const fallback = buildMediaAssetFallback(entry.item, entry.type);
-      const merged = mergeOfficialArtwork(fallback, official);
       queryClient.setQueryData(
         ["media-assets", MEDIA_ASSET_QUALITY_VERSION, entry.type, entry.id],
-        merged
+        mergeOfficialArtwork(fallback, official)
       );
-    }
+    });
   }, [data, byKey, normalized, queryClient]);
 
   const getResolved = (item: any) => {
     const entry = normalizeItem(item);
     if (!entry) return null;
     const fallback = buildMediaAssetFallback(item, entry.type);
-    const official = byKey.get(entry.key) || readStored(entry);
+    const official = byKey.get(entry.key);
     return official ? mergeOfficialArtwork(fallback, official) : fallback;
   };
 
-  const isReady = (item: any, role: "landscape" | "poster" = "landscape") => {
+  const isReady = (item: any, targetRole: "landscape" | "poster" = "landscape") => {
     const resolved = getResolved(item);
     if (!resolved) return false;
-    return role === "poster" ? !!resolved.top10_ready : !!resolved.card_ready;
+    return targetRole === "poster" ? !!resolved.top10_ready : !!resolved.card_ready;
   };
 
   return {
@@ -268,10 +297,11 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     getResolved,
     isReady,
     count: normalized.length,
-    isPending: primaryQuery.isPending && !primaryQuery.data?.length,
-    isFetching: primaryQuery.isFetching || backgroundQuery.isFetching,
-    primaryPending: primaryQuery.isPending,
-    backgroundPending: backgroundQuery.isPending,
-    error: primaryQuery.error || backgroundQuery.error,
+    catalogCount: Number(catalogQuery.data?.count || 0),
+    isPending: catalogQuery.isPending && !data.length,
+    isFetching: catalogQuery.isFetching,
+    primaryPending: catalogQuery.isPending,
+    backgroundPending: false,
+    error: catalogQuery.error,
   };
 }
