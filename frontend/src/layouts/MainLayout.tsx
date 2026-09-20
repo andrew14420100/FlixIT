@@ -12,9 +12,8 @@ import MainLoadingScreen from "src/components/MainLoadingScreen";
 import AuthModal from "src/components/auth/AuthModal";
 import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
-import "src/components/mobile/mobile-reference.css";
-import "src/components/mobile/mobile-reference-fixes.css";
-import "src/components/mobile/mobile-screenshot-fix.css";
+import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
+import "src/components/mobile/mobile-sc-exact.css";
 
 export default function MainLayout() {
   const location = useLocation();
@@ -35,6 +34,7 @@ export default function MainLayout() {
     <Box sx={{ width: "100%", minHeight: "100vh", bgcolor: "background.default", margin: 0, padding: 0, overflowX: "hidden" }}>
       <MainHeader />
       <MobileSCExperience />
+      <MobileSCExactAssets />
       <AuthModal />
       <SessionGuards />
       {navigation.state !== "idle" && <MainLoadingScreen />}
