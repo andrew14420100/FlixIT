@@ -1,0 +1,177 @@
+/* Final mobile Home refinements. No Liquid Glass or iOS imitation. */
+@media (max-width: 899px) {
+  html.flixit-home-reference body {
+    padding-bottom: calc(94px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-rows"] {
+    padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Continue Watching: same 2:3 poster geometry as every other standard row. */
+  html.flixit-home-reference #continua .slick-slide {
+    width: 38vw !important;
+    max-width: 170px !important;
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-root,
+  html.flixit-home-reference #continua .netflix-standard-card-link,
+  html.flixit-home-reference #continua .netflix-standard-card-frame,
+  html.flixit-home-reference #continua .netflix-standard-card-image-wrap {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 2 / 3 !important;
+    border-radius: 3px !important;
+    overflow: hidden !important;
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+  }
+
+  /* Top 10: SC-style composition while keeping the original desktop rank SVG.
+     Poster keeps the same size/height as the other mobile posters; the number
+     sits across the lower-left edge and remains clearly visible. */
+  html.flixit-home-reference .top10-row .slider,
+  html.flixit-home-reference .top10-row .show-peek {
+    padding-left: 16px !important;
+  }
+
+  html.flixit-home-reference .top10-row .slick-slide {
+    width: 39.2vw !important;
+    max-width: 176px !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference .top10-row .slick-slide > div,
+  html.flixit-home-reference .top10-row .slider-item {
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-root,
+  html.flixit-home-reference .top10-row .netflix-ranked-card-link {
+    width: 100% !important;
+    height: 57vw !important;
+    max-height: 255px !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    position: relative !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-poster-wrap {
+    position: absolute !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: auto !important;
+    left: auto !important;
+    width: 38vw !important;
+    max-width: 170px !important;
+    height: 57vw !important;
+    max-height: 255px !important;
+    aspect-ratio: 2 / 3 !important;
+    z-index: 2 !important;
+    border-radius: 3px !important;
+    overflow: hidden !important;
+    background: #151515 !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-poster {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-rank {
+    position: absolute !important;
+    left: -9.5vw !important;
+    top: auto !important;
+    bottom: -0.5vw !important;
+    width: 34.2vw !important;
+    max-width: 154px !important;
+    height: 21vw !important;
+    max-height: 95px !important;
+    z-index: 3 !important;
+    display: block !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-rank-svg {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+    opacity: .72 !important;
+  }
+
+  /* Floating bottom navigation, normal FLIXIT styling. No glass/blur effects. */
+  html.flixit-home-reference .flixit-mobile-bottom-nav {
+    position: fixed !important;
+    left: 10px !important;
+    right: 10px !important;
+    bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+    width: auto !important;
+    height: 72px !important;
+    padding: 4px 5px !important;
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    align-items: center !important;
+    border-radius: 18px !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    background: rgba(7,7,8,.98) !important;
+    box-shadow: 0 8px 28px rgba(0,0,0,.42) !important;
+    overflow: hidden !important;
+    z-index: 13000 !important;
+  }
+
+  html.flixit-home-reference .flixit-mobile-bottom-nav > button {
+    position: relative !important;
+    height: 64px !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 3px 0 !important;
+    border: 0 !important;
+    border-radius: 14px !important;
+    background: transparent !important;
+    color: rgba(255,255,255,.72) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent !important;
+  }
+
+  html.flixit-home-reference .flixit-mobile-bottom-nav > button svg {
+    box-sizing: content-box !important;
+    width: 27px !important;
+    height: 27px !important;
+    padding: 4px 10px !important;
+    border-radius: 999px !important;
+    transition: transform .12s ease, background-color .12s ease !important;
+  }
+
+  html.flixit-home-reference .flixit-mobile-bottom-nav > button span {
+    font-size: clamp(11px, 3vw, 12.5px) !important;
+    line-height: 1 !important;
+    font-weight: 500 !important;
+  }
+
+  html.flixit-home-reference .flixit-mobile-bottom-nav > button.is-active {
+    color: #e50914 !important;
+  }
+
+  html.flixit-home-reference .flixit-mobile-bottom-nav > button.is-active svg {
+    background: rgba(255,255,255,.12) !important;
+  }
+
+  html.flixit-home-reference .flixit-mobile-bottom-nav > button:active svg {
+    transform: scale(.92) !important;
+    background: rgba(255,255,255,.16) !important;
+  }
+}
