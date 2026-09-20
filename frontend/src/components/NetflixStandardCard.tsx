@@ -57,6 +57,12 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   // part of the artwork itself. Never compose a separate logo over a clean image.
   if (!src || !embeddedTitleTreatment) return null;
 
+  const removeFromContinueWatching = (event: any) => {
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    watch?.onRemove?.();
+  };
+
   return (
     <div
       ref={ref}
@@ -102,6 +108,18 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
           </div>
         </div>
       </a>
+
+      {watch?.onRemove ? (
+        <button
+          type="button"
+          className="netflix-standard-card-remove"
+          aria-label={`Rimuovi ${title || "contenuto"} da Continua a guardare`}
+          title="Rimuovi da Continua a guardare"
+          onClick={removeFromContinueWatching}
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      ) : null}
     </div>
   );
 });
