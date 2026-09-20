@@ -38,9 +38,15 @@ function absoluteAsset(value: any, cdnBase: string) {
   return `${cdnBase.replace(/\/+$/, "")}/${raw.replace(/^\/+/, "")}`;
 }
 
+function normalizeType(value: any) {
+  const raw = String(value || "").toLowerCase();
+  return raw === "tv" || raw.includes("serie") || raw.includes("show") ? "tv" : "movie";
+}
+
 type PosterIndex = {
   byArtwork: Map<string, string>;
   byTitle: Map<string, { movie?: string; tv?: string; any?: string }>;
+  byTmdb: Map<string, string>;
 };
 
 let posterIndexPromise: Promise<PosterIndex> | null = null;
@@ -60,6 +66,7 @@ async function loadPosterIndex(): Promise<PosterIndex> {
       const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
       const byArtwork = new Map<string, string>();
       const byTitle = new Map<string, { movie?: string; tv?: string; any?: string }>();
+      const byTmdb = new Map<string, string>();
 
       rows.forEach((row: any) => {
         const images = row?.images || {};
@@ -81,18 +88,21 @@ async function loadPosterIndex(): Promise<PosterIndex> {
           if (key) byArtwork.set(key, poster);
         });
 
+        const type = normalizeType(row?.type);
+        const tmdbId = Number(row?.tmdb_id || row?.tmdbId || row?.ids?.tmdbId || row?.ids?.tmdb_id || 0);
+        if (tmdbId) byTmdb.set(`${type}:${tmdbId}`, poster);
+
         const titleKey = normalize(row?.name || row?.title || row?.slug?.replace(/-/g, " "));
         if (!titleKey) return;
         const bucket = byTitle.get(titleKey) || {};
-        const type = String(row?.type || "").toLowerCase() === "tv" ? "tv" : "movie";
         if (!bucket[type]) bucket[type] = poster;
         if (!bucket.any) bucket.any = poster;
         byTitle.set(titleKey, bucket);
       });
 
-      return { byArtwork, byTitle };
+      return { byArtwork, byTitle, byTmdb };
     })
-    .catch(() => ({ byArtwork: new Map(), byTitle: new Map() }));
+    .catch(() => ({ byArtwork: new Map(), byTitle: new Map(), byTmdb: new Map() }));
   return posterIndexPromise;
 }
 
@@ -102,6 +112,12 @@ function titlePoster(index: PosterIndex, title: string, type?: string | null) {
   if (type === "tv") return bucket.tv || bucket.any || "";
   if (type === "movie") return bucket.movie || bucket.any || "";
   return bucket.any || bucket.movie || bucket.tv || "";
+}
+
+function routeIdentity(href: string) {
+  const match = String(href || "").match(/\/browse\/(movie|tv)\/(\d+)/i);
+  if (!match) return null;
+  return { type: match[1].toLowerCase(), id: Number(match[2]) };
 }
 
 function hydrateMobilePosters(index: PosterIndex) {
@@ -115,12 +131,19 @@ function hydrateMobilePosters(index: PosterIndex) {
     const img = root.querySelector<HTMLImageElement>("img.netflix-standard-card-image");
     if (!link || !img) return;
 
-    const href = link.getAttribute("href") || "";
-    const type = /\/browse\/tv\//.test(href) ? "tv" : /\/browse\/movie\//.test(href) ? "movie" : null;
+    const identity = routeIdentity(link.getAttribute("href") || "");
     const currentKey = assetKey(img.currentSrc || img.src);
-    const poster = index.byArtwork.get(currentKey) || titlePoster(index, link.getAttribute("aria-label") || "", type);
-    if (!poster) return;
+    const poster =
+      (identity ? index.byTmdb.get(`${identity.type}:${identity.id}`) : "") ||
+      index.byArtwork.get(currentKey) ||
+      titlePoster(index, link.getAttribute("aria-label") || "", identity?.type || null);
 
+    if (!poster) {
+      root.classList.add("flixit-mobile-poster-missing");
+      return;
+    }
+
+    root.classList.remove("flixit-mobile-poster-missing");
     root.classList.add("flixit-mobile-poster");
     if (img.src !== poster) img.src = poster;
     const rect = root.getBoundingClientRect();
@@ -133,20 +156,36 @@ function hydrateMobilePosters(index: PosterIndex) {
   document.querySelectorAll<HTMLElement>('[data-testid^="horizontal-card-"]').forEach((root) => {
     const img = root.querySelector<HTMLImageElement>("img");
     if (!img) return;
+    const id = Number((root.getAttribute("data-testid") || "").replace("horizontal-card-", ""));
     const currentKey = assetKey(img.currentSrc || img.src);
-    const poster = index.byArtwork.get(currentKey) || titlePoster(index, img.alt || "");
+    const poster =
+      index.byTmdb.get(`movie:${id}`) ||
+      index.byTmdb.get(`tv:${id}`) ||
+      index.byArtwork.get(currentKey) ||
+      titlePoster(index, img.alt || "");
     if (!poster) return;
     root.classList.add("flixit-mobile-list-poster");
     if (img.src !== poster) img.src = poster;
   });
 
+  document.querySelectorAll<HTMLElement>('[data-testid^="account-item-"]').forEach((root) => {
+    const img = root.querySelector<HTMLImageElement>("img");
+    const id = Number((root.getAttribute("data-testid") || "").replace("account-item-", ""));
+    if (!img || !id) return;
+    const poster = index.byTmdb.get(`movie:${id}`) || index.byTmdb.get(`tv:${id}`) || titlePoster(index, img.alt || "");
+    if (poster && img.src !== poster) img.src = poster;
+  });
+
   document.querySelectorAll<HTMLElement>('[data-testid^="search-result-"]').forEach((row) => {
     const img = row.querySelector<HTMLImageElement>("img");
     const titleNode = row.querySelector<HTMLElement>(".MuiTypography-root");
+    const id = Number((row.getAttribute("data-testid") || "").replace("search-result-", ""));
     if (!img || !titleNode) return;
     const allText = row.textContent || "";
     const type = /Serie TV/i.test(allText) ? "tv" : /Film/i.test(allText) ? "movie" : null;
-    const poster = titlePoster(index, titleNode.textContent || "", type);
+    const poster =
+      (id && type ? index.byTmdb.get(`${type}:${id}`) : "") ||
+      titlePoster(index, titleNode.textContent || "", type);
     if (poster && img.src !== poster) img.src = poster;
   });
 }
