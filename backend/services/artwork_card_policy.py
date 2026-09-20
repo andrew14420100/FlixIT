@@ -5,9 +5,9 @@ Static catalogue cards are intentionally stricter than Hero/Detail:
   contains a title treatment;
 - a Top 10 poster is published only when its portrait image already contains the
   title treatment;
-- every published card must also have a genuine separate logo available for its
-  hover trailer;
-- clean artwork + a separate logo remains valid for Hero, Detail and hover;
+- a separate logo is optional and is used only by Hero, Detail and hover;
+- clean artwork + a separate logo remains valid for Hero, Detail and hover, but
+  never for the static catalogue card itself;
 - Italian merchandising art outranks higher-resolution foreign art;
 - no TMDB image URL is introduced here.
 """
@@ -18,7 +18,7 @@ from typing import Any, Optional
 import services.official_artwork as artwork_module
 from services.official_artwork import OfficialArtworkResolver
 
-POLICY_VERSION = "official-artwork-v4"
+POLICY_VERSION = "official-artwork-v5"
 _INSTALLED = False
 
 
@@ -286,8 +286,10 @@ def install_artwork_card_policy() -> None:
             static_poster = _choose_static(providers, "poster")
             hero_landscape = _choose_hero(providers, logo_url) or static_landscape
 
-            landscape_ready = bool(static_landscape and logo_url)
-            poster_ready = bool(static_poster and logo_url)
+            # Static readiness depends only on the selected image already having
+            # its title treatment. A separate logo is no longer required.
+            landscape_ready = bool(static_landscape)
+            poster_ready = bool(static_poster)
 
             resolved = {
                 "active": bool(static_landscape or static_poster or hero_landscape or logo_url),
@@ -336,7 +338,7 @@ def install_artwork_card_policy() -> None:
                     }
                     for provider in providers
                 ],
-                "policy": "static-embedded-title-treatment_plus-hover-logo_it-first_then-native-quality_no-tmdb-images",
+                "policy": "static-embedded-title-treatment-only_it-first_then-native-quality_no-tmdb-images",
                 "version": POLICY_VERSION,
             }
 
