@@ -14,6 +14,7 @@ import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import "src/components/mobile/mobile-reference.css";
 import "src/components/mobile/mobile-reference-fixes.css";
+import "src/components/mobile/mobile-screenshot-fix.css";
 
 export default function MainLayout() {
   const location = useLocation();
