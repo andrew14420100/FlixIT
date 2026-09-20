@@ -16,8 +16,6 @@ from fastapi import Body, HTTPException, Query
 import server_core as _core
 from server_core import *  # noqa: F401,F403 - preserve existing imports/contracts
 
-# server_core still owns TMDB metadata/external-id resolution. Artwork selection
-# is handled separately and never promotes TMDB images in the public UI.
 if getattr(_core, "TMDB_API_KEY", None):
     os.environ.setdefault("TMDB_API_KEY", str(_core.TMDB_API_KEY))
 
@@ -25,7 +23,6 @@ from services.netflix_artwork_quality import install_netflix_artwork_quality
 from services.trailer_daily_policy import install_trailer_daily_policy
 from services.artwork_card_policy import install_artwork_card_policy, POLICY_VERSION
 
-# Install policies before the application lifespan starts its background workers.
 install_netflix_artwork_quality()
 install_trailer_daily_policy()
 install_artwork_card_policy()
@@ -37,6 +34,9 @@ from services.omni_process import omni_lifespan, omni_status
 app = _core.app
 ROME_TZ = ZoneInfo("Europe/Rome")
 DAILY_REFRESH_HOUR = 6
+SC_IMPORT_PAGES = 10
+SC_IMPORT_LIMIT = 1600
+SC_IMPORT_CHUNK = 24
 
 _official_artwork = OfficialArtworkResolver(
     _core.db,
@@ -44,6 +44,17 @@ _official_artwork = OfficialArtworkResolver(
     lambda: getattr(_core._player, "artwork_resolver", None),
 )
 app.state.official_artwork_resolver = _official_artwork
+
+_sc_import_state = {
+    "running": False,
+    "catalog_candidates": 0,
+    "processed": 0,
+    "sc_imported": 0,
+    "card_ready": 0,
+    "last_started_at": None,
+    "last_finished_at": None,
+    "version": POLICY_VERSION,
+}
 
 
 @app.get("/api/public/official-artwork/{media_type}/{tmdb_id}", tags=["artwork"])
@@ -150,12 +161,7 @@ def _media_identity(row: dict):
 
 @app.get("/api/public/flixit-top10", tags=["catalog"])
 async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
-    """Top 10 driven primarily by recent real FlixIT activity.
-
-    Recent watch activity dominates the score. Local ratings and all-time views
-    are secondary signals, while public popularity/votes are only tie-breakers.
-    No artwork is sourced here; cards hydrate it through the official batch API.
-    """
+    """Top 10 driven primarily by recent real FlixIT activity."""
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=int(hours))
     candidates: dict[tuple[str, int], dict] = {}
@@ -175,8 +181,6 @@ async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
             }
         return candidates[key]
 
-    # watch_progress is unique per user/title, so counting rows approximates
-    # unique recent watchers rather than raw playback-event spam.
     try:
         progress_rows = list(
             _core.db["watch_progress"].find(
@@ -217,8 +221,6 @@ async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
         if not entry["latest_activity"] or updated > entry["latest_activity"]:
             entry["latest_activity"] = updated
 
-    # Existing site view counter is useful as a secondary long-term popularity
-    # signal and also fills the list for a new installation with sparse history.
     try:
         view_rows = list(
             _core.db["content_views"].find({}, {"_id": 0}).sort("views", -1).limit(300)
@@ -250,8 +252,6 @@ async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
         entry["rating_sum"] += min(10.0, rating)
         entry["rating_count"] += 1
 
-    # Preselect before metadata enrichment: recent FlixIT behavior is the main
-    # source of truth, not a global popularity feed.
     def pre_score(entry):
         views_signal = min(100.0, math.log1p(max(0.0, entry["views"])) * 14.0)
         rating = (
@@ -262,7 +262,6 @@ async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
         return entry["recent_score"] * 7.0 + views_signal * 0.18 + rating * 2.0
 
     pool = sorted(candidates.values(), key=pre_score, reverse=True)[:30]
-
     semaphore = asyncio.Semaphore(8)
 
     async def enrich(entry):
@@ -272,7 +271,6 @@ async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
         async with semaphore:
             data = await _core.fetch_tmdb_data(endpoint) or {}
         title = data.get("name") if media_type == "tv" else data.get("title")
-        release_date = data.get("first_air_date") if media_type == "tv" else data.get("release_date")
         popularity = max(0.0, _safe_number(data.get("popularity")))
         vote_count = max(0.0, _safe_number(data.get("vote_count")))
         vote_average = max(0.0, min(10.0, _safe_number(data.get("vote_average"))))
@@ -340,7 +338,6 @@ _core_lifespan = app.router.lifespan_context
 
 
 def _seconds_until_rome_refresh(hour: int = DAILY_REFRESH_HOUR) -> float:
-    """DST-safe delay until the next 06:00 Europe/Rome refresh window."""
     now = datetime.now(ROME_TZ)
     target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
     if target <= now:
@@ -349,33 +346,149 @@ def _seconds_until_rome_refresh(hour: int = DAILY_REFRESH_HOUR) -> float:
 
 
 async def _warm_daily_catalog() -> None:
-    """Warm the public catalogue metadata used by Home/Cinema/Serie after 06:00.
-
-    This does not publish TMDB artwork. It only refreshes title/catalog identity,
-    popularity, votes and release data so the frontend can rebuild its daily
-    partially-dynamic rows from fresh metadata without making the first user wait.
-    """
-    calls = [
-        ("/trending/movie/day", {"page": 1}),
-        ("/trending/tv/day", {"page": 1}),
-        ("/movie/now_playing", {"page": 1}),
-        ("/movie/now_playing", {"page": 2}),
-        ("/movie/upcoming", {"page": 1}),
-        ("/movie/popular", {"page": 1}),
-        ("/movie/top_rated", {"page": 1}),
-        ("/tv/on_the_air", {"page": 1}),
-        ("/tv/airing_today", {"page": 1}),
-        ("/tv/popular", {"page": 1}),
-        ("/tv/top_rated", {"page": 1}),
-    ]
+    calls = []
+    for page in range(1, 5):
+        calls.extend(
+            [
+                ("/trending/movie/day", {"page": page}),
+                ("/trending/tv/day", {"page": page}),
+                ("/movie/now_playing", {"page": page}),
+                ("/movie/upcoming", {"page": page}),
+                ("/movie/popular", {"page": page}),
+                ("/movie/top_rated", {"page": page}),
+                ("/tv/on_the_air", {"page": page}),
+                ("/tv/airing_today", {"page": page}),
+                ("/tv/popular", {"page": page}),
+                ("/tv/top_rated", {"page": page}),
+            ]
+        )
     await asyncio.gather(
         *(_core.fetch_tmdb_data(endpoint, dict(params)) for endpoint, params in calls),
         return_exceptions=True,
     )
 
 
+async def _catalog_cover_candidates() -> list[tuple[str, int]]:
+    """Collect a broad current movie/TV catalogue whose SC covers can be cached."""
+    calls: list[tuple[str, str, int]] = []
+    movie_endpoints = (
+        "/trending/movie/day",
+        "/movie/now_playing",
+        "/movie/upcoming",
+        "/movie/popular",
+        "/movie/top_rated",
+    )
+    tv_endpoints = (
+        "/trending/tv/day",
+        "/tv/on_the_air",
+        "/tv/airing_today",
+        "/tv/popular",
+        "/tv/top_rated",
+    )
+    for page in range(1, SC_IMPORT_PAGES + 1):
+        calls.extend(("movie", endpoint, page) for endpoint in movie_endpoints)
+        calls.extend(("tv", endpoint, page) for endpoint in tv_endpoints)
+
+    semaphore = asyncio.Semaphore(12)
+
+    async def fetch_one(media_type: str, endpoint: str, page: int):
+        async with semaphore:
+            try:
+                payload = await _core.fetch_tmdb_data(endpoint, {"page": page}) or {}
+            except Exception:
+                return []
+            rows = payload.get("results") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                rows = payload.get("items") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                return []
+            out = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                try:
+                    tmdb_id = int(row.get("id") or row.get("tmdbId") or row.get("tmdb_id"))
+                except Exception:
+                    continue
+                if tmdb_id > 0:
+                    out.append((media_type, tmdb_id))
+            return out
+
+    groups = await asyncio.gather(
+        *(fetch_one(media_type, endpoint, page) for media_type, endpoint, page in calls),
+        return_exceptions=True,
+    )
+    seen = set()
+    out = []
+    for group in groups:
+        if not isinstance(group, list):
+            continue
+        for key in group:
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+            if len(out) >= SC_IMPORT_LIMIT:
+                return out
+    return out
+
+
+async def _warm_sc_cover_catalog(stop: asyncio.Event | None = None) -> None:
+    """Progressively import/cache SC covers for the current FLIX-IT catalogue."""
+    if _sc_import_state.get("running"):
+        return
+
+    _sc_import_state.update(
+        {
+            "running": True,
+            "catalog_candidates": 0,
+            "processed": 0,
+            "sc_imported": 0,
+            "card_ready": 0,
+            "last_started_at": datetime.now(timezone.utc).isoformat(),
+            "version": POLICY_VERSION,
+        }
+    )
+    try:
+        candidates = await _catalog_cover_candidates()
+        _sc_import_state["catalog_candidates"] = len(candidates)
+
+        for offset in range(0, len(candidates), SC_IMPORT_CHUNK):
+            if stop is not None and stop.is_set():
+                break
+            chunk = candidates[offset : offset + SC_IMPORT_CHUNK]
+            results = await asyncio.gather(
+                *(_official_artwork.resolve(media_type, tmdb_id) for media_type, tmdb_id in chunk),
+                return_exceptions=True,
+            )
+            for result in results:
+                _sc_import_state["processed"] += 1
+                if not isinstance(result, dict):
+                    continue
+                if result.get("sc_cover_imported"):
+                    _sc_import_state["sc_imported"] += 1
+                if result.get("card_ready"):
+                    _sc_import_state["card_ready"] += 1
+            # Stay background-friendly while still filling the cache quickly.
+            await asyncio.sleep(0.08)
+    finally:
+        _sc_import_state["running"] = False
+        _sc_import_state["last_finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+async def _startup_sc_cover_import(stop: asyncio.Event) -> None:
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=2.5)
+        return
+    except asyncio.TimeoutError:
+        pass
+    try:
+        await _warm_sc_cover_catalog(stop)
+    except Exception:
+        pass
+
+
 async def _daily_visual_maintenance(stop: asyncio.Event) -> None:
-    """Refresh catalogue/artwork every day at 06:00 Europe/Rome."""
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=_seconds_until_rome_refresh())
@@ -388,10 +501,15 @@ async def _daily_visual_maintenance(stop: asyncio.Event) -> None:
             if callable(clear):
                 clear()
             await _warm_daily_catalog()
-            await _official_artwork.refresh_daily(limit=300)
+            await _official_artwork.refresh_daily(limit=600)
+            await _warm_sc_cover_catalog(stop)
         except Exception:
-            # Maintenance is best-effort and must never take down the API.
             pass
+
+
+@app.get("/api/system/sc-cover-import-status", tags=["system"])
+async def flixit_sc_cover_import_status():
+    return dict(_sc_import_state)
 
 
 @asynccontextmanager
@@ -400,12 +518,18 @@ async def flixit_lifespan(app):
         async with omni_lifespan(app):
             stop = asyncio.Event()
             maintenance_task = asyncio.create_task(_daily_visual_maintenance(stop))
+            cover_import_task = asyncio.create_task(_startup_sc_cover_import(stop))
             try:
                 yield
             finally:
                 stop.set()
                 maintenance_task.cancel()
-                await asyncio.gather(maintenance_task, return_exceptions=True)
+                cover_import_task.cancel()
+                await asyncio.gather(
+                    maintenance_task,
+                    cover_import_task,
+                    return_exceptions=True,
+                )
 
 
 app.router.lifespan_context = flixit_lifespan
@@ -413,12 +537,10 @@ app.router.lifespan_context = flixit_lifespan
 
 @app.get("/api/system/omni-health", tags=["system"])
 async def flixit_omni_health():
-    """Small staging diagnostic for the local Node runtime."""
     return await omni_status(app)
 
 
 def __getattr__(name):
-    """Proxy legacy/private attributes to server_core for compatibility."""
     return getattr(_core, name)
 
 

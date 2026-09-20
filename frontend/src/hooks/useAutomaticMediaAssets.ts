@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v10-sc-preferred";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v11-sc-exhaustive";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -45,11 +45,6 @@ function firstNonTmdbArtwork(...values: any[]) {
   return null;
 }
 
-/**
- * Curated card sources whose images are expected to already contain their
- * merchandising title treatment. StreamingCommunity mappings and artwork
- * deliberately hosted in GitHub can therefore be used without any logo layer.
- */
 export function isEmbeddedCardArtwork(value: any) {
   const url = firstNonTmdbArtwork(value);
   if (!url) return false;
@@ -80,8 +75,6 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
   const typeSlug = mediaTypeSlug(mediaType, item);
   const id = item?.id || item?.tmdbId || item?.tmdb_id;
 
-  // `detail_backdrop` is a clean scene/background on SC and must never be used
-  // as a static catalogue card. Only the SC cover/backdrop mapping is valid.
   const mappedBackdrop = id ? getCDNImageUrl(Number(id), "backdrop") : null;
   const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
   const mappedDetailBackdrop = id ? getCDNImageUrl(Number(id), "detail_backdrop") : null;
@@ -128,8 +121,6 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     isEmbeddedCardArtwork(savedLandscape)
   );
 
-  // Keep only real SC mapping artwork as the immediate static fallback. Saved
-  // clean artwork remains available for Hero/Detail/hover, not for the card.
   const cardBackdrop = mappedBackdrop || null;
   const cardPoster = mappedPoster || null;
   const cardBackdropEmbedded = !!cardBackdrop;
@@ -161,7 +152,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-preferred_v10_no-detail-background-as-card",
+    image_source_policy: "streamingcommunity-exhaustive_v11_no-detail-background-as-card",
     backdrop_source: cardBackdrop
       ? fallbackSource(cardBackdrop, !!mappedBackdrop && cardBackdrop === mappedBackdrop)
       : null,
@@ -202,11 +193,6 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     ? firstNonTmdbArtwork(fallback?.poster_path)
     : null;
 
-  // SC always wins when the dynamic resolver finds its title-bearing cover.
-  // If SC is temporarily unavailable or has not resolved that title yet, keep
-  // any other provider artwork only when the backend explicitly marks the title
-  // treatment as embedded. This prevents entire rows from disappearing while
-  // still never compositing a separate logo on the static card.
   const backdrop = officialIsStreamingCommunity && officialLandscapeEmbedded
     ? officialLandscape
     : (fallbackLandscape || (officialLandscapeEmbedded ? officialLandscape : null));
@@ -259,8 +245,11 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     poster_card_ready: top10Ready,
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-preferred_v10_no-detail-background-as-card",
+    image_source_policy: "streamingcommunity-exhaustive_v11_no-detail-background-as-card",
     upscaled: false,
+    sc_cover_imported: !!official?.sc_cover_imported,
+    sc_provider_id: official?.sc_provider_id || null,
+    sc_provider_name: official?.sc_provider_name || null,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
 }
@@ -297,7 +286,7 @@ export default function useAutomaticMediaAssets(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: false,
-    retry: 1,
+    retry: 2,
   });
 
   return { ...fallback, ...(query.data || {}) };

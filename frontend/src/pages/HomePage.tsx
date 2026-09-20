@@ -32,13 +32,12 @@ import {
   msUntilNextRomeRefresh,
 } from "src/utils/dailyRefresh";
 
-// Netflix-like progressive row mounting: only the rows near the viewport start
-// their metadata/artwork work. More rows are mounted shortly before the user
-// reaches them, preventing the Home from launching every section at once.
-const INITIAL_ROWS = 4;
-const ROWS_PER_LOAD = 3;
-const ROW_ITEM_LIMIT = 120;
-const HOME_CACHE_PREFIX = "flix-home-v10";
+const INITIAL_ROWS = 6;
+const ROWS_PER_LOAD = 4;
+const ROW_ITEM_LIMIT = 240;
+const CLAIM_LIMIT = 60;
+const PAGES_PER_SECTION = 10;
+const HOME_CACHE_PREFIX = "flix-home-v11";
 const DYNAMIC_SHARE_DEFAULT = 0.25;
 const DYNAMIC_SHARE_FAST_ROWS = 0.50;
 const FLIXIT_TOP10_URL = "/api/public/flixit-top10?hours=48";
@@ -323,14 +322,10 @@ function buildDailySnapshot(incomingData, type) {
   const valid = uniqueItems(incomingData?.items || []);
   return {
     ...(incomingData || {}),
-    items: valid.slice(0, type === "top10" ? 10 : 120),
+    items: valid.slice(0, type === "top10" ? 10 : ROW_ITEM_LIMIT),
   };
 }
 
-// These endpoints are all asked for multiple pages. Endpoints that ignore the
-// page parameter simply dedupe back to their normal result; endpoints that
-// support pagination give the row enough candidates to publish ~50 complete
-// title-treatment cards after artwork validation and cross-row dedupe.
 const PAGED_TYPES = new Set([
   "trending",
   "new_releases",
@@ -344,21 +339,27 @@ const PAGED_TYPES = new Set([
   "upcoming",
 ]);
 
+async function fetchPaged(url, refreshBucket, count = PAGES_PER_SECTION) {
+  const pages = await Promise.all(
+    Array.from({ length: count }, (_, index) => index + 1).map((page) =>
+      freshFetchJson(withPage(url, page), { items: [] }, refreshBucket)
+    )
+  );
+  return {
+    ...(pages[0] || {}),
+    items: uniqueItems(pages.flatMap((part) => part?.items || [])),
+  };
+}
+
 async function fetchSectionPayload(section, url, refreshBucket) {
   const type = section.section_type || section.apiString;
 
   if (type === "latest") {
-    const urls = [
-      "/api/public/homepage/latest",
-      withPage("/api/public/tmdb/now_playing", 1),
-      withPage("/api/public/tmdb/now_playing", 2),
-      withPage("/api/public/tmdb/now_playing", 3),
-      withPage("/api/public/tmdb/now_playing", 4),
-      withPage("/api/public/tmdb/on_the_air", 1),
-      withPage("/api/public/tmdb/on_the_air", 2),
-      withPage("/api/public/tmdb/on_the_air", 3),
-      withPage("/api/public/tmdb/on_the_air", 4),
-    ];
+    const urls = ["/api/public/homepage/latest"];
+    for (let page = 1; page <= 8; page += 1) {
+      urls.push(withPage("/api/public/tmdb/now_playing", page));
+      urls.push(withPage("/api/public/tmdb/on_the_air", page));
+    }
     const parts = await Promise.all(
       urls.map((candidate) => freshFetchJson(candidate, { items: [] }, refreshBucket))
     );
@@ -372,15 +373,7 @@ async function fetchSectionPayload(section, url, refreshBucket) {
   }
 
   if (PAGED_TYPES.has(type)) {
-    const pages = await Promise.all(
-      [1, 2, 3, 4].map((page) =>
-        freshFetchJson(withPage(url, page), { items: [] }, refreshBucket)
-      )
-    );
-    return {
-      ...(pages[0] || {}),
-      items: uniqueItems(pages.flatMap((part) => part?.items || [])),
-    };
+    return fetchPaged(url, refreshBucket);
   }
 
   return freshFetchJson(url, { items: [] }, refreshBucket);
@@ -457,7 +450,7 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
   const cacheIsCurrent = cacheBelongsToCurrentRomeWindow(initialCache?.savedAt);
 
   const { data, isPending } = useQuery({
-    queryKey: ["home-row-v10", refreshBucket, sectionSignature(section), url],
+    queryKey: ["home-row-v11", refreshBucket, sectionSignature(section), url],
     queryFn: async () => {
       const incoming = await fetchSectionPayload(section, url, refreshBucket);
       const snapshot = buildDailySnapshot(incoming, type);
@@ -471,7 +464,7 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
     refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    retry: 1,
+    retry: 2,
   });
 
   const rows = useHomeDedupe((s) => s.rows);
@@ -484,16 +477,33 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
     if (isTop10) return ranked.slice(0, 10);
 
     const taken = claimedAbove(rows, index, section.key);
-    return ranked
-      .filter((item) => !taken.has(itemKey(item)))
-      .slice(0, ROW_ITEM_LIMIT);
+    const uniqueFirst = ranked.filter((item) => !taken.has(itemKey(item)));
+    const selected = [...uniqueFirst];
+    const selectedKeys = new Set(selected.map(itemKey));
+
+    // Cross-row dedupe remains the first choice.  If it would starve a section,
+    // refill from that section's own ranked catalogue instead of rendering an
+    // empty row.  The slider still validates every artwork before publishing.
+    if (selected.length < 100) {
+      for (const item of ranked) {
+        const key = itemKey(item);
+        if (!key || selectedKeys.has(key)) continue;
+        selectedKeys.add(key);
+        selected.push(item);
+        if (selected.length >= ROW_ITEM_LIMIT) break;
+      }
+    }
+
+    return selected.slice(0, ROW_ITEM_LIMIT);
   }, [data, isPending, rows, index, section.key, isTop10, type, engagementMap]);
 
   useEffect(() => {
     if (!isPending || data) onSettled();
   }, [isPending, data, onSettled]);
 
-  const idsKey = items ? items.map(itemKey).filter(Boolean).join("|") : "";
+  const idsKey = items
+    ? items.slice(0, CLAIM_LIMIT).map(itemKey).filter(Boolean).join("|")
+    : "";
   useEffect(() => {
     if (idsKey) claim(section.key, index, idsKey.split("|"));
     else release(section.key);
@@ -545,7 +555,7 @@ export function Component() {
   );
   const engagementCurrent = cacheBelongsToCurrentRomeWindow(initialEngagement?.savedAt);
   const { data: engagementPayload = initialEngagement?.data || {} } = useQuery({
-    queryKey: ["home-engagement-v10", refreshBucket],
+    queryKey: ["home-engagement-v11", refreshBucket],
     queryFn: async () => {
       const payload = await freshFetchJson(
         FLIXIT_TOP10_URL,
@@ -562,7 +572,7 @@ export function Component() {
     refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    retry: 1,
+    retry: 2,
   });
   const engagementMap = useMemo(
     () => buildEngagementMap(engagementPayload),
@@ -577,7 +587,7 @@ export function Component() {
   const feedCacheCurrent = cacheBelongsToCurrentRomeWindow(initialFeedCache?.savedAt);
 
   const { data: feed = null } = useQuery({
-    queryKey: ["home-feed-v10", refreshBucket, userId, preferenceSignature],
+    queryKey: ["home-feed-v11", refreshBucket, userId, preferenceSignature],
     queryFn: async () => {
       const [secData, tplData] = await Promise.all([
         freshFetchJson("/api/public/sections", { sections: [] }, refreshBucket),
@@ -608,7 +618,7 @@ export function Component() {
     refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    retry: 1,
+    retry: 2,
   });
 
   useEffect(() => {
@@ -651,7 +661,7 @@ export function Component() {
           });
         }
       },
-      { rootMargin: "1100px 0px" }
+      { rootMargin: "1600px 0px" }
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -719,9 +729,7 @@ export function Component() {
 
         {feed && feed.length === 0 && (
           <Box sx={{ textAlign: "center", py: 8 }}>
-            <Typography color="grey.500">
-              Nessuna sezione disponibile.
-            </Typography>
+            <Typography color="grey.500">Nessuna sezione disponibile.</Typography>
           </Box>
         )}
 

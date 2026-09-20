@@ -21,9 +21,10 @@ type AnchorData = {
 
 /**
  * Netflix-style hover intent + expansion.
- * Every card, including the first visible tile, expands from its own centre.
- * We only clamp the final modal to the viewport when it would physically leave
- * the screen; there is no permanent left/right bias on edge cards.
+ *
+ * The preview closes only when the pointer actually leaves the card/preview.
+ * Wheel, touchmove and page scroll no longer force-close it: this fixes the
+ * disappearing hover when the user scrolls with the mouse over the preview.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -117,22 +118,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   useEffect(() => clearTimers, [clearTimers]);
 
-  useEffect(() => {
-    if (!open) return;
-    const closeForScroll = () => {
-      clearTimers();
-      finishClose();
-    };
-    window.addEventListener("scroll", closeForScroll, { passive: true });
-    window.addEventListener("wheel", closeForScroll, { passive: true });
-    window.addEventListener("touchmove", closeForScroll, { passive: true });
-    return () => {
-      window.removeEventListener("scroll", closeForScroll);
-      window.removeEventListener("wheel", closeForScroll);
-      window.removeEventListener("touchmove", closeForScroll);
-    };
-  }, [open, clearTimers, finishClose]);
-
   return {
     open,
     intent,
@@ -177,7 +162,6 @@ export function ExpandOverlay({
       const card = position.cardRect as DOMRect;
       const scale = 1 / SCALE_FACTOR;
 
-      // Same formula for every tile: final modal centre == source card centre.
       const desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
       const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
 
@@ -197,8 +181,6 @@ export function ExpandOverlay({
         Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
       );
 
-      // Reset geometry maps the shrunken modal exactly over the original card,
-      // so the opening motion grows around the card centre instead of drifting.
       const scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
       const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
       const resetX = Math.round(card.left - scaledLeft);
@@ -224,10 +206,7 @@ export function ExpandOverlay({
   const card = position.cardRect as DOMRect;
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
   const fallbackLeft = Math.min(
-    Math.max(
-      card.left + card.width / 2 - modalWidth / 2,
-      VIEWPORT_GUTTER
-    ),
+    Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
     Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
   );
   const left = geometry?.left ?? fallbackLeft;
