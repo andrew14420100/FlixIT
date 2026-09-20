@@ -14,6 +14,7 @@ import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
 import "src/components/mobile/mobile-sc-exact.css";
+import "src/components/mobile/mobile-home-reference.css";
 
 export default function MainLayout() {
   const location = useLocation();
