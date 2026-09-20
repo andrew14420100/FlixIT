@@ -1,6 +1,5 @@
 // @ts-nocheck
-import { useEffect, useMemo } from "react";
-import { flushSync } from "react-dom";
+import { useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
@@ -17,6 +16,7 @@ export default function MobileGlobalBottomNav() {
   const location = useLocation();
   const navigate = useNavigate();
   const isWatch = location.pathname.startsWith("/watch");
+  const previousIndexRef = useRef(0);
 
   const items = useMemo(
     () => [
@@ -44,6 +44,36 @@ export default function MobileGlobalBottomNav() {
     return -1;
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (!isMobile || isWatch) return;
+    const root = document.documentElement;
+    root.classList.remove("flixit-mobile-route-pending");
+
+    const stage = document.querySelector<HTMLElement>(".flixit-route-stage");
+    if (!stage || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      previousIndexRef.current = activeIndex >= 0 ? activeIndex : previousIndexRef.current;
+      return;
+    }
+
+    const previous = previousIndexRef.current;
+    const current = activeIndex >= 0 ? activeIndex : previous;
+    const direction = current >= previous ? 1 : -1;
+    previousIndexRef.current = current;
+
+    stage.getAnimations?.().forEach((animation) => animation.cancel());
+    stage.animate(
+      [
+        { opacity: 0.72, transform: `translate3d(${10 * direction}px, 0, 0) scale(.995)` },
+        { opacity: 1, transform: "translate3d(0,0,0) scale(1)" },
+      ],
+      {
+        duration: 230,
+        easing: "cubic-bezier(.16,1,.3,1)",
+        fill: "both",
+      }
+    );
+  }, [location.pathname, activeIndex, isMobile, isWatch]);
+
   if (!isMobile || isWatch) return null;
 
   const openSearch = () => {
@@ -52,7 +82,7 @@ export default function MobileGlobalBottomNav() {
     trigger?.click();
     window.setTimeout(
       () => document.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus(),
-      80
+      60
     );
   };
 
@@ -63,28 +93,9 @@ export default function MobileGlobalBottomNav() {
     }
     if (location.pathname === path) return;
 
-    const perform = () => {
-      flushSync(() => navigate(path));
-      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    };
-
-    const startViewTransition = (document as any).startViewTransition;
-    if (typeof startViewTransition === "function") {
-      startViewTransition.call(document, perform);
-    } else {
-      document.documentElement.classList.add("flixit-mobile-route-fallback");
-      window.setTimeout(() => {
-        perform();
-        requestAnimationFrame(() => {
-          document.documentElement.classList.remove("flixit-mobile-route-fallback");
-          document.documentElement.classList.add("flixit-mobile-route-enter");
-          window.setTimeout(
-            () => document.documentElement.classList.remove("flixit-mobile-route-enter"),
-            360
-          );
-        });
-      }, 90);
-    }
+    document.documentElement.classList.add("flixit-mobile-route-pending");
+    navigate(path);
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   };
 
   return (
