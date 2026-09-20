@@ -1,0 +1,54 @@
+name: Apply SC artwork UI fixes
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/apply_sc_artwork_ui_fixes.py
+      - .github/workflows/apply-sc-artwork-ui-fixes.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sc-artwork-ui-fixes
+  cancel-in-progress: true
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply SC logo and Top 10 fixes
+        run: python scripts/apply_sc_artwork_ui_fixes.py
+
+      - name: Validate backend patch
+        run: |
+          python -m py_compile backend/services/sc_artwork_catalog.py
+          grep -q 'catalog_cdn = str(payload.get("cdn_base_url")' backend/services/sc_artwork_catalog.py
+          grep -q 'keys = ("poster", "poster_mobile", "cover_mobile")' backend/services/sc_artwork_catalog.py
+          grep -q 'title: detailData?.name || detailData?.title' frontend/src/components/HeroSection.tsx
+          grep -q '.slice(0, 240);' frontend/src/components/Top10Slider.tsx
+
+      - name: Commit patched application files
+        run: |
+          if git diff --quiet -- backend/services/sc_artwork_catalog.py frontend/src/components/HeroSection.tsx frontend/src/components/Top10Slider.tsx; then
+            echo "SC artwork UI fixes already applied"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/services/sc_artwork_catalog.py frontend/src/components/HeroSection.tsx frontend/src/components/Top10Slider.tsx
+          git commit -m "fix: use SC logos and real Top 10 posters"
+          git pull --rebase origin main
+          git push origin HEAD:main
