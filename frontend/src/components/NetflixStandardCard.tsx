@@ -60,9 +60,15 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
 
   const src = candidates[candidateIndex] || null;
   // A provider merchandising image that already contains its own title treatment
-  // must be shown untouched. Otherwise compose the real transparent provider
-  // logo over the artwork; never synthesize the title as text.
+  // is valid as-is. Every clean image must instead have a genuine transparent
+  // logo layered over it; a missing/broken logo is never allowed to leave a
+  // backdrop-only card visible.
   const showRealLogo = Boolean(src && logoUrl && !logoFailed && !embeddedTitleTreatment);
+  const visualReady = Boolean(
+    src && (embeddedTitleTreatment || (logoUrl && !logoFailed))
+  );
+
+  if (!visualReady) return null;
 
   return (
     <div
@@ -84,21 +90,17 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
             className="netflix-standard-card-image-wrap"
             style={{ position: "relative", overflow: "hidden" }}
           >
-            {src ? (
-              <img
-                src={src}
-                alt=""
-                width="342"
-                height="192"
-                loading="lazy"
-                decoding="async"
-                draggable={false}
-                onError={() => setCandidateIndex((index) => index + 1)}
-                className="standard-card tracked-card netflix-standard-card-image"
-              />
-            ) : (
-              <div className="netflix-standard-card-placeholder" aria-hidden="true" />
-            )}
+            <img
+              src={src || ""}
+              alt=""
+              width="342"
+              height="192"
+              loading="lazy"
+              decoding="async"
+              draggable={false}
+              onError={() => setCandidateIndex((index) => index + 1)}
+              className="standard-card tracked-card netflix-standard-card-image"
+            />
 
             {showRealLogo ? (
               <div
