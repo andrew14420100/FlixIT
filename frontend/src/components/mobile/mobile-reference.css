@@ -1,0 +1,198 @@
+/* Definitive mobile layout. Only <=899px. Desktop/tablet >=900px is untouched. */
+@media (max-width: 899px) {
+  :root { --m-pad: 14px; --m-nav: 62px; --m-bg: #050505; }
+  html.flixit-mobile-sc, html.flixit-mobile-sc body, html.flixit-mobile-sc #root {
+    width: 100%; min-width: 0; overflow-x: hidden; background: var(--m-bg); color: #fff;
+  }
+  html.flixit-mobile-sc body { padding-bottom: calc(var(--m-nav) + env(safe-area-inset-bottom,0px)); }
+
+  /* HEADER */
+  [data-testid="main-header"] {
+    height: 56px !important; min-height: 56px !important; padding: 0 12px !important;
+    background: linear-gradient(to bottom, rgba(0,0,0,.76), rgba(0,0,0,.08)) !important;
+    box-shadow: none !important; border: 0 !important; backdrop-filter: none !important;
+  }
+  [data-testid="main-header"] .MuiToolbar-root { height: 56px !important; min-height: 56px !important; gap: 8px !important; }
+  [data-testid="main-header"] .flixit-logo { margin-right: auto !important; }
+  [data-testid="main-header"] .flixit-logo svg { height: 24px !important; width: auto !important; }
+  [data-testid="main-header"] .flixit-logo + .MuiBox-root { display: none !important; }
+  [data-testid="main-header"] button:has(svg[data-testid="MenuIcon"]) { display: none !important; }
+  [data-testid="main-header"] [data-testid="search-box"] > div {
+    width: 34px !important; min-width: 34px !important; max-width: 34px !important; height: 34px !important;
+    padding: 0 !important; border: 0 !important; background: transparent !important; justify-content: center !important;
+  }
+  [data-testid="main-header"] [data-testid="search-box"] input { display: none !important; }
+  [data-testid="main-header"] [data-testid="header-login-button"] {
+    height: 34px !important; min-width: 0 !important; padding: 0 12px !important; border-radius: 5px !important; font-size: 12px !important;
+  }
+  [data-testid="main-header"] [data-testid="header-avatar"] { width: 30px !important; height: 30px !important; border-radius: 5px !important; }
+
+  /* HOME HERO: tall / invasive exactly like reference */
+  [data-testid="hero-section"] {
+    height: 69svh !important; min-height: 530px !important; max-height: 660px !important; margin: 0 !important;
+    overflow: hidden !important; background: var(--m-bg) !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-backdrop"],
+  [data-testid="hero-section"] .hero-video-container { width:100% !important; height:100% !important; object-fit:cover !important; object-position:center top !important; }
+  [data-testid="hero-section"] .info-wrap {
+    left: 14px !important; right: 14px !important; bottom: 20px !important; top: auto !important; width: auto !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-content"] { width:100% !important; position:relative !important; inset:auto !important; }
+  [data-testid="hero-section"] [data-testid="hero-logo"] {
+    width:auto !important; max-width:72vw !important; max-height:128px !important; object-fit:contain !important; object-position:left bottom !important;
+    margin-bottom: 10px !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-title"] { max-width:76vw !important; font-size:34px !important; line-height:1 !important; margin-bottom:10px !important; }
+  [data-testid="hero-section"] [data-testid="hero-overview"],
+  [data-testid="hero-section"] [data-testid="hero-meta"] { display:none !important; }
+  [data-testid="hero-section"] .info-buttons { display:flex !important; flex-wrap:nowrap !important; gap:8px !important; margin-top:10px !important; }
+  [data-testid="hero-section"] [data-testid="hero-play-button"],
+  [data-testid="hero-section"] [data-testid="hero-info-button"] {
+    height:38px !important; min-height:38px !important; padding:0 13px !important; font-size:12px !important; border-radius:4px !important; margin:0 !important;
+  }
+  [data-testid="hero-section"] [data-testid="hero-controls"] { right:12px !important; bottom:18px !important; transform:scale(.78) !important; transform-origin:right bottom !important; }
+
+  /* SHELVES */
+  .slider-row { height:auto !important; margin:20px 0 24px !important; overflow:visible !important; contain:layout style !important; }
+  .slider-row.compact-row { margin-top: 10px !important; }
+  .slider-row .row-header { padding:0 14px !important; min-height:22px !important; margin-bottom:8px !important; }
+  .slider-row .row-header .label { font-size:16px !important; line-height:1.15 !important; font-weight:700 !important; }
+  .slider-row .slick-list { overflow-x:auto !important; overflow-y:hidden !important; scrollbar-width:none !important; -webkit-overflow-scrolling:touch !important; scroll-snap-type:x proximity !important; }
+  .slider-row .slick-list::-webkit-scrollbar { display:none !important; }
+  .slider-row .slick-track { display:flex !important; width:max-content !important; transform:none !important; margin:0 !important; }
+  .slider-row .slick-slide { float:none !important; height:auto !important; scroll-snap-align:start !important; }
+  .slider-row .slick-slide > div { padding:0 3px !important; height:auto !important; }
+  .slider-row .slick-arrow, .slider-row [class*="navigation"], .slider-row .tab-indicator { display:none !important; }
+
+  /* Normal rows: exactly three SC posters across */
+  .slider-row:not(.top10-row):not(#continua) .slick-slide { width:31.4vw !important; min-width:31.4vw !important; max-width:31.4vw !important; }
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-root,
+  [data-testid="archive-grid"] .netflix-standard-card-root {
+    width:100% !important; height:auto !important; aspect-ratio:2/3 !important; min-height:0 !important; transform:none !important;
+  }
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-frame,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-link,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-image-wrap,
+  .slider-row:not(.top10-row):not(#continua) .netflix-standard-card-image,
+  [data-testid="archive-grid"] .netflix-standard-card-frame,
+  [data-testid="archive-grid"] .netflix-standard-card-link,
+  [data-testid="archive-grid"] .netflix-standard-card-image-wrap,
+  [data-testid="archive-grid"] .netflix-standard-card-image {
+    width:100% !important; height:100% !important; object-fit:cover !important; border-radius:3px !important;
+  }
+
+  /* Continue Watching: landscape exception, ~3 cards like reference */
+  #continua .slick-slide { width:31.5vw !important; min-width:31.5vw !important; max-width:31.5vw !important; }
+  #continua .netflix-standard-card-root { width:100% !important; height:auto !important; aspect-ratio:16/9 !important; }
+  #continua .netflix-standard-card-image { object-fit:cover !important; }
+  #continua .netflix-standard-card-progress-track { left:4px !important; right:4px !important; bottom:2px !important; height:2px !important; }
+
+  /* Top 10: large number + true poster, about 3 visible */
+  .top10-row .slick-slide { width:31.8vw !important; min-width:31.8vw !important; max-width:31.8vw !important; }
+  .top10-row .netflix-ranked-card-root { width:100% !important; height:auto !important; aspect-ratio:1/1 !important; min-height:0 !important; padding:0 !important; }
+  .top10-row .netflix-ranked-card-link { width:100% !important; height:100% !important; position:relative !important; overflow:visible !important; display:block !important; }
+  .top10-row .netflix-ranked-card-rank { position:absolute !important; left:0 !important; top:0 !important; bottom:0 !important; width:58% !important; }
+  .top10-row .netflix-ranked-card-rank-svg { width:100% !important; height:100% !important; }
+  .top10-row .netflix-ranked-card-poster-wrap { position:absolute !important; right:0 !important; top:2% !important; bottom:2% !important; width:54% !important; border-radius:3px !important; overflow:hidden !important; }
+  .top10-row .netflix-ranked-card-poster { width:100% !important; height:100% !important; object-fit:cover !important; }
+
+  /* HUB: Film/Serie hero same language as Home */
+  [data-testid="hub-hero"] { height:48svh !important; min-height:390px !important; max-height:500px !important; overflow:hidden !important; background:var(--m-bg) !important; }
+  [data-testid="hub-hero"] > img { width:100% !important; height:100% !important; object-fit:cover !important; object-position:center top !important; }
+  [data-testid="hub-hero"] > .MuiBox-root:last-child { left:14px !important; right:14px !important; bottom:18px !important; width:auto !important; max-width:none !important; }
+  [data-testid="hub-hero"] > .MuiBox-root:last-child > .MuiTypography-root:nth-child(-n+3) { display:none !important; }
+  [data-testid="hub-hero"] > .MuiBox-root:last-child img { max-width:70vw !important; max-height:100px !important; object-position:left bottom !important; }
+  [data-testid="hub-hero"] [data-testid="hub-catalog-link"] { display:none !important; }
+  [data-testid="hub-hero"] [data-testid="hub-hero-play"], [data-testid="hub-hero"] [data-testid="hub-hero-info"] { height:38px !important; padding:0 13px !important; border-radius:4px !important; font-size:12px !important; }
+  [data-testid^="hub-page-"] > .MuiStack-root { margin-top:0 !important; gap:0 !important; }
+
+  /* Archive/catalog */
+  [data-testid="archive-page"] { padding:72px 14px 80px !important; background:var(--m-bg) !important; }
+  [data-testid="archive-title"] { font-size:22px !important; }
+  [data-testid="archive-page"] > .MuiBox-root:first-child > .MuiTypography-root:last-child { display:none !important; }
+  [data-testid="archive-results-header"] { margin:14px 0 !important; }
+  [data-testid="archive-grid"], [data-testid="archive-loading"] { grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:6px !important; }
+  [data-testid="archive-grid"] > .MuiBox-root { min-width:0 !important; }
+  [data-testid="archive-grid"] [data-testid^="hover-overlay-"] { display:none !important; }
+
+  /* DETAIL movie/TV */
+  [data-testid="detail-page-redesign"] { background:var(--m-bg) !important; padding-bottom:76px !important; }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child { height:58svh !important; min-height:470px !important; max-height:610px !important; }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > img { object-position:center top !important; }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) {
+    left:14px !important; right:14px !important; bottom:16px !important; width:auto !important; max-width:none !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) > img {
+    max-width:74vw !important; max-height:105px !important; margin-bottom:10px !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) > .MuiStack-root:first-of-type { font-size:11px !important; gap:6px !important; margin-bottom:8px !important; }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) > .MuiTypography-root {
+    font-size:12px !important; line-height:1.35 !important; margin-bottom:10px !important; max-width:92vw !important; display:-webkit-box !important; -webkit-line-clamp:4 !important; -webkit-box-orient:vertical !important; overflow:hidden !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) > .MuiStack-root:last-child { display:grid !important; grid-template-columns:1fr !important; gap:7px !important; }
+  [data-testid="detail-page-redesign"] [data-testid="detail-play"], [data-testid="detail-page-redesign"] [data-testid="detail-my-list"] {
+    width:100% !important; min-height:38px !important; height:38px !important; margin:0 !important; padding:0 12px !important; border-radius:3px !important; font-size:12px !important; justify-content:center !important;
+  }
+  [data-testid="detail-page-redesign"] > .MuiBox-root:nth-child(2) { padding:12px 14px 78px !important; margin-top:0 !important; width:100% !important; box-sizing:border-box !important; }
+  [data-testid="detail-page-redesign"] [data-testid="detail-hero-audio-toggle"] { transform:scale(.72) !important; transform-origin:right bottom !important; }
+
+  /* My List */
+  [data-testid="my-list-page"], [data-testid="account-page"] { padding-bottom:80px !important; }
+  [data-testid^="horizontal-card-"] { transform:none !important; transition:none !important; z-index:1 !important; }
+  [data-testid^="horizontal-card-"] .card-expanded { display:none !important; }
+  [data-testid^="horizontal-card-"].flixit-mobile-list-poster { aspect-ratio:2/3 !important; width:100% !important; min-width:0 !important; max-width:none !important; border-radius:3px !important; overflow:hidden !important; }
+  [data-testid^="horizontal-card-"].flixit-mobile-list-poster img { width:100% !important; height:100% !important; object-fit:cover !important; }
+
+  /* Account */
+  [data-testid="account-page"] { min-height:100svh !important; padding:72px 14px 82px !important; background:var(--m-bg) !important; }
+  [data-testid="account-page"] > .MuiBox-root:first-child { display:none !important; }
+  [data-testid="account-page"] > .MuiBox-root:has(> [data-testid="account-sidebar"]) { display:block !important; }
+  [data-testid="account-page"] > .MuiBox-root:has(> [data-testid="account-sidebar"]) > .MuiBox-root:last-child:not([data-testid="account-sidebar"]) { display:none !important; }
+  [data-testid="account-sidebar"] { position:static !important; padding:0 !important; background:transparent !important; border:0 !important; border-radius:0 !important; backdrop-filter:none !important; }
+  [data-testid="account-header"] { padding:14px 0 18px !important; margin:0 0 10px !important; background:transparent !important; border:0 !important; border-radius:0 !important; text-align:center !important; }
+  [data-testid="account-header"] > .MuiBox-root:last-child { flex-direction:column !important; justify-content:center !important; text-align:center !important; }
+  [data-testid="account-avatar"] { width:64px !important; height:64px !important; border-radius:7px !important; }
+  [data-testid="account-name"] { font-size:18px !important; text-align:center !important; }
+  [data-testid="account-email"], [data-testid="account-premium-badge"] { display:none !important; }
+  [data-testid^="account-nav-"], [data-testid="account-logout"] { min-height:48px !important; padding:7px 8px !important; border-radius:0 !important; border-bottom:1px solid rgba(255,255,255,.09) !important; background:transparent !important; transform:none !important; }
+  [data-testid^="account-nav-"] .MuiTypography-root:last-child { display:none !important; }
+
+  /* Search dropdown becomes a full mobile result sheet */
+  [data-testid="search-box"] > .MuiBox-root + .MuiBox-root {
+    position:fixed !important; z-index:14000 !important; left:0 !important; right:0 !important; top:56px !important; bottom:var(--m-nav) !important;
+    width:auto !important; max-height:none !important; overflow-y:auto !important; border-radius:0 !important; background:#050505 !important; border:0 !important; box-shadow:none !important;
+  }
+  [data-testid^="search-result-"] { min-height:72px !important; padding:8px 14px !important; }
+  [data-testid^="search-result-"] img { width:46px !important; height:68px !important; object-fit:cover !important; border-radius:3px !important; }
+
+  /* Player */
+  [data-testid="watch-page"], [data-testid="custom-video-player"] { width:100vw !important; height:100svh !important; background:#000 !important; }
+  [data-testid="native-video"] { width:100% !important; height:100% !important; object-fit:contain !important; background:#000 !important; }
+  [data-testid="player-controls"] { padding-left:max(10px,env(safe-area-inset-left,0px)) !important; padding-right:max(10px,env(safe-area-inset-right,0px)) !important; padding-bottom:max(10px,env(safe-area-inset-bottom,0px)) !important; }
+  [data-testid="player-controls"] .MuiIconButton-root { transform:scale(.82); transform-origin:center; }
+
+  /* Bottom nav */
+  .flixit-mobile-bottom-nav {
+    position:fixed; z-index:15000; left:0; right:0; bottom:0; height:calc(var(--m-nav) + env(safe-area-inset-bottom,0px));
+    padding:4px 3px env(safe-area-inset-bottom,0px); display:grid; grid-template-columns:repeat(5,1fr); align-items:center;
+    background:rgba(3,3,3,.98); border-top:1px solid rgba(255,255,255,.10); box-sizing:border-box;
+  }
+  .flixit-mobile-bottom-nav > button { appearance:none; border:0; background:transparent; color:#a7a7a7; height:54px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; font:inherit; padding:0; }
+  .flixit-mobile-bottom-nav > button svg { width:19px; height:19px; }
+  .flixit-mobile-bottom-nav > button span { font-size:9px; line-height:1; }
+  .flixit-mobile-bottom-nav > button.is-active { color:#e50914; }
+  footer { display:none !important; }
+  [data-testid^="hover-overlay-"], .previewModal--container { display:none !important; pointer-events:none !important; }
+}
+
+@media (max-width: 430px) {
+  [data-testid="hero-section"] { min-height:520px !important; }
+  .slider-row:not(.top10-row):not(#continua) .slick-slide { width:31.8vw !important; min-width:31.8vw !important; max-width:31.8vw !important; }
+  #continua .slick-slide { width:31.8vw !important; min-width:31.8vw !important; max-width:31.8vw !important; }
+  .top10-row .slick-slide { width:32vw !important; min-width:32vw !important; max-width:32vw !important; }
+}
+
+@media (max-width: 899px) and (orientation: landscape) {
+  [data-testid="watch-page"], [data-testid="custom-video-player"] { height:100dvh !important; }
+  [data-testid="player-controls"] { padding-bottom:max(6px,env(safe-area-inset-bottom,0px)) !important; }
+}
