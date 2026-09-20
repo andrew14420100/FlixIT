@@ -12,10 +12,7 @@ import MainLoadingScreen from "src/components/MainLoadingScreen";
 import AuthModal from "src/components/auth/AuthModal";
 import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
-import "src/components/mobile/mobile-sc-rails.css";
-import "src/components/mobile/mobile-sc-pages.css";
-import "src/components/mobile/mobile-sc-v2.css";
-import "src/components/mobile/mobile-sc-final.css";
+import "src/components/mobile/mobile-reference.css";
 
 export default function MainLayout() {
   const location = useLocation();
@@ -33,16 +30,7 @@ export default function MainLayout() {
   }, []);
 
   return (
-    <Box
-      sx={{
-        width: "100%",
-        minHeight: "100vh",
-        bgcolor: "background.default",
-        margin: 0,
-        padding: 0,
-        overflowX: "hidden",
-      }}
-    >
+    <Box sx={{ width: "100%", minHeight: "100vh", bgcolor: "background.default", margin: 0, padding: 0, overflowX: "hidden" }}>
       <MainHeader />
       <MobileSCExperience />
       <AuthModal />
