@@ -13,7 +13,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import useArtworkBatch from "src/hooks/useArtworkBatch";
 
 const TARGET_ROW_ITEMS = 50;
-const ARTWORK_CANDIDATE_LIMIT = 200;
+const ARTWORK_CANDIDATE_LIMIT = 240;
 
 const RootStyle = styled("div")(() => ({
   position: "relative",
@@ -140,13 +140,14 @@ export default function HomepageSlider({
   const sliderRef = useRef<Slider>(null);
   const theme = useTheme();
 
+  const isMobile = useMediaQuery("(max-width:899px)");
   const up1400 = useMediaQuery("(min-width:1400px)");
   const up1100 = useMediaQuery("(min-width:1100px)");
   const up800 = useMediaQuery("(min-width:800px)");
   const up500 = useMediaQuery("(min-width:500px)");
 
   const tiles = up1400 ? 6 : up1100 ? 5 : up800 ? 4 : up500 ? 3 : 2;
-  const visibleTiles = up1400 ? 6.38 : up1100 ? 5.35 : tiles;
+  const visibleTiles = isMobile ? 2.6 : up1400 ? 6.38 : up1100 ? 5.35 : tiles;
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isSliding, setIsSliding] = useState(false);
@@ -156,9 +157,6 @@ export default function HomepageSlider({
   const isUpcomingRow = /(^|\s)in\s+arrivo(\s|$)/i.test(title);
   const shouldDiversify = /aggiunti\s+di\s+recente|novit[aà]\s+per\s+te/i.test(title);
 
-  // Some future titles are not yet present in the SC artwork catalogue. Keep
-  // real upcoming titles first, then add recent theatrical releases only as a
-  // reserve pool so the row never collapses to an empty header.
   useEffect(() => {
     if (!isUpcomingRow) {
       setUpcomingFallback([]);
@@ -218,9 +216,6 @@ export default function HomepageSlider({
 
   const isTop10 = /top\s*10/i.test(title);
 
-  // A deep candidate pool lets strict artwork validation still publish about
-  // 50 usable cards. The artwork hook itself prioritises the first screen and
-  // hydrates the rest in the background.
   const artworkCandidates = useMemo(
     () => visibleItems.slice(0, isTop10 ? 10 : ARTWORK_CANDIDATE_LIMIT),
     [visibleItems, isTop10]
@@ -230,16 +225,17 @@ export default function HomepageSlider({
     () =>
       artworkCandidates
         .filter((item) =>
-          artworkBatch.isReady(item, isTop10 ? "poster" : "landscape")
+          artworkBatch.isReady(item, isTop10 || isMobile ? "poster" : "landscape")
         )
         .slice(0, isTop10 ? 10 : TARGET_ROW_ITEMS),
-    [artworkCandidates, artworkBatch.data, isTop10]
+    [artworkCandidates, artworkBatch.data, isTop10, isMobile]
   );
 
-  // Paint roughly two screens immediately, then prepare the rest during idle
-  // time. This keeps the page light at first paint while still making all ~50
-  // cards available before the user reaches the end of the row.
-  const minimumBatch = Math.min(readyItems.length, Math.max(tiles * 2 + 2, 14));
+  // On mobile the cards are simple poster tiles: publish the full validated row
+  // immediately so native horizontal scrolling exposes the whole ~50-title pool.
+  const minimumBatch = isMobile
+    ? readyItems.length
+    : Math.min(readyItems.length, Math.max(tiles * 2 + 2, 14));
   const [renderedCount, setRenderedCount] = useState(minimumBatch);
 
   useEffect(() => {
@@ -250,7 +246,7 @@ export default function HomepageSlider({
   }, [readyItems.length, minimumBatch]);
 
   useEffect(() => {
-    if (renderedCount >= readyItems.length) return;
+    if (isMobile || renderedCount >= readyItems.length) return;
 
     let cancelled = false;
     let idleId: any = null;
@@ -275,7 +271,7 @@ export default function HomepageSlider({
       }
       if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [renderedCount, readyItems.length, tiles]);
+  }, [isMobile, renderedCount, readyItems.length, tiles]);
 
   const ensureRenderedThrough = useCallback(
     (startIndex: number) => {
@@ -309,17 +305,17 @@ export default function HomepageSlider({
     arrows: false,
     dots: false,
     infinite: false,
-    lazyLoad: "ondemand",
+    lazyLoad: isMobile ? undefined : "ondemand",
     swipeToSlide: true,
     swipe: true,
     draggable: true,
     touchMove: true,
     waitForAnimate: true,
     useCSS: true,
-    useTransform: true,
+    useTransform: !isMobile,
     adaptiveHeight: false,
     slidesToShow: visibleTiles,
-    slidesToScroll: tiles,
+    slidesToScroll: isMobile ? 1 : tiles,
     beforeChange: (_current, next) => {
       ensureRenderedThrough(next);
       setIsSliding(true);
@@ -329,7 +325,7 @@ export default function HomepageSlider({
       setActiveSlideIndex(current);
       setIsSliding(false);
     },
-    responsive: [
+    responsive: isMobile ? [] : [
       { breakpoint: 1400, settings: { slidesToShow: 5.35, slidesToScroll: 5 } },
       { breakpoint: 1100, settings: { slidesToShow: 4.25, slidesToScroll: 4 } },
       { breakpoint: 800, settings: { slidesToShow: 3, slidesToScroll: 3 } },
@@ -506,7 +502,7 @@ export default function HomepageSlider({
                   sx={{
                     flex: `0 0 ${100 / Math.max(2, visibleTiles)}%`,
                     maxWidth: `calc(${100 / Math.max(2, visibleTiles)}% - 7px)`,
-                    aspectRatio: isTop10 ? "1.7 / 1" : "342 / 192",
+                    aspectRatio: isMobile ? "2 / 3" : isTop10 ? "1.7 / 1" : "342 / 192",
                     borderRadius: "4px",
                     bgcolor: "#222",
                     opacity: 0.72,
