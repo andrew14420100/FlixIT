@@ -1,8 +1,7 @@
 /*
- * FLIXIT MOBILE HOME — REFERENCE LOCK
- * The first phone in the approved mockup is the only visual source of truth.
- * This file is intentionally scoped to html.flixit-home-reference so it cannot
- * alter desktop, tablet >899px or the other mobile pages.
+ * FLIXIT MOBILE HOME — APPROVED REFERENCE
+ * Source of truth: first generated Home phone mockup.
+ * Scope: Home only, <=899px. Desktop and other mobile pages are untouched.
  */
 @media (max-width: 899px) {
   html.flixit-home-reference,
@@ -15,20 +14,19 @@
   }
 
   html.flixit-home-reference body {
-    padding-bottom: calc(48px + env(safe-area-inset-bottom, 0px)) !important;
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
-  /* =========================
-     HEADER — exact first mockup
-     ========================= */
+  /* ---------- HEADER ---------- */
   html.flixit-home-reference [data-testid="main-header"] {
+    position: fixed !important;
     top: 0 !important;
     left: 0 !important;
     right: 0 !important;
-    height: 48px !important;
-    min-height: 48px !important;
-    padding: 0 12px 0 15px !important;
-    background: linear-gradient(to bottom, rgba(0,0,0,.72) 0%, rgba(0,0,0,.18) 58%, rgba(0,0,0,0) 100%) !important;
+    height: 56px !important;
+    min-height: 56px !important;
+    padding: 0 12px 0 14px !important;
+    background: linear-gradient(to bottom, rgba(0,0,0,.66), rgba(0,0,0,.18) 58%, transparent) !important;
     border: 0 !important;
     box-shadow: none !important;
     backdrop-filter: none !important;
@@ -36,15 +34,14 @@
   }
 
   html.flixit-home-reference [data-testid="main-header"] .MuiToolbar-root {
-    height: 48px !important;
-    min-height: 48px !important;
+    height: 56px !important;
+    min-height: 56px !important;
     padding: 0 !important;
     gap: 7px !important;
   }
 
-  /* No hamburger in the approved Home screenshot. */
   html.flixit-home-reference .flixit-sc-navbar-toggler,
-  html.flixit-home-reference [data-testid="main-header"] .flixit-logo + .MuiBox-root,
+  html.flixit-home-reference [data-testid="main-header"] button:has([data-testid="MenuIcon"]),
   html.flixit-home-reference [data-testid="notifications-bell"] {
     display: none !important;
   }
@@ -55,19 +52,19 @@
 
   html.flixit-home-reference [data-testid="main-header"] .flixit-logo svg {
     width: auto !important;
-    height: 20px !important;
+    height: 22px !important;
   }
 
   html.flixit-home-reference [data-testid="main-header"] > .MuiToolbar-root > .MuiStack-root:last-child {
-    gap: 6px !important;
+    gap: 7px !important;
   }
 
   html.flixit-home-reference [data-testid="main-header"] [data-testid="search-box"] > div {
-    width: 30px !important;
-    min-width: 30px !important;
-    max-width: 30px !important;
-    height: 30px !important;
-    min-height: 30px !important;
+    width: 32px !important;
+    min-width: 32px !important;
+    max-width: 32px !important;
+    height: 32px !important;
+    min-height: 32px !important;
     padding: 0 !important;
     border: 0 !important;
     background: transparent !important;
@@ -75,14 +72,14 @@
   }
 
   html.flixit-home-reference [data-testid="main-header"] [data-testid="search-box"] svg {
-    width: 19px !important;
-    height: 19px !important;
+    width: 21px !important;
+    height: 21px !important;
   }
 
   html.flixit-home-reference [data-testid="avatar-menu-button"] {
-    width: 30px !important;
-    height: 30px !important;
-    min-width: 30px !important;
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
     padding: 0 !important;
     margin: 0 !important;
     border: 0 !important;
@@ -90,21 +87,19 @@
   }
 
   html.flixit-home-reference [data-testid="header-avatar"] {
-    width: 27px !important;
-    height: 27px !important;
+    width: 29px !important;
+    height: 29px !important;
     border-radius: 3px !important;
     border-width: 1px !important;
   }
 
-  /* =========================
-     HERO — exact visual rhythm
-     ========================= */
+  /* ---------- HERO ---------- */
   html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-section"] {
     position: relative !important;
     width: 100vw !important;
-    height: 49svh !important;
-    min-height: 318px !important;
-    max-height: 410px !important;
+    height: clamp(420px, 65svh, 640px) !important;
+    min-height: 0 !important;
+    max-height: none !important;
     margin: 0 !important;
     overflow: hidden !important;
     background: #050505 !important;
@@ -123,7 +118,7 @@
     min-height: 100% !important;
     max-height: 100% !important;
     object-fit: cover !important;
-    object-position: center top !important;
+    object-position: center 8% !important;
     opacity: 1 !important;
   }
 
@@ -138,17 +133,17 @@
   }
 
   html.flixit-home-reference [data-testid="hero-section"] > .MuiBox-root:nth-child(3) > .MuiBox-root:last-child {
-    height: 44% !important;
-    background-image: linear-gradient(to bottom, rgba(5,5,5,0) 0%, rgba(5,5,5,.45) 47%, #050505 100%) !important;
+    height: 52% !important;
+    background-image: linear-gradient(to bottom, rgba(5,5,5,0), rgba(5,5,5,.24) 35%, rgba(5,5,5,.72) 72%, #050505 100%) !important;
   }
 
   html.flixit-home-reference [data-testid="hero-section"] .info-wrap {
     position: absolute !important;
-    left: 12px !important;
-    right: 12px !important;
+    left: 10px !important;
+    right: 10px !important;
     top: auto !important;
-    bottom: 14px !important;
-    width: calc(100% - 24px) !important;
+    bottom: 18px !important;
+    width: calc(100% - 20px) !important;
     height: auto !important;
     pointer-events: none !important;
   }
@@ -179,35 +174,63 @@
     display: block !important;
     width: auto !important;
     height: auto !important;
-    max-width: 58vw !important;
-    max-height: 78px !important;
+    max-width: 52vw !important;
+    max-height: 92px !important;
     margin: 0 auto !important;
     object-fit: contain !important;
     object-position: center bottom !important;
   }
 
+  /* Never manufacture a text logo on the approved mobile Home. */
   html.flixit-home-reference [data-testid="hero-title"] {
-    width: auto !important;
-    max-width: 72vw !important;
-    margin: 0 auto !important;
-    font-size: clamp(27px, 7.4vw, 38px) !important;
-    line-height: .96 !important;
-    text-align: center !important;
+    display: none !important;
   }
 
   html.flixit-home-reference [data-testid="hero-season-label"],
-  html.flixit-home-reference [data-testid="hero-overview"],
+  html.flixit-home-reference .mobile-home-season-runtime {
+    display: block !important;
+    width: 100% !important;
+    margin: 10px 0 0 !important;
+    color: #fff !important;
+    font-size: clamp(15px, 4.2vw, 18px) !important;
+    font-weight: 700 !important;
+    line-height: 1.15 !important;
+    text-align: center !important;
+    opacity: 1 !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-season-label"][hidden],
+  html.flixit-home-reference .mobile-home-season-runtime[hidden] {
+    display: none !important;
+  }
+
   html.flixit-home-reference [data-testid="hero-section"] .genres {
+    display: block !important;
+    width: calc(100% - 14px) !important;
+    max-width: 100% !important;
+    margin: 8px auto 0 !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    text-overflow: ellipsis !important;
+    color: rgba(255,255,255,.94) !important;
+    font-size: clamp(12px, 3.65vw, 15px) !important;
+    font-weight: 400 !important;
+    line-height: 1.2 !important;
+    text-align: center !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] .genres[hidden],
+  html.flixit-home-reference [data-testid="hero-overview"] {
     display: none !important;
   }
 
   html.flixit-home-reference [data-testid="hero-section"] .info-buttons {
-    width: min(88vw, 350px) !important;
-    height: 39px !important;
-    margin: 10px auto 0 !important;
+    width: min(91vw, 380px) !important;
+    height: 44px !important;
+    margin: 13px auto 0 !important;
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
-    gap: 7px !important;
+    gap: 8px !important;
     align-items: stretch !important;
   }
 
@@ -215,34 +238,27 @@
   html.flixit-home-reference [data-testid="hero-info-button"] {
     width: 100% !important;
     min-width: 0 !important;
-    height: 39px !important;
-    min-height: 39px !important;
+    height: 44px !important;
+    min-height: 44px !important;
     margin: 0 !important;
-    padding: 0 10px !important;
+    padding: 0 12px !important;
     border-radius: 3px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    font-size: 11px !important;
+    font-size: 12px !important;
     line-height: 1 !important;
   }
 
-  html.flixit-home-reference [data-testid="hero-play-button"] > span,
-  html.flixit-home-reference [data-testid="hero-info-button"] > span {
-    font-size: 11px !important;
+  html.flixit-home-reference [data-testid="hero-play-button"] > span {
+    font-size: clamp(12px, 3.45vw, 14px) !important;
     line-height: 1 !important;
   }
 
   html.flixit-home-reference [data-testid="hero-play-button"] .play-icon {
-    font-size: 14px !important;
-    width: 11px !important;
-    height: 15px !important;
+    width: 12px !important;
+    height: 16px !important;
     margin-right: 7px !important;
-  }
-
-  html.flixit-home-reference [data-testid="hero-info-button"] {
-    background: rgba(62,62,66,.92) !important;
-    color: #fff !important;
   }
 
   html.flixit-home-reference [data-testid="hero-info-button"] .info-icon,
@@ -252,94 +268,79 @@
 
   html.flixit-home-reference [data-testid="hero-info-button"]::before {
     content: "+";
-    display: inline-block;
     margin-right: 7px;
-    font-size: 20px;
+    font-size: 21px;
     line-height: 1;
     font-weight: 300;
   }
 
   html.flixit-home-reference [data-testid="hero-info-button"]::after {
     content: "La mia lista";
-    font-size: 11px;
+    font-size: clamp(12px, 3.45vw, 14px);
     line-height: 1;
-    font-weight: 600;
+    font-weight: 700;
   }
 
-  /* =========================
-     HOME ROW STACK / ORDER
-     ========================= */
+  /* ---------- HOME STACK ---------- */
   html.flixit-home-reference [data-testid="home-rows"] {
     position: relative !important;
     z-index: 20 !important;
     display: flex !important;
     flex-direction: column !important;
     gap: 0 !important;
-    margin-top: 0 !important;
-    padding: 6px 0 calc(54px + env(safe-area-inset-bottom, 0px)) !important;
+    margin: 0 !important;
+    padding: 16px 0 calc(66px + env(safe-area-inset-bottom, 0px)) !important;
     background: #050505 !important;
   }
 
-  html.flixit-home-reference [data-testid="home-rows"] > * {
-    margin-top: 0 !important;
-  }
-
-  /* First screenshot sequence: Hero -> Top 10 -> Perché hai guardato -> rest. */
-  html.flixit-home-reference [data-testid="home-rows"] > .top10-row {
-    order: 1 !important;
-  }
-
-  html.flixit-home-reference [data-testid="home-rows"] > [data-testid*="hai-guardato"] {
-    order: 2 !important;
-  }
-
-  html.flixit-home-reference [data-testid="home-rows"] > #continua {
-    order: 3 !important;
-  }
-
-  html.flixit-home-reference [data-testid="home-rows"] > :not(.top10-row):not(#continua):not([data-testid*="hai-guardato"]) {
-    order: 4 !important;
-  }
+  html.flixit-home-reference [data-testid="home-rows"] > #continua { order: 1 !important; }
+  html.flixit-home-reference [data-testid="home-rows"] > .top10-row { order: 2 !important; }
+  html.flixit-home-reference [data-testid="home-rows"] > [data-testid*="hai-guardato"] { order: 3 !important; }
+  html.flixit-home-reference [data-testid="home-rows"] > [data-testid*="i-titoli-del-momento"] { order: 4 !important; }
+  html.flixit-home-reference [data-testid="home-rows"] > :not(#continua):not(.top10-row):not([data-testid*="hai-guardato"]):not([data-testid*="i-titoli-del-momento"]) { order: 5 !important; }
 
   html.flixit-home-reference .slider-row {
     width: 100% !important;
     height: auto !important;
-    margin: 0 0 17px !important;
+    margin: 0 0 24px !important;
     overflow: visible !important;
     contain: layout style !important;
   }
 
   html.flixit-home-reference .slider-row.compact-row {
-    margin: 0 0 17px !important;
+    margin: 0 0 24px !important;
   }
 
   html.flixit-home-reference .slider-row .row-header {
-    min-height: 19px !important;
-    margin: 0 0 7px !important;
-    padding: 0 12px 0 13px !important;
+    min-height: 25px !important;
+    margin: 0 0 9px !important;
+    padding: 0 10px !important;
     display: flex !important;
     align-items: center !important;
   }
 
   html.flixit-home-reference .slider-row .row-header .label {
-    font-size: 13.5px !important;
-    line-height: 1.15 !important;
+    font-size: clamp(18px, 5.1vw, 22px) !important;
+    line-height: 1.12 !important;
     font-weight: 700 !important;
+    letter-spacing: -.015em !important;
     color: #fff !important;
   }
 
-  html.flixit-home-reference .top10-row .row-header .label::after {
-    content: "  ›";
-    font-size: 15px;
-    font-weight: 500;
-  }
-
+  html.flixit-home-reference .slider-row .row-header .browse,
   html.flixit-home-reference .slider-row .row-header .header-wrap > :not(.label) {
     display: none !important;
   }
 
-  html.flixit-home-reference .slider-row .slider {
-    padding: 0 0 0 13px !important;
+  html.flixit-home-reference .top10-row .row-header .label::after {
+    content: none !important;
+  }
+
+  html.flixit-home-reference .slider-row .slider,
+  html.flixit-home-reference .slider-row .show-peek {
+    width: 100% !important;
+    padding: 0 0 0 10px !important;
+    box-sizing: border-box !important;
     overflow: visible !important;
   }
 
@@ -350,6 +351,7 @@
     -webkit-overflow-scrolling: touch !important;
     scrollbar-width: none !important;
     touch-action: pan-x !important;
+    scroll-snap-type: x proximity !important;
   }
 
   html.flixit-home-reference .slider-row .slick-list::-webkit-scrollbar {
@@ -370,57 +372,112 @@
     flex: 0 0 auto !important;
     height: auto !important;
     margin: 0 !important;
+    padding: 0 !important;
+    scroll-snap-align: start !important;
   }
 
-  html.flixit-home-reference .slider-row .slick-slide > div {
+  html.flixit-home-reference .slider-row .slick-slide > div,
+  html.flixit-home-reference .slider-row .slider-item {
     height: 100% !important;
-    padding: 0 3px 0 0 !important;
+    padding: 0 5px 0 0 !important;
     box-sizing: border-box !important;
   }
 
-  /* =========================
-     TOP 10 — first mockup
-     ========================= */
-  html.flixit-home-reference .top10-row {
-    margin-top: 0 !important;
-    margin-bottom: 17px !important;
+  html.flixit-home-reference .slider-row .slick-slide.flixit-mobile-no-poster-slide {
+    display: none !important;
   }
 
-  html.flixit-home-reference .top10-row .slider {
-    padding-left: 13px !important;
+  /* ---------- NORMAL + CONTINUE POSTERS ---------- */
+  html.flixit-home-reference .slider-row:not(.top10-row) .slick-slide {
+    width: 37.5vw !important;
   }
 
-  html.flixit-home-reference .top10-row .slick-slide {
-    width: 32.5vw !important;
-    padding-right: 5px !important;
-  }
-
-  html.flixit-home-reference .top10-row .netflix-ranked-card-root,
-  html.flixit-home-reference .top10-row .netflix-ranked-card-link {
-    position: relative !important;
-    display: block !important;
+  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster,
+  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-link,
+  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-frame,
+  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-image-wrap,
+  html.flixit-home-reference #continua .netflix-standard-card-root,
+  html.flixit-home-reference #continua .netflix-standard-card-link,
+  html.flixit-home-reference #continua .netflix-standard-card-frame,
+  html.flixit-home-reference #continua .netflix-standard-card-image-wrap {
     width: 100% !important;
-    height: clamp(96px, 27.5vw, 118px) !important;
+    height: auto !important;
     min-height: 0 !important;
-    padding: 0 !important;
+    aspect-ratio: 2 / 3 !important;
+    border-radius: 3px !important;
+    overflow: hidden !important;
+    background: #151515 !important;
+  }
+
+  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-image,
+  html.flixit-home-reference #continua .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+    border-radius: 3px !important;
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-progress-track {
+    left: 8% !important;
+    right: 8% !important;
+    bottom: 5px !important;
+    height: 3px !important;
+    background: rgba(255,255,255,.35) !important;
+    z-index: 4 !important;
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-progress-value {
+    height: 100% !important;
+    background: #e50914 !important;
+  }
+
+  html.flixit-home-reference .previewModal--container,
+  html.flixit-home-reference [data-testid^="hover-overlay-"] {
+    display: none !important;
+    pointer-events: none !important;
+  }
+
+  /* ---------- TOP 10: desktop SVG/layout scaled for touch ---------- */
+  html.flixit-home-reference .top10-row .slick-slide {
+    width: 39vw !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-root {
+    width: 100% !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    position: relative !important;
+    padding: 35.714285714% 0 !important;
     overflow: visible !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-link {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+    border-radius: 3px !important;
   }
 
   html.flixit-home-reference .top10-row .netflix-ranked-card-rank {
     position: absolute !important;
-    left: -4% !important;
-    top: 8% !important;
-    bottom: -3% !important;
-    width: 66% !important;
-    height: 95% !important;
-    z-index: 1 !important;
-    overflow: visible !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 50% !important;
+    height: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
   }
 
   html.flixit-home-reference .top10-row .netflix-ranked-card-rank-svg {
     width: 100% !important;
     height: 100% !important;
-    opacity: .56 !important;
+    opacity: .5 !important;
+    overflow: visible !important;
   }
 
   html.flixit-home-reference .top10-row .netflix-ranked-card-poster-wrap {
@@ -429,9 +486,8 @@
     right: 0 !important;
     bottom: 0 !important;
     left: auto !important;
-    width: 58% !important;
+    width: 50% !important;
     height: 100% !important;
-    z-index: 2 !important;
     border-radius: 3px !important;
     overflow: hidden !important;
     background: #151515 !important;
@@ -445,87 +501,7 @@
     border-radius: 3px !important;
   }
 
-  /* =========================
-     NORMAL MOBILE ROWS
-     Three compact artwork tiles exactly like the reference first screen.
-     ========================= */
-  html.flixit-home-reference .slider-row:not(.top10-row):not(#continua) .slick-slide {
-    width: calc((100vw - 38px) / 3) !important;
-    padding-right: 5px !important;
-  }
-
-  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster,
-  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-link,
-  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-frame,
-  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-image-wrap {
-    width: 100% !important;
-    height: auto !important;
-    min-height: 0 !important;
-    aspect-ratio: .91 / 1 !important;
-    border-radius: 3px !important;
-    overflow: hidden !important;
-  }
-
-  html.flixit-home-reference .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-image {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: cover !important;
-    object-position: center !important;
-    border-radius: 3px !important;
-  }
-
-  html.flixit-home-reference .previewModal--container,
-  html.flixit-home-reference [data-testid^="hover-overlay-"] {
-    display: none !important;
-    pointer-events: none !important;
-  }
-
-  /* =========================
-     CONTINUE WATCHING
-     Approved exception: landscape artwork + thin red progress line.
-     ========================= */
-  html.flixit-home-reference #continua .slick-slide {
-    width: 42vw !important;
-    padding-right: 6px !important;
-  }
-
-  html.flixit-home-reference #continua .netflix-standard-card-root,
-  html.flixit-home-reference #continua .netflix-standard-card-link,
-  html.flixit-home-reference #continua .netflix-standard-card-frame,
-  html.flixit-home-reference #continua .netflix-standard-card-image-wrap {
-    width: 100% !important;
-    height: auto !important;
-    min-height: 0 !important;
-    aspect-ratio: 1.78 / 1 !important;
-    border-radius: 3px !important;
-    overflow: hidden !important;
-  }
-
-  html.flixit-home-reference #continua .netflix-standard-card-image {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: cover !important;
-    border-radius: 3px !important;
-  }
-
-  html.flixit-home-reference #continua .netflix-standard-card-progress-track {
-    position: absolute !important;
-    left: 4% !important;
-    right: 4% !important;
-    bottom: 3px !important;
-    height: 2px !important;
-    border-radius: 2px !important;
-    overflow: hidden !important;
-  }
-
-  html.flixit-home-reference #continua .netflix-standard-card-progress-fill {
-    height: 2px !important;
-    background: #e50914 !important;
-  }
-
-  /* =========================
-     BOTTOM NAV — exact first mockup
-     ========================= */
+  /* ---------- BOTTOM NAV ---------- */
   html.flixit-home-reference .flixit-mobile-bottom-nav {
     position: fixed !important;
     left: 0 !important;
@@ -533,18 +509,18 @@
     bottom: 0 !important;
     z-index: 13000 !important;
     width: 100% !important;
-    height: calc(48px + env(safe-area-inset-bottom, 0px)) !important;
-    padding: 1px 4px env(safe-area-inset-bottom, 0px) !important;
+    height: calc(56px + env(safe-area-inset-bottom, 0px)) !important;
+    padding: 2px 3px env(safe-area-inset-bottom, 0px) !important;
     display: grid !important;
     grid-template-columns: repeat(5, minmax(0,1fr)) !important;
     align-items: center !important;
-    background: rgba(4,4,4,.985) !important;
-    border-top: 1px solid rgba(255,255,255,.08) !important;
-    box-shadow: none !important;
+    background: rgba(4,4,4,.99) !important;
+    border: 0 !important;
+    box-shadow: 0 -1px 0 rgba(255,255,255,.05) !important;
   }
 
   html.flixit-home-reference .flixit-mobile-bottom-nav > button {
-    height: 46px !important;
+    height: 52px !important;
     min-width: 0 !important;
     padding: 2px 0 !important;
     margin: 0 !important;
@@ -552,19 +528,19 @@
     flex-direction: column !important;
     align-items: center !important;
     justify-content: center !important;
-    gap: 1px !important;
+    gap: 2px !important;
     border: 0 !important;
     background: transparent !important;
-    color: rgba(255,255,255,.67) !important;
+    color: rgba(255,255,255,.65) !important;
   }
 
   html.flixit-home-reference .flixit-mobile-bottom-nav > button svg {
-    width: 18px !important;
-    height: 18px !important;
+    width: 22px !important;
+    height: 22px !important;
   }
 
   html.flixit-home-reference .flixit-mobile-bottom-nav > button span {
-    font-size: 8px !important;
+    font-size: clamp(8.5px, 2.55vw, 10px) !important;
     line-height: 1 !important;
     white-space: nowrap !important;
   }
