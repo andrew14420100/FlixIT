@@ -14,6 +14,8 @@ import LocalMoviesOutlinedIcon from "@mui/icons-material/LocalMoviesOutlined";
 import CategoryOutlinedIcon from "@mui/icons-material/CategoryOutlined";
 import UpcomingOutlinedIcon from "@mui/icons-material/UpcomingOutlined";
 import BookmarkBorderRoundedIcon from "@mui/icons-material/BookmarkBorderRounded";
+import "./mobile-sc.css";
+import "./mobile-sc-match.css";
 
 const MOBILE_QUERY = "(max-width:899px)";
 const CATALOG_URL = "/sc-artwork-catalog.json";
