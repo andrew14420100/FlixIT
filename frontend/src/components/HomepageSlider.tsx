@@ -77,6 +77,59 @@ function sliderItemKey(item: any) {
   return id ? `${type}-${id}` : "";
 }
 
+function titleFamilyKey(item: any) {
+  const title = String(item?.title || item?.name || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (!title) return "";
+  const words = title.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return title;
+  return `${words[0]} ${words[1]}`;
+}
+
+function diversifyRepeatedFranchises(list: any[], maxPerFamily = 2) {
+  const familyTotals = new Map<string, number>();
+  list.forEach((item) => {
+    const family = titleFamilyKey(item);
+    if (family) familyTotals.set(family, (familyTotals.get(family) || 0) + 1);
+  });
+
+  const primary: any[] = [];
+  const overflow: any[] = [];
+  const used = new Map<string, number>();
+
+  list.forEach((item) => {
+    const family = titleFamilyKey(item);
+    const repeated = family && (familyTotals.get(family) || 0) >= 3;
+    if (!repeated) {
+      primary.push(item);
+      return;
+    }
+
+    const count = used.get(family) || 0;
+    if (count < maxPerFamily) {
+      used.set(family, count + 1);
+      primary.push(item);
+    } else {
+      overflow.push(item);
+    }
+  });
+
+  return [...primary, ...overflow];
+}
+
+function payloadItems(payload: any) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
+  if (Array.isArray(payload?.data?.results)) return payload.data.results;
+  return [];
+}
+
 export default function HomepageSlider({
   title,
   items,
@@ -98,17 +151,70 @@ export default function HomepageSlider({
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isSliding, setIsSliding] = useState(false);
   const [showExplore, setShowExplore] = useState(false);
+  const [upcomingFallback, setUpcomingFallback] = useState<any[]>([]);
+
+  const isUpcomingRow = /(^|\s)in\s+arrivo(\s|$)/i.test(title);
+  const shouldDiversify = /aggiunti\s+di\s+recente|novit[aà]\s+per\s+te/i.test(title);
+
+  // Some future titles are not yet present in the SC artwork catalogue. Keep
+  // real upcoming titles first, then add recent theatrical releases only as a
+  // reserve pool so the row never collapses to an empty header.
+  useEffect(() => {
+    if (!isUpcomingRow) {
+      setUpcomingFallback([]);
+      return;
+    }
+
+    let cancelled = false;
+    const urls = [
+      "/api/public/tmdb/upcoming?page=5",
+      "/api/public/tmdb/upcoming?page=6",
+      "/api/public/tmdb/now_playing?page=1",
+      "/api/public/tmdb/now_playing?page=2",
+      "/api/public/new-releases/movie",
+    ];
+
+    Promise.all(
+      urls.map(async (url) => {
+        try {
+          const response = await fetch(url, {
+            cache: "no-store",
+            headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+          });
+          return response.ok ? payloadItems(await response.json()) : [];
+        } catch {
+          return [];
+        }
+      })
+    ).then((groups) => {
+      if (cancelled) return;
+      const seen = new Set<string>();
+      const merged = groups.flat().filter((item) => {
+        const key = sliderItemKey(item);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setUpcomingFallback(merged);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isUpcomingRow]);
 
   const visibleItems = useMemo(() => {
     const seen = new Set();
-    return (items || []).filter((item) => {
+    const source = isUpcomingRow ? [...(items || []), ...upcomingFallback] : (items || []);
+    const unique = source.filter((item) => {
       if (!item) return false;
       const key = sliderItemKey(item);
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-  }, [items]);
+    return shouldDiversify ? diversifyRepeatedFranchises(unique, 2) : unique;
+  }, [items, upcomingFallback, isUpcomingRow, shouldDiversify]);
 
   const isTop10 = /top\s*10/i.test(title);
 
