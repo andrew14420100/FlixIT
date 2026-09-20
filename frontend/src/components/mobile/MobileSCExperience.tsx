@@ -7,6 +7,7 @@ import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import MovieCreationOutlinedIcon from "@mui/icons-material/MovieCreationOutlined";
 import LiveTvOutlinedIcon from "@mui/icons-material/LiveTvOutlined";
+import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import GridViewRoundedIcon from "@mui/icons-material/GridViewRounded";
 import LocalMoviesOutlinedIcon from "@mui/icons-material/LocalMoviesOutlined";
@@ -138,7 +139,7 @@ function routeIdentity(href: string) {
 
 function hydrateMobilePosters(index: PosterIndex) {
   document.querySelectorAll<HTMLElement>(".netflix-standard-card-root").forEach((root) => {
-    // User-approved exception: Continue Watching keeps its landscape artwork.
+    // Approved Home exception: Continue Watching keeps the landscape artwork.
     if (root.closest("#continua")) return;
 
     const link = root.querySelector<HTMLAnchorElement>('a[data-uia="standard-card"]');
@@ -220,17 +221,23 @@ export default function MobileSCExperience() {
   const location = useLocation();
   const navigate = useNavigate();
   const isWatch = location.pathname.startsWith("/watch");
+  const isHome = location.pathname === "/" || location.pathname === "/browse";
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     const root = document.documentElement;
     if (!isMobile) {
-      root.classList.remove("flixit-mobile-sc");
+      root.classList.remove("flixit-mobile-sc", "flixit-home-reference");
       return;
     }
+
     root.classList.add("flixit-mobile-sc");
-    return () => root.classList.remove("flixit-mobile-sc");
-  }, [isMobile]);
+    root.classList.toggle("flixit-home-reference", isHome);
+
+    return () => {
+      root.classList.remove("flixit-mobile-sc", "flixit-home-reference");
+    };
+  }, [isMobile, isHome]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -270,6 +277,17 @@ export default function MobileSCExperience() {
 
   useEffect(() => setDrawerOpen(false), [location.pathname]);
 
+  const bottomNavItems = useMemo(
+    () => [
+      { label: "Home", path: "/browse", icon: HomeRoundedIcon },
+      { label: "Cinema", path: "/cinema", icon: MovieCreationOutlinedIcon },
+      { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
+      { label: "Cerca", path: "__search__", icon: SearchRoundedIcon },
+      { label: "Account", path: "/account", icon: AccountCircleOutlinedIcon },
+    ],
+    []
+  );
+
   const drawerItems = useMemo(
     () => [
       { label: "Home", path: "/browse", icon: HomeRoundedIcon },
@@ -286,6 +304,40 @@ export default function MobileSCExperience() {
   );
 
   if (!isMobile || isWatch) return null;
+
+  const openSearch = () => {
+    const container = document.querySelector<HTMLElement>('[data-testid="search-box"]');
+    const trigger = container?.firstElementChild as HTMLElement | null;
+    trigger?.click();
+    window.setTimeout(
+      () => document.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus(),
+      80
+    );
+  };
+
+  if (isHome) {
+    return (
+      <Box className="flixit-mobile-bottom-nav" data-testid="mobile-bottom-nav">
+        {bottomNavItems.map((item) => {
+          const Icon = item.icon;
+          const active = item.path !== "__search__" && isActivePath(location.pathname, item.path);
+          return (
+            <Box
+              key={item.label}
+              component="button"
+              type="button"
+              aria-label={item.label}
+              className={active ? "is-active" : ""}
+              onClick={() => item.path === "__search__" ? openSearch() : navigate(item.path)}
+            >
+              <Icon />
+              <span>{item.label}</span>
+            </Box>
+          );
+        })}
+      </Box>
+    );
+  }
 
   return (
     <>
