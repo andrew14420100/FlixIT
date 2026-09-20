@@ -9,6 +9,7 @@ on:
       - main
     paths:
       - scripts/build_sc_artwork_catalog.py
+      - scripts/build_sc_artwork_catalog_v4.py
       - .github/workflows/update-sc-artwork-catalog.yml
 
 permissions:
@@ -31,7 +32,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build full StreamingCommunity artwork index
-        run: python scripts/build_sc_artwork_catalog.py --minimum 15000 --output backend/data/sc_artwork_catalog.json
+        run: python scripts/build_sc_artwork_catalog_v4.py --minimum 15000 --output backend/data/sc_artwork_catalog.json
       - name: Validate catalog coverage
         run: |
           python - <<'PY'
@@ -44,14 +45,16 @@ jobs:
           if count < 15000:
               raise SystemExit(f"Catalog incomplete: expected at least 15000 entries, got {count}")
           PY
+      - name: Publish same catalog as a static frontend asset
+        run: cp backend/data/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json
       - name: Commit updated catalog
         run: |
-          if git diff --quiet -- backend/data/sc_artwork_catalog.json; then
+          if git diff --quiet -- backend/data/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json; then
             echo "Catalog already up to date"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/data/sc_artwork_catalog.json
+          git add backend/data/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json
           git commit -m "chore: refresh SC artwork catalog"
           git push
