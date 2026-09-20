@@ -1,49 +1,80 @@
-/* Final mobile Home refinements. No Liquid Glass or iOS imitation. */
+/* Final mobile refinements. No Liquid Glass. */
 @media (max-width: 899px) {
-  html.flixit-home-reference body {
-    padding-bottom: calc(94px + env(safe-area-inset-bottom, 0px)) !important;
+  html.flixit-mobile-sc {
+    --flixit-mobile-poster-w: min(38vw, 170px);
+  }
+
+  /* The new persistent nav replaces the older Home-only instance. */
+  html.flixit-mobile-sc .flixit-mobile-bottom-nav:not(.flixit-global-bottom-nav) {
+    display: none !important;
+  }
+
+  html.flixit-global-bottom-nav-visible body {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
   html.flixit-home-reference [data-testid="home-rows"] {
-    padding-bottom: calc(104px + env(safe-area-inset-bottom, 0px)) !important;
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
-  /* Continue Watching: same 2:3 poster geometry as every other standard row. */
-  html.flixit-home-reference #continua .slick-slide {
-    width: 38vw !important;
+  /* Every Home poster uses exactly the same visible footprint. */
+  html.flixit-home-reference .slider-row .slick-slide,
+  html.flixit-home-reference #continua .slick-slide,
+  html.flixit-home-reference .top10-row .slick-slide {
+    width: var(--flixit-mobile-poster-w) !important;
     max-width: 170px !important;
+    overflow: visible !important;
   }
 
+  html.flixit-home-reference .slider-row:not(.top10-row) .netflix-standard-card-root,
+  html.flixit-home-reference .slider-row:not(.top10-row) .netflix-standard-card-link,
+  html.flixit-home-reference .slider-row:not(.top10-row) .netflix-standard-card-frame,
+  html.flixit-home-reference .slider-row:not(.top10-row) .netflix-standard-card-image-wrap,
   html.flixit-home-reference #continua .netflix-standard-card-root,
   html.flixit-home-reference #continua .netflix-standard-card-link,
   html.flixit-home-reference #continua .netflix-standard-card-frame,
-  html.flixit-home-reference #continua .netflix-standard-card-image-wrap {
+  html.flixit-home-reference #continua .netflix-standard-card-image-wrap,
+  html.flixit-home-reference .top10-row .netflix-ranked-card-root,
+  html.flixit-home-reference .top10-row .netflix-ranked-card-link,
+  html.flixit-home-reference .top10-row .netflix-ranked-card-poster-wrap {
     width: 100% !important;
     height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
     aspect-ratio: 2 / 3 !important;
     border-radius: 3px !important;
-    overflow: hidden !important;
   }
 
-  html.flixit-home-reference #continua .netflix-standard-card-image {
+  html.flixit-home-reference .slider-row:not(.top10-row) .netflix-standard-card-image,
+  html.flixit-home-reference #continua .netflix-standard-card-image,
+  html.flixit-home-reference .top10-row .netflix-ranked-card-poster {
     width: 100% !important;
     height: 100% !important;
     object-fit: cover !important;
     object-position: center !important;
+    border-radius: 3px !important;
   }
 
-  /* Top 10: SC-style composition while keeping the original desktop rank SVG.
-     Poster keeps the same size/height as the other mobile posters; the number
-     sits across the lower-left edge and remains clearly visible. */
+  /* Continue Watching differs only by its progress bar. */
+  html.flixit-home-reference #continua .netflix-standard-card-progress-track {
+    left: 8% !important;
+    right: 8% !important;
+    bottom: 5px !important;
+    height: 3px !important;
+    background: rgba(255,255,255,.35) !important;
+    z-index: 4 !important;
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-progress-value {
+    height: 100% !important;
+    background: #e50914 !important;
+  }
+
+  /* Top 10: same poster size as normal rows, exact SC numeral SVGs overlaid
+     using the mobile geometry measured from the supplied SC page. */
   html.flixit-home-reference .top10-row .slider,
   html.flixit-home-reference .top10-row .show-peek {
-    padding-left: 16px !important;
-  }
-
-  html.flixit-home-reference .top10-row .slick-slide {
-    width: 39.2vw !important;
-    max-width: 176px !important;
-    overflow: visible !important;
+    padding-left: 9px !important;
   }
 
   html.flixit-home-reference .top10-row .slick-slide > div,
@@ -51,49 +82,35 @@
     overflow: visible !important;
   }
 
-  html.flixit-home-reference .top10-row .netflix-ranked-card-root,
-  html.flixit-home-reference .top10-row .netflix-ranked-card-link {
-    width: 100% !important;
-    height: 57vw !important;
-    max-height: 255px !important;
-    min-height: 0 !important;
-    overflow: visible !important;
+  html.flixit-home-reference .top10-row .netflix-ranked-card-root {
     position: relative !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-link {
+    position: relative !important;
+    inset: auto !important;
+    display: block !important;
+    overflow: visible !important;
   }
 
   html.flixit-home-reference .top10-row .netflix-ranked-card-poster-wrap {
     position: absolute !important;
-    top: 0 !important;
-    right: 0 !important;
-    bottom: auto !important;
-    left: auto !important;
-    width: 38vw !important;
-    max-width: 170px !important;
-    height: 57vw !important;
-    max-height: 255px !important;
-    aspect-ratio: 2 / 3 !important;
+    inset: 0 !important;
     z-index: 2 !important;
-    border-radius: 3px !important;
     overflow: hidden !important;
     background: #151515 !important;
   }
 
-  html.flixit-home-reference .top10-row .netflix-ranked-card-poster {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: cover !important;
-    object-position: center !important;
-  }
-
   html.flixit-home-reference .top10-row .netflix-ranked-card-rank {
     position: absolute !important;
-    left: -9.5vw !important;
+    left: -15% !important;
+    right: auto !important;
     top: auto !important;
-    bottom: -0.5vw !important;
-    width: 34.2vw !important;
-    max-width: 154px !important;
-    height: 21vw !important;
-    max-height: 95px !important;
+    bottom: -1% !important;
+    width: 100% !important;
+    height: 50% !important;
     z-index: 3 !important;
     display: block !important;
     overflow: visible !important;
@@ -104,12 +121,14 @@
     display: block !important;
     width: 100% !important;
     height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
     overflow: visible !important;
-    opacity: .72 !important;
+    opacity: 1 !important;
   }
 
-  /* Floating bottom navigation, normal FLIXIT styling. No glass/blur effects. */
-  html.flixit-home-reference .flixit-mobile-bottom-nav {
+  /* Persistent floating navigation on every mobile page except the player. */
+  html.flixit-global-bottom-nav-visible .flixit-global-bottom-nav {
     position: fixed !important;
     left: 10px !important;
     right: 10px !important;
@@ -123,13 +142,16 @@
     border-radius: 18px !important;
     border: 1px solid rgba(255,255,255,.08) !important;
     background: rgba(7,7,8,.98) !important;
-    box-shadow: 0 8px 28px rgba(0,0,0,.42) !important;
+    box-shadow: 0 10px 32px rgba(0,0,0,.46) !important;
     overflow: hidden !important;
     z-index: 13000 !important;
+    isolation: isolate !important;
+    view-transition-name: flixit-mobile-nav;
   }
 
-  html.flixit-home-reference .flixit-mobile-bottom-nav > button {
+  html.flixit-global-bottom-nav-visible .flixit-global-bottom-nav > button {
     position: relative !important;
+    z-index: 2 !important;
     height: 64px !important;
     min-width: 0 !important;
     margin: 0 !important;
@@ -145,33 +167,111 @@
     gap: 4px !important;
     touch-action: manipulation !important;
     -webkit-tap-highlight-color: transparent !important;
+    transition: color .32s ease, transform .18s ease !important;
   }
 
-  html.flixit-home-reference .flixit-mobile-bottom-nav > button svg {
-    box-sizing: content-box !important;
-    width: 27px !important;
-    height: 27px !important;
-    padding: 4px 10px !important;
+  html.flixit-global-bottom-nav-visible .flixit-mobile-nav-icon-wrap {
+    width: 52px !important;
+    height: 36px !important;
+    display: grid !important;
+    place-items: center !important;
     border-radius: 999px !important;
-    transition: transform .12s ease, background-color .12s ease !important;
+    position: relative !important;
+    z-index: 2 !important;
   }
 
-  html.flixit-home-reference .flixit-mobile-bottom-nav > button span {
+  html.flixit-global-bottom-nav-visible .flixit-mobile-nav-icon-wrap svg {
+    width: 28px !important;
+    height: 28px !important;
+    transition: transform .42s cubic-bezier(.16,1,.3,1) !important;
+  }
+
+  html.flixit-global-bottom-nav-visible .flixit-mobile-nav-label {
     font-size: clamp(11px, 3vw, 12.5px) !important;
     line-height: 1 !important;
     font-weight: 500 !important;
+    white-space: nowrap !important;
+    transition: opacity .28s ease, transform .36s cubic-bezier(.16,1,.3,1) !important;
   }
 
-  html.flixit-home-reference .flixit-mobile-bottom-nav > button.is-active {
+  html.flixit-global-bottom-nav-visible .flixit-global-bottom-nav > button.is-active {
     color: #e50914 !important;
   }
 
-  html.flixit-home-reference .flixit-mobile-bottom-nav > button.is-active svg {
-    background: rgba(255,255,255,.12) !important;
+  html.flixit-global-bottom-nav-visible .flixit-global-bottom-nav > button.is-active .flixit-mobile-nav-icon-wrap svg {
+    transform: translateY(-1px) scale(1.08) !important;
   }
 
-  html.flixit-home-reference .flixit-mobile-bottom-nav > button:active svg {
-    transform: scale(.92) !important;
-    background: rgba(255,255,255,.16) !important;
+  html.flixit-global-bottom-nav-visible .flixit-global-bottom-nav > button:active {
+    transform: scale(.94) !important;
+  }
+
+  html.flixit-global-bottom-nav-visible .flixit-mobile-nav-indicator {
+    position: absolute !important;
+    z-index: 1 !important;
+    top: 6px !important;
+    left: calc((100% / 5) * var(--flixit-active-index) + (100% / 10) - 26px) !important;
+    width: 52px !important;
+    height: 36px !important;
+    border-radius: 999px !important;
+    background: rgba(255,255,255,.12) !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    opacity: 1 !important;
+    transition:
+      left .48s cubic-bezier(.16,1,.3,1),
+      width .32s cubic-bezier(.16,1,.3,1),
+      opacity .2s ease !important;
+    will-change: left !important;
+  }
+
+  html.flixit-global-bottom-nav-visible .flixit-mobile-nav-indicator.is-hidden {
+    opacity: 0 !important;
+  }
+
+  /* Smooth modern route transition. The bottom nav is a named view-transition
+     element so it stays visually anchored while the page changes underneath. */
+  ::view-transition-old(flixit-mobile-nav),
+  ::view-transition-new(flixit-mobile-nav) {
+    animation: none !important;
+    mix-blend-mode: normal !important;
+  }
+
+  ::view-transition-old(root) {
+    animation: flixit-route-out .16s cubic-bezier(.4,0,1,1) both !important;
+  }
+
+  ::view-transition-new(root) {
+    animation: flixit-route-in .38s cubic-bezier(.16,1,.3,1) both !important;
+  }
+
+  html.flixit-mobile-route-fallback #root {
+    opacity: .55 !important;
+    transform: translate3d(-10px,0,0) scale(.992) !important;
+    transition: opacity .09s ease, transform .09s ease !important;
+  }
+
+  html.flixit-mobile-route-enter #root {
+    animation: flixit-route-in .36s cubic-bezier(.16,1,.3,1) both !important;
+  }
+}
+
+@keyframes flixit-route-out {
+  to {
+    opacity: .28;
+    transform: translate3d(-14px,0,0) scale(.99);
+    filter: blur(1.5px);
+  }
+}
+
+@keyframes flixit-route-in {
+  from {
+    opacity: .2;
+    transform: translate3d(18px,0,0) scale(.985);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0,0,0) scale(1);
+    filter: blur(0);
   }
 }
