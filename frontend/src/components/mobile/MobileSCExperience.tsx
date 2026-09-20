@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
@@ -8,6 +8,12 @@ import MovieCreationOutlinedIcon from "@mui/icons-material/MovieCreationOutlined
 import LiveTvOutlinedIcon from "@mui/icons-material/LiveTvOutlined";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import AccountCircleOutlinedIcon from "@mui/icons-material/AccountCircleOutlined";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
+import GridViewRoundedIcon from "@mui/icons-material/GridViewRounded";
+import LocalMoviesOutlinedIcon from "@mui/icons-material/LocalMoviesOutlined";
+import CategoryOutlinedIcon from "@mui/icons-material/CategoryOutlined";
+import UpcomingOutlinedIcon from "@mui/icons-material/UpcomingOutlined";
+import BookmarkBorderRoundedIcon from "@mui/icons-material/BookmarkBorderRounded";
 
 const MOBILE_QUERY = "(max-width:899px)";
 const CATALOG_URL = "/sc-artwork-catalog.json";
@@ -125,6 +131,7 @@ export default function MobileSCExperience() {
   const location = useLocation();
   const navigate = useNavigate();
   const isWatch = location.pathname.startsWith("/watch");
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -146,12 +153,39 @@ export default function MobileSCExperience() {
     return () => { cancelled = true; cancelAnimationFrame(raf); const apply = (observer as any)?._flixitApply; if (apply) window.removeEventListener("resize", apply); observer?.disconnect(); };
   }, [isMobile, location.pathname]);
 
+  // On phone the profile/avatar in the top bar opens the SC-style navigation panel.
+  useEffect(() => {
+    if (!isMobile || isWatch) return;
+    const onCapture = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest?.('[data-testid="avatar-menu-button"],[data-testid="header-avatar"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setDrawerOpen(true);
+    };
+    document.addEventListener("click", onCapture, true);
+    return () => document.removeEventListener("click", onCapture, true);
+  }, [isMobile, isWatch]);
+
+  useEffect(() => setDrawerOpen(false), [location.pathname]);
+
   const navItems = useMemo(() => [
     { label: "Home", path: "/browse", icon: HomeRoundedIcon },
     { label: "Cinema", path: "/cinema", icon: MovieCreationOutlinedIcon },
     { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
     { label: "Cerca", path: "__search__", icon: SearchRoundedIcon },
     { label: "Account", path: "/account", icon: AccountCircleOutlinedIcon },
+  ], []);
+
+  const drawerItems = useMemo(() => [
+    { label: "Home", path: "/browse", icon: HomeRoundedIcon },
+    { label: "Cinema", path: "/cinema", icon: GridViewRoundedIcon },
+    { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
+    { label: "Prime Visioni", path: "/p/prime-visioni", icon: LocalMoviesOutlinedIcon },
+    { label: "Cinema d'Autore", path: "/p/cinema-d-autore", icon: MovieCreationOutlinedIcon },
+    { label: "Generi", path: "/archivio", icon: CategoryOutlinedIcon },
+    { label: "In arrivo", path: "/in-arrivo", icon: UpcomingOutlinedIcon },
+    { label: "La mia lista", path: "/my-list", icon: BookmarkBorderRoundedIcon },
   ], []);
 
   if (!isMobile || isWatch) return null;
@@ -163,15 +197,35 @@ export default function MobileSCExperience() {
   };
 
   return (
-    <Box className="flixit-mobile-bottom-nav" data-testid="mobile-bottom-nav">
-      {navItems.map((item) => {
-        const Icon = item.icon; const active = item.path !== "__search__" && isActivePath(location.pathname, item.path);
-        return (
-          <Box key={item.label} component="button" type="button" onClick={() => (item.path === "__search__" ? openSearch() : navigate(item.path))} className={active ? "is-active" : ""} aria-label={item.label}>
-            <Icon /><span>{item.label}</span>
+    <>
+      <Box className="flixit-mobile-bottom-nav" data-testid="mobile-bottom-nav">
+        {navItems.map((item) => {
+          const Icon = item.icon; const active = item.path !== "__search__" && isActivePath(location.pathname, item.path);
+          return (
+            <Box key={item.label} component="button" type="button" onClick={() => (item.path === "__search__" ? openSearch() : navigate(item.path))} className={active ? "is-active" : ""} aria-label={item.label}>
+              <Icon /><span>{item.label}</span>
+            </Box>
+          );
+        })}
+      </Box>
+
+      {drawerOpen && (
+        <Box className="flixit-mobile-menu-backdrop" onClick={() => setDrawerOpen(false)}>
+          <Box className="flixit-mobile-menu-panel" onClick={(e) => e.stopPropagation()} data-testid="mobile-navigation-drawer">
+            <Box className="flixit-mobile-menu-head">
+              <Box className="flixit-mobile-menu-logo"><span>FLIX</span><b>IT</b></Box>
+              <Box component="button" type="button" aria-label="Chiudi menu" onClick={() => setDrawerOpen(false)}><CloseRoundedIcon /></Box>
+            </Box>
+            <Box className="flixit-mobile-menu-list">
+              {drawerItems.map(({ label, path, icon: Icon }) => (
+                <Box key={label} component="button" type="button" onClick={() => { setDrawerOpen(false); navigate(path); }} className={isActivePath(location.pathname, path) ? "is-active" : ""}>
+                  <Icon /><span>{label}</span>
+                </Box>
+              ))}
+            </Box>
           </Box>
-        );
-      })}
-    </Box>
+        </Box>
+      )}
+    </>
   );
 }
