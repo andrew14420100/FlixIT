@@ -1,0 +1,57 @@
+@media (max-width: 899px) {
+  /* SC phone rows behave as compact horizontal shelves. On mobile we let the
+     browser perform the horizontal scrolling, while desktop keeps react-slick. */
+  .slider-row:not(.top10-row) .slick-list {
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+  }
+
+  .slider-row:not(.top10-row) .slick-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .slider-row:not(.top10-row) .slick-track {
+    display: flex !important;
+    width: max-content !important;
+    transform: none !important;
+    margin: 0 !important;
+  }
+
+  .slider-row:not(.top10-row):not(#continua) .slick-slide {
+    width: 28vw !important;
+    min-width: 28vw !important;
+    max-width: 28vw !important;
+    scroll-snap-align: start;
+  }
+
+  #continua .slick-slide {
+    width: 48vw !important;
+    min-width: 48vw !important;
+    max-width: 48vw !important;
+    scroll-snap-align: start;
+  }
+
+  .slider-row:not(.top10-row) .slick-arrow,
+  .slider-row:not(.top10-row) [class*="navigation"] {
+    display: none !important;
+  }
+}
+
+@media (max-width: 499px) {
+  .slider-row:not(.top10-row):not(#continua) .slick-slide {
+    width: 31vw !important;
+    min-width: 31vw !important;
+    max-width: 31vw !important;
+  }
+
+  #continua .slick-slide {
+    width: 62vw !important;
+    min-width: 62vw !important;
+    max-width: 62vw !important;
+  }
+}
