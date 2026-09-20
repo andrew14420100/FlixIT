@@ -10,20 +10,35 @@
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link rel="preconnect" href="https://image.tmdb.org" />
         <link rel="dns-prefetch" href="https://image.tmdb.org" />
-        <link rel="preconnect" href="https://cdn.streamingcommunityz.ninja" crossorigin />
-        <link rel="dns-prefetch" href="https://cdn.streamingcommunityz.ninja" />
+        <link rel="preconnect" href="https://cdn.streamingunity.vip" crossorigin />
+        <link rel="dns-prefetch" href="https://cdn.streamingunity.vip" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Unbounded:wght@200..900&family=Bebas+Neue&display=swap" rel="stylesheet" />
         <title>FlixIT | Streaming</title>
         <script>
-            // Start the complete SC artwork manifest request before React boots.
-            // The app reuses this Promise, so Home does not fan out into hundreds
-            // of per-title artwork requests after a refresh.
+            // Fetch the complete SC artwork manifest before React boots. The
+            // manifest tells us the current CDN too, so domain rotations do not
+            // leave the Home pointing at an obsolete image host.
             window.__FLIXIT_SC_CATALOG_PROMISE__ = fetch('/sc-artwork-catalog.json', {
                 cache: 'no-cache',
                 headers: { Accept: 'application/json' }
             }).then(function (response) {
                 if (!response.ok) throw new Error('SC catalog ' + response.status);
                 return response.json();
+            }).then(function (payload) {
+                try {
+                    if (payload && payload.cdn_base_url) {
+                        var origin = new URL(payload.cdn_base_url).origin;
+                        if (!document.querySelector('link[data-flixit-sc-cdn="' + origin + '"]')) {
+                            var link = document.createElement('link');
+                            link.rel = 'preconnect';
+                            link.href = origin;
+                            link.crossOrigin = 'anonymous';
+                            link.setAttribute('data-flixit-sc-cdn', origin);
+                            document.head.appendChild(link);
+                        }
+                    }
+                } catch (_) {}
+                return payload;
             }).catch(function () { return null; });
         </script>
         <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
