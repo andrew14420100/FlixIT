@@ -196,7 +196,7 @@ def _role_url(record: dict, role: str) -> Optional[str]:
     if role == "landscape":
         keys = ("cover", "cover_desktop", "landscape", "card")
     elif role == "poster":
-        keys = ("poster", "cover_mobile", "poster_mobile", "cover")
+        keys = ("poster", "poster_mobile", "cover_mobile")
     elif role == "background":
         keys = ("background", "backdrop", "hero", "wallpaper", "cover")
     else:
@@ -247,11 +247,16 @@ class SCArtworkCatalog:
         self.by_token = by_token
 
     def load(self) -> int:
+        global SC_CDN_BASE
         if self.loaded:
             return len(self.records)
         self.loaded = True
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                catalog_cdn = str(payload.get("cdn_base_url") or "").strip()
+                if catalog_cdn:
+                    SC_CDN_BASE = catalog_cdn.rstrip("/") + "/"
             rows = payload.get("titles") if isinstance(payload, dict) else payload
             if isinstance(rows, list):
                 self.records = [row for row in rows if isinstance(row, dict)]

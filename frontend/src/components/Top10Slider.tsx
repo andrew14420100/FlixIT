@@ -123,7 +123,7 @@ export default function Top10Slider({ title, items }) {
         seen.add(key);
         return true;
       })
-      .slice(0, 60);
+      .slice(0, 240);
   }, [items, fallbackItems]);
 
   const artworkBatch = useArtworkBatch(candidates, candidates.length > 0);
@@ -203,7 +203,7 @@ export default function Top10Slider({ title, items }) {
       </Stack>
 
       <Box className="slider" sx={{ position: "relative", px: "4%", overflow: "visible" }}>
-        {published.length === 0 && artworkBatch.isFetching ? (
+        {published.length === 0 ? (
           <Box sx={{ display: "flex", gap: 1, width: "100%", overflow: "hidden" }}>
             {Array.from({ length: Math.max(tiles, 6) }).map((_, index) => (
               <Box

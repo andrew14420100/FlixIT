@@ -78,11 +78,33 @@ export default function HeroSection({ mediaType: _mediaType }) {
   const detailData = inlineDetail || fetchedDetail;
 
   const automaticAssets = useAutomaticMediaAssets(
-    { id: featuredId, type: typeSlug },
+    {
+      id: featuredId,
+      type: typeSlug,
+      title: detailData?.name || detailData?.title || heroSettings?.customTitle || "",
+      original_title: detailData?.original_name || detailData?.original_title || "",
+    },
     featuredMediaType,
-    !skipQueries && !inlineAssets
+    !skipQueries
   );
-  const assets = inlineAssets || automaticAssets || {};
+  const assets = useMemo(
+    () => ({
+      ...(automaticAssets || {}),
+      ...(inlineAssets || {}),
+      logo_path: inlineAssets?.logo_path || automaticAssets?.logo_path || null,
+      fallback_logo_path:
+        inlineAssets?.fallback_logo_path || automaticAssets?.fallback_logo_path || null,
+      backdrop_path:
+        inlineAssets?.backdrop_path || automaticAssets?.backdrop_path || null,
+      titled_backdrop_path:
+        inlineAssets?.titled_backdrop_path || automaticAssets?.titled_backdrop_path || null,
+      hero_backdrop_path:
+        inlineAssets?.hero_backdrop_path || automaticAssets?.hero_backdrop_path || null,
+      detail_backdrop_path:
+        inlineAssets?.detail_backdrop_path || automaticAssets?.detail_backdrop_path || null,
+    }),
+    [automaticAssets, inlineAssets]
+  );
 
   const resolvedTrailer = useResolvedTrailer(
     featuredMediaType,
