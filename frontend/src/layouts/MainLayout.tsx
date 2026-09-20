@@ -13,6 +13,7 @@ import AuthModal from "src/components/auth/AuthModal";
 import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import "src/components/mobile/mobile-sc-rails.css";
+import "src/components/mobile/mobile-sc-pages.css";
 
 export default function MainLayout() {
   const location = useLocation();
