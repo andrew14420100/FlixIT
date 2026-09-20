@@ -9,8 +9,8 @@ import {
 } from "./useAutomaticMediaAssets";
 
 const SC_CATALOG_URL = "/sc-artwork-catalog.json";
-const SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/";
-const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v2-full-api"];
+const LEGACY_SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/";
+const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v3-current-domain"];
 
 type NormalizedEntry = {
   item: any;
@@ -21,6 +21,7 @@ type NormalizedEntry = {
 
 type CatalogIndex = {
   count: number;
+  cdnBase: string;
   byTitle: Map<string, any[]>;
 };
 
@@ -62,12 +63,7 @@ function uniqueItems(items: any[]) {
 }
 
 function titleVariants(item: any) {
-  const raw = [
-    item?.title,
-    item?.name,
-    item?.original_title,
-    item?.original_name,
-  ].filter(Boolean);
+  const raw = [item?.title, item?.name, item?.original_title, item?.original_name].filter(Boolean);
   const out = new Set<string>();
   raw.forEach((value) => {
     const text = String(value || "").trim();
@@ -99,6 +95,12 @@ function rowAliases(row: any) {
   return [...out];
 }
 
+function normalizeCdnBase(value: any) {
+  const raw = String(value || "").trim();
+  if (!/^https?:\/\//i.test(raw)) return LEGACY_SC_CDN_BASE;
+  return `${raw.replace(/\/+$/, "")}/`;
+}
+
 function buildIndex(payload: any): CatalogIndex {
   const rows = Array.isArray(payload?.titles) ? payload.titles : [];
   const byTitle = new Map<string, any[]>();
@@ -109,17 +111,18 @@ function buildIndex(payload: any): CatalogIndex {
       byTitle.set(key, bucket);
     });
   });
-  return { count: Number(payload?.count || rows.length || 0), byTitle };
+  return {
+    count: Number(payload?.count || rows.length || 0),
+    cdnBase: normalizeCdnBase(payload?.cdn_base_url),
+    byTitle,
+  };
 }
 
 async function loadCatalog(): Promise<CatalogIndex> {
   if (catalogMemory) return catalogMemory;
   if (catalogPromise) return catalogPromise;
 
-  const preloaded = typeof window !== "undefined"
-    ? (window as any).__FLIXIT_SC_CATALOG_PROMISE__
-    : null;
-
+  const preloaded = typeof window !== "undefined" ? (window as any).__FLIXIT_SC_CATALOG_PROMISE__ : null;
   const payloadPromise = preloaded
     ? Promise.resolve(preloaded)
     : fetch(SC_CATALOG_URL, {
@@ -132,12 +135,13 @@ async function loadCatalog(): Promise<CatalogIndex> {
 
   catalogPromise = payloadPromise
     .then((payload: any) => {
+      if (!payload) throw new Error("SC catalog payload missing");
       const index = buildIndex(payload);
       catalogMemory = index;
       return index;
     })
     .catch(() => {
-      const empty = { count: 0, byTitle: new Map<string, any[]>() };
+      const empty = { count: 0, cdnBase: LEGACY_SC_CDN_BASE, byTitle: new Map<string, any[]>() };
       catalogMemory = empty;
       return empty;
     });
@@ -156,7 +160,6 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
   const variants = titleVariants(entry.item);
   const candidates: any[] = [];
   const seen = new Set<any>();
-
   variants.forEach((variant) => {
     (index.byTitle.get(variant) || []).forEach((row) => {
       if (!seen.has(row)) {
@@ -167,10 +170,7 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
   });
   if (!candidates.length) return null;
 
-  const expectedYear = extractYear(
-    entry.item?.release_date || entry.item?.first_air_date || entry.item?.year
-  );
-
+  const expectedYear = extractYear(entry.item?.release_date || entry.item?.first_air_date || entry.item?.year);
   return candidates
     .map((row) => {
       let score = 0;
@@ -192,35 +192,32 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
     .sort((a, b) => b.score - a.score)[0]?.row || null;
 }
 
-function cdnUrl(value: any) {
+function cdnUrl(value: any, cdnBase: string) {
   const raw = String(value || "").trim();
   if (!raw) return null;
   if (/^https?:\/\//i.test(raw)) return raw;
-  return `${SC_CDN_BASE}${raw.replace(/^\/+/, "")}`;
+  return `${normalizeCdnBase(cdnBase)}${raw.replace(/^\/+/, "")}`;
 }
 
-function role(images: any, keys: string[]) {
+function role(images: any, keys: string[], cdnBase: string) {
   for (const key of keys) {
-    const value = cdnUrl(images?.[key]);
+    const value = cdnUrl(images?.[key], cdnBase);
     if (value) return value;
   }
   return null;
 }
 
-function officialFromCatalog(entry: NormalizedEntry, row: any, catalogSize: number) {
+function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogIndex) {
   if (!row) return null;
   const images = row?.images || {};
-
-  // SC "cover" is the merchandised horizontal card artwork with the title/logo
-  // already baked in. Never substitute the clean background as a static card.
-  const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile"]);
-  const poster = role(images, ["cover_mobile", "cover", "poster", "poster_mobile"]);
+  const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile"], index.cdnBase);
+  const poster = role(images, ["cover_mobile", "cover", "poster", "poster_mobile"], index.cdnBase);
   if (!landscape && !poster) return null;
 
   const card = landscape || poster;
   const ranked = poster || landscape;
-  const background = role(images, ["background", "backdrop", "hero", "wallpaper"]) || card;
-  const logo = role(images, ["logo", "title_logo", "title-treatment", "title_treatment"]);
+  const background = role(images, ["background", "backdrop", "hero", "wallpaper"], index.cdnBase) || card;
+  const logo = role(images, ["logo", "title_logo", "title-treatment", "title_treatment"], index.cdnBase);
 
   return {
     active: true,
@@ -251,10 +248,11 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, catalogSize: numb
     complete: !!card && !!ranked,
     sc_cover_imported: true,
     sc_catalog_hit: true,
-    sc_catalog_size: catalogSize,
+    sc_catalog_size: index.count,
+    sc_catalog_cdn: index.cdnBase,
     sc_provider_id: row?.id || row?.slug || null,
     sc_provider_name: row?.name || null,
-    version: "official-artwork-v13-full-static-sc-catalog",
+    version: "official-artwork-v14-current-domain-static-sc-catalog",
   };
 }
 
@@ -277,9 +275,7 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const data = useMemo(() => {
     const index = catalogQuery.data;
     if (!index || !index.count) return [];
-    return normalized
-      .map((entry) => officialFromCatalog(entry, bestRecord(entry, index), index.count))
-      .filter(Boolean);
+    return normalized.map((entry) => officialFromCatalog(entry, bestRecord(entry, index), index)).filter(Boolean);
   }, [catalogQuery.data, normalized]);
 
   const byKey = useMemo(() => {
