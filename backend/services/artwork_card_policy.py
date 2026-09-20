@@ -1,13 +1,9 @@
 """StreamingCommunity-first card artwork policy for FLIX-IT.
 
-Static catalogue cards keep the strict rule introduced for the Netflix-like UI:
-- no separate logo is composited on the static card;
-- the visible title treatment must already be inside the selected artwork;
-- StreamingCommunity is queried dynamically for every TMDB title and is the
-  preferred source for both normal cards and Top 10 cards;
-- existing official providers remain available as fallback when SC has no
-  reliable match;
-- TMDB is used only for identity metadata, never as the final image host.
+Static catalogue cards never composite a separate logo.  The title treatment has
+already to be part of the selected artwork.  StreamingCommunity is queried for
+all useful title variants and every matching SC row with a real cover is
+considered before falling back to another provider.
 """
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ from typing import Any, Optional
 import services.official_artwork as artwork_module
 from services.official_artwork import OfficialArtworkResolver
 
-POLICY_VERSION = "official-artwork-v6-sc-covers"
+POLICY_VERSION = "official-artwork-v7-sc-exhaustive"
 SC_SEARCH_API = "https://streamingcommunityz.ninja/api/search"
 SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/"
 _INSTALLED = False
@@ -47,7 +43,14 @@ def _extract_year(value: Any) -> Optional[int]:
 
 
 def _row_year(row: dict) -> Optional[int]:
-    for key in ("year", "release_date", "first_air_date", "date", "last_air_date"):
+    for key in (
+        "year",
+        "release_date",
+        "first_air_date",
+        "date",
+        "last_air_date",
+        "publication_date",
+    ):
         value = _extract_year(row.get(key))
         if value:
             return value
@@ -59,121 +62,275 @@ def _row_media_type(row: dict) -> Optional[str]:
         row.get("media_type")
         or row.get("type")
         or row.get("content_type")
+        or row.get("category")
         or ""
     ).strip().lower()
     if not raw:
         return None
     if raw in {"tv", "series", "serie", "show", "serie-tv", "tv-show"} or "serie" in raw:
         return "tv"
-    if raw in {"movie", "film", "cinema"} or "film" in raw:
+    if raw in {"movie", "film", "cinema"} or "film" in raw or "movie" in raw:
         return "movie"
     return None
 
 
+def _row_titles(row: dict) -> list[str]:
+    values: list[Any] = [
+        row.get("name"),
+        row.get("title"),
+        row.get("original_name"),
+        row.get("original_title"),
+    ]
+    aliases = row.get("aliases") or row.get("alternative_titles") or row.get("alternativeTitles")
+    if isinstance(aliases, list):
+        values.extend(aliases)
+    elif isinstance(aliases, dict):
+        values.extend(aliases.values())
+
+    out: list[str] = []
+    seen = set()
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("title") or value.get("name") or value.get("value")
+        normalized = _normalize_title(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+    return out
+
+
+def _query_variants(identity: dict) -> list[str]:
+    out: list[str] = []
+    seen = set()
+
+    def add(value: Any) -> None:
+        text = re.sub(r"\s+", " ", str(value or "").strip())
+        key = text.casefold()
+        if text and key not in seen:
+            seen.add(key)
+            out.append(text)
+
+    for raw in (identity.get("title"), identity.get("original_title")):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        add(text)
+        # SC titles often omit a subtitle or a parenthetical qualifier.
+        add(re.split(r"\s*[:|–—-]\s*", text, maxsplit=1)[0])
+        add(re.sub(r"\s*\([^)]*\)\s*", " ", text).strip())
+        add(re.sub(r"\s+(?:stagione|season)\s+\d+\s*$", "", text, flags=re.I).strip())
+
+    return out[:8]
+
+
 def _match_score(row: dict, identity: dict) -> float:
-    row_title = _normalize_title(row.get("name") or row.get("title"))
-    if not row_title:
+    row_titles = _row_titles(row)
+    if not row_titles:
         return 0.0
 
-    names = [
+    identity_titles = [
         _normalize_title(identity.get("title")),
         _normalize_title(identity.get("original_title")),
     ]
-    names = [name for name in names if name]
-    if not names:
+    identity_titles = [value for value in identity_titles if value]
+    if not identity_titles:
         return 0.0
 
     score = 0.0
-    for name in names:
-        if row_title == name:
-            score = max(score, 1.0)
-            continue
-        ratio = SequenceMatcher(None, row_title, name).ratio()
-        if row_title in name or name in row_title:
-            ratio = max(ratio, 0.88)
-        score = max(score, ratio)
+    for row_title in row_titles:
+        for expected in identity_titles:
+            if row_title == expected:
+                score = max(score, 1.0)
+                continue
+            ratio = SequenceMatcher(None, row_title, expected).ratio()
+            if row_title in expected or expected in row_title:
+                ratio = max(ratio, 0.90)
+            # Strong token overlap helps translated/subtitled variants without
+            # accepting a completely different title that shares one word.
+            a = set(row_title.split())
+            b = set(expected.split())
+            if a and b:
+                overlap = len(a & b) / max(1, len(a | b))
+                if overlap >= 0.75:
+                    ratio = max(ratio, 0.87)
+                elif overlap >= 0.50:
+                    ratio = max(ratio, 0.74)
+            score = max(score, ratio)
 
     expected_year = _extract_year(identity.get("year"))
     candidate_year = _row_year(row)
     if expected_year and candidate_year:
         if expected_year == candidate_year:
-            score += 0.07
-        elif abs(expected_year - candidate_year) > 1:
-            score -= 0.05
+            score += 0.08
+        elif abs(expected_year - candidate_year) == 1:
+            score += 0.02
+        else:
+            score -= 0.10
 
     expected_type = "tv" if identity.get("type") == "tv" else "movie"
     candidate_type = _row_media_type(row)
     if candidate_type:
-        score += 0.04 if candidate_type == expected_type else -0.08
+        score += 0.05 if candidate_type == expected_type else -0.14
 
     return score
 
 
-def _image_url(row: dict, *wanted_types: str) -> Optional[str]:
-    images = row.get("images") or []
-    if isinstance(images, dict):
-        images = list(images.values())
-    if not isinstance(images, list):
+def _asset_url(value: Any) -> Optional[str]:
+    if isinstance(value, dict):
+        value = (
+            value.get("url")
+            or value.get("src")
+            or value.get("filename")
+            or value.get("file")
+            or value.get("path")
+            or value.get("uuid")
+            or value.get("id")
+        )
+    raw = str(value or "").strip()
+    if not raw:
         return None
-
-    wanted = [str(value).lower() for value in wanted_types]
-    for image_type in wanted:
-        for image in images:
-            if not isinstance(image, dict):
-                continue
-            kind = str(image.get("type") or image.get("kind") or "").lower()
-            if kind != image_type:
-                continue
-            raw = str(image.get("url") or image.get("filename") or image.get("file") or "").strip()
-            if not raw:
-                continue
-            if re.match(r"^https?://", raw, re.I):
-                return _safe_url(raw)
-            filename = raw.lstrip("/")
-            if not re.search(r"\.[a-z0-9]{2,5}$", filename, re.I):
-                filename += ".webp"
-            return _safe_url(f"{SC_CDN_BASE}{filename}")
-    return None
+    if re.match(r"^https?://", raw, re.I):
+        return _safe_url(raw)
+    filename = raw.lstrip("/")
+    if not re.search(r"\.[a-z0-9]{2,5}$", filename, re.I):
+        filename += ".webp"
+    return _safe_url(f"{SC_CDN_BASE}{filename}")
 
 
-def _payload_rows(payload: Any) -> list[dict]:
-    if not isinstance(payload, dict):
-        return []
-    data = payload.get("data")
-    if isinstance(data, list):
-        return [row for row in data if isinstance(row, dict)]
-    if isinstance(data, dict):
-        for key in ("results", "titles", "items", "data"):
-            rows = data.get(key)
-            if isinstance(rows, list):
-                return [row for row in rows if isinstance(row, dict)]
-    rows = payload.get("results")
-    if isinstance(rows, list):
-        return [row for row in rows if isinstance(row, dict)]
+def _images(row: dict) -> list[dict]:
+    raw = row.get("images") or row.get("artworks") or row.get("artwork") or []
+    if isinstance(raw, dict):
+        expanded: list[dict] = []
+        for key, value in raw.items():
+            if isinstance(value, dict):
+                expanded.append({"type": value.get("type") or key, **value})
+            else:
+                expanded.append({"type": key, "value": value})
+        return expanded
+    if isinstance(raw, list):
+        return [value for value in raw if isinstance(value, dict)]
     return []
 
 
-async def _streamingcommunity(
-    self: OfficialArtworkResolver,
-    identity: dict,
-) -> dict:
-    """Resolve the SC cover for one TMDB identity.
+def _image_url(row: dict, *wanted_types: str) -> Optional[str]:
+    wanted = [str(value).strip().lower() for value in wanted_types if value]
+    images = _images(row)
 
-    Search is based on the Italian TMDB title first and the original title only
-    as a fallback. Matching is deliberately conservative enough to avoid showing
-    an unrelated cover with a similar title.
+    for wanted_type in wanted:
+        for image in images:
+            kind = str(
+                image.get("type")
+                or image.get("kind")
+                or image.get("role")
+                or image.get("name")
+                or ""
+            ).strip().lower()
+            if kind != wanted_type:
+                continue
+            resolved = _asset_url(
+                image.get("url")
+                or image.get("src")
+                or image.get("filename")
+                or image.get("file")
+                or image.get("path")
+                or image.get("uuid")
+                or image.get("value")
+            )
+            if resolved:
+                return resolved
+
+    # Accept any other SC field whose type clearly says cover/poster, but never
+    # silently turn a plain background/backdrop into a static card.
+    if any(value in {"cover", "poster", "cover_mobile", "cover_desktop"} for value in wanted):
+        for image in images:
+            kind = str(image.get("type") or image.get("kind") or image.get("role") or "").lower()
+            if "cover" not in kind and "poster" not in kind:
+                continue
+            resolved = _asset_url(
+                image.get("url")
+                or image.get("src")
+                or image.get("filename")
+                or image.get("file")
+                or image.get("path")
+                or image.get("uuid")
+                or image.get("value")
+            )
+            if resolved:
+                return resolved
+
+        for key in (
+            "cover_url",
+            "cover",
+            "poster_url",
+            "poster",
+            "cover_image",
+            "coverImage",
+            "image_url",
+            "image",
+        ):
+            resolved = _asset_url(row.get(key))
+            if resolved:
+                return resolved
+
+    return None
+
+
+def _cover_url(row: dict) -> Optional[str]:
+    return _image_url(
+        row,
+        "cover",
+        "cover_desktop",
+        "poster",
+        "cover_mobile",
+        "poster_mobile",
+        "thumbnail",
+        "thumb",
+    )
+
+
+def _background_url(row: dict) -> Optional[str]:
+    return _image_url(row, "background", "backdrop", "hero", "wallpaper")
+
+
+def _payload_rows(payload: Any) -> list[dict]:
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+
+    candidates = [
+        payload.get("data"),
+        payload.get("results"),
+        payload.get("titles"),
+        payload.get("items"),
+    ]
+    data = payload.get("data")
+    if isinstance(data, dict):
+        candidates.extend(
+            [data.get("results"), data.get("titles"), data.get("items"), data.get("data")]
+        )
+
+    for rows in candidates:
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+async def _streamingcommunity(self: OfficialArtworkResolver, identity: dict) -> dict:
+    """Resolve every usable SC cover candidate for one TMDB identity.
+
+    We intentionally do not stop at the first title hit: SC can expose several
+    rows for the same title and only one of them may carry the merchandising
+    cover.  All title variants are searched, then the highest-confidence row
+    that actually contains a cover is selected.
     """
-    queries: list[str] = []
-    for value in (identity.get("title"), identity.get("original_title")):
-        text = str(value or "").strip()
-        if text and text.casefold() not in {query.casefold() for query in queries}:
-            queries.append(text)
+    queries = _query_variants(identity)
     if not queries:
         return {}
 
     semaphore = getattr(self, "_sc_artwork_semaphore", None)
     if semaphore is None:
-        semaphore = asyncio.Semaphore(6)
+        semaphore = asyncio.Semaphore(8)
         setattr(self, "_sc_artwork_semaphore", semaphore)
 
     rows_by_id: dict[str, dict] = {}
@@ -183,46 +340,48 @@ async def _streamingcommunity(
                 response = await self._http().get(
                     SC_SEARCH_API,
                     params={"q": query},
-                    headers={"Accept": "application/json"},
+                    headers={
+                        "Accept": "application/json",
+                        "Referer": "https://streamingcommunityz.ninja/",
+                    },
                 )
                 if response.status_code != 200:
                     continue
                 for row in _payload_rows(response.json()):
-                    key = str(row.get("id") or row.get("slug") or row.get("name") or len(rows_by_id))
+                    key = str(
+                        row.get("id")
+                        or row.get("uuid")
+                        or row.get("slug")
+                        or row.get("name")
+                        or row.get("title")
+                        or len(rows_by_id)
+                    )
                     rows_by_id[key] = row
             except Exception:
                 continue
-            # An exact title is normally found on the first Italian-title query;
-            # avoid a second request when it is already unambiguous.
-            if any(
-                _normalize_title(row.get("name") or row.get("title"))
-                == _normalize_title(identity.get("title"))
-                for row in rows_by_id.values()
-            ):
-                break
 
     if not rows_by_id:
         return {}
 
-    ranked = sorted(
-        ((_match_score(row, identity), row) for row in rows_by_id.values()),
-        key=lambda pair: pair[0],
-        reverse=True,
-    )
-    confidence, match = ranked[0]
-    if confidence < 0.72:
+    ranked: list[tuple[float, dict, str]] = []
+    for row in rows_by_id.values():
+        cover = _cover_url(row)
+        if not cover:
+            continue
+        ranked.append((_match_score(row, identity), row, cover))
+    ranked.sort(key=lambda value: value[0], reverse=True)
+
+    if not ranked:
         return {}
 
-    # SC's cover/poster artwork is the title-bearing artwork used for static
-    # catalogue cards. Keep it as the source for both normal and Top 10 cards.
-    cover = _image_url(match, "cover", "poster", "cover_mobile")
-    if not cover:
+    confidence, match, cover = ranked[0]
+    if confidence < 0.62:
         return {}
-    background = _image_url(match, "background", "backdrop") or cover
 
+    background = _background_url(match) or cover
     return {
         "source": "streamingcommunity",
-        "provider_id": match.get("id"),
+        "provider_id": match.get("id") or match.get("uuid") or match.get("slug"),
         "provider_name": match.get("name") or match.get("title"),
         "confidence": round(float(min(confidence, 1.0)), 4),
         "landscape_url": cover,
@@ -232,8 +391,6 @@ async def _streamingcommunity(
         "landscape_locale": "it",
         "poster_locale": "it",
         "hero_landscape_locale": "it",
-        # Width/height are left unknown on purpose: the SC image endpoint owns
-        # the native geometry and the frontend crops it to the card viewport.
         "landscape_width": 0,
         "landscape_height": 0,
         "poster_width": 0,
@@ -241,6 +398,8 @@ async def _streamingcommunity(
         "landscape_embedded_title_treatment": True,
         "poster_embedded_title_treatment": True,
         "hero_embedded_title_treatment": background == cover,
+        "sc_cover_imported": True,
+        "sc_candidates_seen": len(rows_by_id),
     }
 
 
@@ -258,9 +417,7 @@ def _provider_locale(provider: dict, role: str) -> str:
         return "en"
     if text in {"neutral", "none", "und"}:
         return "neutral"
-    if str(provider.get("source") or "") == "streamingcommunity":
-        return "it"
-    if str(provider.get("source") or "") == "apple_itunes_it":
+    if str(provider.get("source") or "") in {"streamingcommunity", "apple_itunes_it"}:
         return "it"
     return "unknown"
 
@@ -427,6 +584,10 @@ def install_artwork_card_policy() -> None:
 
             landscape_ready = bool(static_landscape)
             poster_ready = bool(static_poster)
+            sc_provider = next(
+                (provider for provider in providers if provider.get("source") == "streamingcommunity"),
+                {},
+            )
 
             resolved = {
                 "active": bool(static_landscape or static_poster or hero_landscape or logo_url),
@@ -461,6 +622,11 @@ def install_artwork_card_policy() -> None:
                 "logo_url": logo_url,
                 "logo_source": logo_source,
                 "logo_locale": logo_locale,
+                "sc_cover_imported": bool(sc_provider),
+                "sc_provider_id": sc_provider.get("provider_id"),
+                "sc_provider_name": sc_provider.get("provider_name"),
+                "sc_confidence": sc_provider.get("confidence"),
+                "sc_candidates_seen": sc_provider.get("sc_candidates_seen", 0),
                 "complete": bool(landscape_ready and poster_ready),
                 "providers": [
                     {
@@ -475,7 +641,7 @@ def install_artwork_card_policy() -> None:
                     }
                     for provider in providers
                 ],
-                "policy": "streamingcommunity-covers-first_static-embedded-title-treatment-only_no-tmdb-images",
+                "policy": "streamingcommunity-exhaustive-cover-import_first_then_embedded-provider-fallback",
                 "version": POLICY_VERSION,
             }
 
