@@ -4,6 +4,9 @@
 The script stores metadata plus image filenames/URLs, not image binaries. It
 walks every page of the current SC archive and can fall back to older public
 GitHub snapshots only when the archive is temporarily unavailable/incomplete.
+
+SC currently starts returning 503 responses after a burst of archive requests,
+so pagination is intentionally paced and retries transient 429/503 responses.
 """
 from __future__ import annotations
 
@@ -15,11 +18,12 @@ import re
 import sys
 import time
 import unicodedata
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "sc-artwork-catalog-v2-paginated"
+VERSION = "sc-artwork-catalog-v3-throttled"
 DEFAULT_BASE = os.getenv("SC_BASE_URL", "https://streamingcommunityz.ninja").rstrip("/")
 # Start with the complete archive. If that route does not expose enough rows, the
 # movie/TV archives are walked as a second strategy and merged by SC title id.
@@ -39,7 +43,11 @@ SEED_URLS = (
 )
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36"
 MAX_ARCHIVE_PAGES = max(50, int(os.getenv("SC_ARTWORK_MAX_ARCHIVE_PAGES", "500")))
-REQUEST_DELAY_SECONDS = max(0.0, float(os.getenv("SC_ARTWORK_REQUEST_DELAY", "0.03")))
+# The previous unthrottled build consistently hit HTTP 503 on page 21. A pace of
+# roughly one request every 3+ seconds including network time stays below that
+# observed burst limit without resorting to proxy rotation or bypass techniques.
+REQUEST_DELAY_SECONDS = max(0.0, float(os.getenv("SC_ARTWORK_REQUEST_DELAY", "2.5")))
+TRANSIENT_RETRIES = max(1, int(os.getenv("SC_ARTWORK_TRANSIENT_RETRIES", "8")))
 
 
 def normalize(value: Any) -> str:
@@ -54,6 +62,23 @@ def year(value: Any) -> Optional[int]:
     return int(match.group(0)) if match else None
 
 
+def _retry_delay(exc: urllib.error.HTTPError, attempt: int) -> float:
+    retry_after = None
+    try:
+        retry_after = exc.headers.get("Retry-After")
+    except Exception:
+        retry_after = None
+    if retry_after:
+        try:
+            return max(1.0, min(120.0, float(retry_after)))
+        except Exception:
+            pass
+    # Long enough to cross a typical short rate-limit window, while remaining
+    # bounded so one bad page cannot consume the whole workflow timeout.
+    ladder = (8.0, 15.0, 25.0, 40.0, 60.0, 75.0, 90.0, 120.0)
+    return ladder[min(attempt, len(ladder) - 1)]
+
+
 def get_text(url: str, timeout: int = 45) -> str:
     request = urllib.request.Request(
         url,
@@ -63,8 +88,34 @@ def get_text(url: str, timeout: int = 45) -> str:
             "Accept-Language": "it-IT,it;q=0.9,en;q=0.7",
         },
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", errors="replace")
+    last_error: Optional[BaseException] = None
+    for attempt in range(TRANSIENT_RETRIES):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code not in (429, 502, 503, 504) or attempt >= TRANSIENT_RETRIES - 1:
+                raise
+            delay = _retry_delay(exc, attempt)
+            print(
+                f"transient HTTP {exc.code} for {url}; retry {attempt + 1}/{TRANSIENT_RETRIES - 1} in {delay:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            last_error = exc
+            if attempt >= TRANSIENT_RETRIES - 1:
+                raise
+            delay = min(30.0, 3.0 * (attempt + 1))
+            print(
+                f"transient network error for {url}: {exc}; retry in {delay:.0f}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"unable to fetch {url}")
 
 
 def flatten(value: Any) -> list[dict]:
@@ -339,14 +390,14 @@ def main() -> int:
 
     records = archive_records(args.base_url.rstrip("/"), args.minimum)
     merged = merge(records)
-    source = "streamingcommunity_archive_paginated"
+    source = "streamingcommunity_archive_paginated_throttled"
     if len(merged) < max(1, args.minimum) and not args.no_seed_fallback:
         print(
             f"archive yielded only {len(merged)} entries; adding public GitHub seeds",
             file=sys.stderr,
         )
         merged = merge([*merged, *seed_records()])
-        source = "streamingcommunity_archive_paginated+github_seed"
+        source = "streamingcommunity_archive_paginated_throttled+github_seed"
 
     if not merged:
         print("no artwork records found; refusing to overwrite the catalog", file=sys.stderr)
