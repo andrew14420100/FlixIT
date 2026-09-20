@@ -37,19 +37,26 @@ type ContinuePosterIndex = {
   byTitle: Map<string, PosterBucket>;
 };
 
+function loadCatalogPayload() {
+  const globalCache = globalThis as any;
+  if (!globalCache.__flixitScCatalogPayloadPromise) {
+    globalCache.__flixitScCatalogPayloadPromise = fetch(CATALOG_URL, {
+      cache: "force-cache",
+      headers: { Accept: "application/json" },
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
+      return response.json();
+    });
+  }
+  return globalCache.__flixitScCatalogPayloadPromise;
+}
+
 let continuePosterIndexPromise: Promise<ContinuePosterIndex> | null = null;
 
 function loadContinuePosterIndex(): Promise<ContinuePosterIndex> {
   if (continuePosterIndexPromise) return continuePosterIndexPromise;
 
-  continuePosterIndexPromise = fetch(CATALOG_URL, {
-    cache: "force-cache",
-    headers: { Accept: "application/json" },
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
-      return response.json();
-    })
+  continuePosterIndexPromise = loadCatalogPayload()
     .then((payload) => {
       const rows = Array.isArray(payload?.titles) ? payload.titles : [];
       const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
@@ -58,7 +65,6 @@ function loadContinuePosterIndex(): Promise<ContinuePosterIndex> {
 
       rows.forEach((row: any) => {
         const images = row?.images || {};
-        // Continue Watching must use a genuine vertical SC poster only.
         const poster = absoluteAsset(images.poster || images.poster_mobile, cdnBase);
         if (!poster) return;
 
@@ -116,9 +122,7 @@ export default function ContinueWatchingSection() {
     loadContinuePosterIndex().then((index) => {
       if (!cancelled) setPosterIndex(index);
     });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const sliderItems = useMemo(() => {
@@ -141,8 +145,6 @@ export default function ContinueWatchingSection() {
           media_type: item.media_type,
           title: item.title,
           name: item.title,
-          // Keep the historical artwork for desktop behaviour, but provide the
-          // mobile card with an explicit, verified SC poster so no cover can win.
           backdrop_path: item.backdrop_path,
           poster_path: item.poster_path,
           mobile_sc_poster_url: scPoster,
@@ -157,9 +159,7 @@ export default function ContinueWatchingSection() {
                 : 0,
             season: item.season,
             episode: item.episode,
-            minutesLabel: `${formatMinutes(item.progress)} di ${formatMinutes(
-              item.duration
-            )} min`,
+            minutesLabel: `${formatMinutes(item.progress)} di ${formatMinutes(item.duration)} min`,
             onRemove: () => removeItem(item.tmdb_id),
           },
         };
