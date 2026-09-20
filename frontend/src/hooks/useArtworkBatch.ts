@@ -10,7 +10,7 @@ import {
 
 const SC_CATALOG_URL = "/sc-artwork-catalog.json";
 const LEGACY_SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/";
-const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v3-current-domain"];
+const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v4-top10-poster-only"];
 
 type NormalizedEntry = {
   item: any;
@@ -183,8 +183,9 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
         else score -= 8;
       }
       const images = row?.images || {};
+      if (images.poster || images.poster_mobile) score += 28;
       if (images.cover || images.cover_desktop) score += 20;
-      if (images.cover_mobile) score += 8;
+      if (images.cover_mobile) score += 6;
       if (images.background) score += 4;
       if (images.logo) score += 3;
       return { row, score };
@@ -211,11 +212,15 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogInd
   if (!row) return null;
   const images = row?.images || {};
   const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile"], index.cdnBase);
-  const poster = role(images, ["cover_mobile", "cover", "poster", "poster_mobile"], index.cdnBase);
+
+  // Top 10 must use the real vertical SC poster asset. Do not promote
+  // cover/cover_mobile to poster: those are card covers and were the reason the
+  // ranked row showed cropped cover artwork instead of the actual poster.
+  const poster = role(images, ["poster", "poster_mobile"], index.cdnBase);
   if (!landscape && !poster) return null;
 
   const card = landscape || poster;
-  const ranked = poster || landscape;
+  const ranked = poster;
   const background = role(images, ["background", "backdrop", "hero", "wallpaper"], index.cdnBase) || card;
   const logo = role(images, ["logo", "title_logo", "title-treatment", "title_treatment"], index.cdnBase);
 
@@ -230,11 +235,11 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogInd
     detail_backdrop_url: background,
     logo_url: logo,
     backdrop_source: "streamingcommunity",
-    poster_source: "streamingcommunity",
+    poster_source: ranked ? "streamingcommunity" : null,
     hero_backdrop_source: "streamingcommunity",
     logo_source: logo ? "streamingcommunity" : null,
     backdrop_locale: "it",
-    poster_locale: "it",
+    poster_locale: ranked ? "it" : null,
     hero_backdrop_locale: "it",
     logo_locale: logo ? "it" : null,
     backdrop_embedded_title_treatment: !!card,
@@ -252,7 +257,7 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogInd
     sc_catalog_cdn: index.cdnBase,
     sc_provider_id: row?.id || row?.slug || null,
     sc_provider_name: row?.name || null,
-    version: "official-artwork-v14-current-domain-static-sc-catalog",
+    version: "official-artwork-v15-top10-true-poster-only",
   };
 }
 
