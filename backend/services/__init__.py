@@ -1,7 +1,7 @@
 """Backend services package.
 
 The trailer system is attached after the existing premium module registers its
-routes.  This keeps trailer integration isolated from player.py, VixSrc,
+routes. This keeps trailer integration isolated from player.py, VixSrc,
 MediaFlow and the main movie/episode resolver stack.
 """
 
@@ -54,4 +54,24 @@ def _install_trailer_registration_hook():
     premium_module.register = register_with_trailers
 
 
+def _install_full_sc_artwork_catalog_hook():
+    """Make the artwork policy prefer the committed full SC catalog.
+
+    Importing the policy here is intentional: ``services`` is initialized before
+    ``server.py`` imports ``install_artwork_card_policy``. The hook therefore
+    swaps only the SC provider implementation while preserving the existing card
+    policy and all other artwork providers.
+    """
+    try:
+        import services.artwork_card_policy as policy_module
+        from services.sc_artwork_catalog import install_sc_catalog
+
+        install_sc_catalog(policy_module)
+    except Exception:
+        # The existing artwork resolver remains fully functional if the optional
+        # catalog cannot be installed in a stripped-down/test environment.
+        return
+
+
 _install_trailer_registration_hook()
+_install_full_sc_artwork_catalog_hook()
