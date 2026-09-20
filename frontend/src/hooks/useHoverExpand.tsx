@@ -17,14 +17,16 @@ const EASE = "cubic-bezier(.21,0,.07,1)";
 type AnchorData = {
   cardRect: DOMRect;
   modalWidth: number;
+  anchor: HTMLElement | null;
 };
 
 /**
  * Netflix-style hover intent + expansion.
  *
  * The preview closes only when the pointer actually leaves the card/preview.
- * Wheel, touchmove and page scroll no longer force-close it: this fixes the
- * disappearing hover when the user scrolls with the mouse over the preview.
+ * Wheel, touchmove and page scroll no longer force-close it. While the preview
+ * is open, its geometry stays locked to the source card instead of drifting in
+ * the viewport when the page or a nested row scrolls.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -83,6 +85,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
         setPosition({
           cardRect: rect,
           modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
+          anchor: element,
         });
         setOpen(true);
       }, OPEN_DELAY_MS);
@@ -146,6 +149,47 @@ export function ExpandOverlay({
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
+  const currentCardRect = useCallback(() => {
+    const anchor = position?.anchor as HTMLElement | null | undefined;
+    if (anchor?.isConnected) return anchor.getBoundingClientRect();
+    return position?.cardRect as DOMRect | undefined;
+  }, [position]);
+
+  const calculateGeometry = useCallback(() => {
+    const node = modalRef.current;
+    const card = currentCardRect();
+    if (!node || !card || typeof window === "undefined") return null;
+
+    const modalRect = node.getBoundingClientRect();
+    const scale = 1 / SCALE_FACTOR;
+
+    const desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
+    const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
+
+    const maxLeft = Math.max(
+      VIEWPORT_GUTTER,
+      window.innerWidth - modalRect.width - VIEWPORT_GUTTER
+    );
+    const maxTop = Math.max(
+      VIEWPORT_GUTTER,
+      window.innerHeight - modalRect.height - VIEWPORT_GUTTER
+    );
+
+    const left = Math.round(
+      Math.min(Math.max(desiredLeft, VIEWPORT_GUTTER), maxLeft)
+    );
+    const top = Math.round(
+      Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
+    );
+
+    const scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
+    const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
+    const resetX = Math.round(card.left - scaledLeft);
+    const resetY = Math.round(card.top - scaledTop);
+
+    return { left, top, resetX, resetY };
+  }, [currentCardRect]);
+
   useLayoutEffect(() => {
     if (!position || !modalRef.current || typeof window === "undefined") return;
 
@@ -155,38 +199,9 @@ export function ExpandOverlay({
     let frame2 = 0;
 
     frame1 = requestAnimationFrame(() => {
-      const node = modalRef.current;
-      if (!node) return;
-
-      const modalRect = node.getBoundingClientRect();
-      const card = position.cardRect as DOMRect;
-      const scale = 1 / SCALE_FACTOR;
-
-      const desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
-      const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
-
-      const maxLeft = Math.max(
-        VIEWPORT_GUTTER,
-        window.innerWidth - modalRect.width - VIEWPORT_GUTTER
-      );
-      const maxTop = Math.max(
-        VIEWPORT_GUTTER,
-        window.innerHeight - modalRect.height - VIEWPORT_GUTTER
-      );
-
-      const left = Math.round(
-        Math.min(Math.max(desiredLeft, VIEWPORT_GUTTER), maxLeft)
-      );
-      const top = Math.round(
-        Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
-      );
-
-      const scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
-      const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
-      const resetX = Math.round(card.left - scaledLeft);
-      const resetY = Math.round(card.top - scaledTop);
-
-      setGeometry({ left, top, resetX, resetY });
+      const next = calculateGeometry();
+      if (!next) return;
+      setGeometry(next);
       setPhase("reset");
       frame2 = requestAnimationFrame(() => setPhase("open"));
     });
@@ -195,7 +210,50 @@ export function ExpandOverlay({
       if (frame1) cancelAnimationFrame(frame1);
       if (frame2) cancelAnimationFrame(frame2);
     };
-  }, [position]);
+  }, [position, calculateGeometry]);
+
+  // getBoundingClientRect() is viewport-relative and the preview portal is fixed.
+  // Re-sync the modal to the source card whenever the document (or any nested
+  // scroller) moves. This prevents the expanded hover from sliding down/up when
+  // the user scrolls slightly with the pointer over it.
+  useEffect(() => {
+    if (!position || typeof window === "undefined") return;
+
+    let frame = 0;
+    const sync = () => {
+      if (frame || phase === "measure" || phase === "reset" || phase === "close") return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const next = calculateGeometry();
+        if (!next) return;
+        setGeometry((previous: any) => {
+          if (
+            previous &&
+            previous.left === next.left &&
+            previous.top === next.top &&
+            previous.resetX === next.resetX &&
+            previous.resetY === next.resetY
+          ) {
+            return previous;
+          }
+          return next;
+        });
+      });
+    };
+
+    window.addEventListener("scroll", sync, true);
+    window.addEventListener("resize", sync);
+    window.visualViewport?.addEventListener?.("scroll", sync);
+    window.visualViewport?.addEventListener?.("resize", sync);
+
+    return () => {
+      window.removeEventListener("scroll", sync, true);
+      window.removeEventListener("resize", sync);
+      window.visualViewport?.removeEventListener?.("scroll", sync);
+      window.visualViewport?.removeEventListener?.("resize", sync);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [position, phase, calculateGeometry]);
 
   useEffect(() => {
     if (closing && geometry) setPhase("close");
@@ -203,7 +261,7 @@ export function ExpandOverlay({
 
   if (!position || typeof document === "undefined") return null;
 
-  const card = position.cardRect as DOMRect;
+  const card = currentCardRect() || (position.cardRect as DOMRect);
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
   const fallbackLeft = Math.min(
     Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
