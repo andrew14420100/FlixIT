@@ -2,10 +2,10 @@
 import { filterAvailableAsync } from "src/hooks/useAvailability";
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
-import Chip from "@mui/material/Chip";
 import SearchIcon from "@mui/icons-material/Search";
 import CloseIcon from "@mui/icons-material/Close";
 import MovieIcon from "@mui/icons-material/Movie";
@@ -17,10 +17,12 @@ const TMDB_KEY = "4f153630f8d7e92d542dde3a38fbddf2";
 
 export default function SearchBox() {
   const navigate = useNavigate();
+  const isMobile = useMediaQuery("(max-width:899px)");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState("all");
   const inputRef = useRef(null);
   const containerRef = useRef(null);
 
@@ -33,132 +35,74 @@ export default function SearchBox() {
         if (res.ok) {
           const data = await res.json();
           const candidates = (data.results || []).filter(i => i.media_type === "movie" || i.media_type === "tv");
-          setResults((await filterAvailableAsync(candidates)).slice(0, 8));
+          setResults((await filterAvailableAsync(candidates)).slice(0, 20));
         }
       } catch {} finally { setLoading(false); }
-    }, 300);
+    }, 260);
     return () => clearTimeout(timer);
   }, [query]);
 
   useEffect(() => {
-    const handler = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) { setOpen(false); }
-    };
+    if (isMobile) return;
+    const handler = (e) => { if (containerRef.current && !containerRef.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [isMobile]);
 
-  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 100); }, [open]);
+  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 80); }, [open]);
+
+  const visible = results.filter(r => tab === "all" || r.media_type === tab);
+  const openResult = (r) => { navigate(`/browse/${r.media_type}/${r.id}`); setQuery(""); setOpen(false); };
+
+  if (isMobile) {
+    return (
+      <Box ref={containerRef} data-testid="search-box" sx={{ position:"relative" }}>
+        <Box onClick={() => setOpen(true)} sx={{ width:34, height:34, display:"grid", placeItems:"center", cursor:"pointer" }}><SearchIcon sx={{ fontSize:22, color:"rgba(255,255,255,.86)" }} /></Box>
+        {open && (
+          <Box data-testid="mobile-search-page" sx={{ position:"fixed", inset:0, zIndex:16000, bgcolor:"#050505", color:"#fff", pt:"14px", pb:"70px", overflowY:"auto" }}>
+            <Box sx={{ display:"flex", alignItems:"center", gap:1, px:"14px", mb:1.5 }}>
+              <Box sx={{ flex:1, height:40, display:"flex", alignItems:"center", gap:1, bgcolor:"#232323", borderRadius:"5px", px:1.2 }}>
+                <SearchIcon sx={{ fontSize:19, color:"rgba(255,255,255,.72)" }} />
+                <input ref={inputRef} value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Cerca film, serie TV..." data-testid="search-input" style={{ flex:1, minWidth:0, border:0, outline:0, background:"transparent", color:"#fff", fontSize:"13px", fontFamily:"Inter, sans-serif" }} />
+                {loading ? <CircularProgress size={14} sx={{ color:'#e50914' }} /> : query ? <CloseIcon onClick={()=>{setQuery('');setResults([]);}} sx={{ fontSize:18, color:'rgba(255,255,255,.5)' }} /> : null}
+              </Box>
+              <Box component="button" onClick={()=>setOpen(false)} sx={{ border:0, bgcolor:'transparent', color:'#fff', fontSize:12.5, p:.5, cursor:'pointer' }}>Chiudi</Box>
+            </Box>
+
+            {query.length >= 2 && <Typography sx={{ px:"14px", fontSize:13.5, fontWeight:700, mb:1.1 }}>Risultati per “{query}”</Typography>}
+            <Box sx={{ px:"14px", display:'flex', gap:2.2, borderBottom:'1px solid rgba(255,255,255,.08)', mb:.5 }}>
+              {[['all','Tutti'],['movie','Film'],['tv','Serie TV']].map(([k,l]) => <Box key={k} component="button" onClick={()=>setTab(k)} sx={{ position:'relative', border:0, bgcolor:'transparent', color:tab===k?'#fff':'rgba(255,255,255,.58)', px:0, py:.8, fontSize:11.5, fontWeight:600, cursor:'pointer', '&::after':tab===k?{content:'""',position:'absolute',left:0,right:0,bottom:0,height:'2px',bgcolor:'#e50914'}:{} }}>{l}</Box>)}
+            </Box>
+
+            <Box>
+              {visible.map((r) => (
+                <Box key={`${r.media_type}-${r.id}`} onClick={()=>openResult(r)} data-testid={`search-result-${r.id}`} sx={{ display:'grid', gridTemplateColumns:'48px minmax(0,1fr)', gap:'10px', alignItems:'center', px:'14px', py:'7px', minHeight:76, cursor:'pointer' }}>
+                  <Box sx={{ width:48, height:68, borderRadius:'3px', overflow:'hidden', bgcolor:'#151515' }}>
+                    {r.poster_path ? <img src={`https://image.tmdb.org/t/p/w185${r.poster_path}`} alt={r.title || r.name || ''} style={{width:'100%',height:'100%',objectFit:'cover'}} /> : r.media_type==='movie' ? <Box sx={{height:'100%',display:'grid',placeItems:'center'}}><MovieIcon sx={{color:'#333'}} /></Box> : <Box sx={{height:'100%',display:'grid',placeItems:'center'}}><TvIcon sx={{color:'#333'}} /></Box>}
+                  </Box>
+                  <Box sx={{ minWidth:0 }}>
+                    <Typography noWrap sx={{ fontSize:13, fontWeight:700 }}>{r.title || r.name}</Typography>
+                    <Typography sx={{ mt:.35, fontSize:10.5, color:'rgba(255,255,255,.54)' }}>{r.media_type==='movie'?'Film':'Serie TV'}{(r.release_date||r.first_air_date)?` · ${(r.release_date||r.first_air_date).slice(0,4)}`:''}</Typography>
+                  </Box>
+                </Box>
+              ))}
+              {query.length >= 2 && !loading && visible.length === 0 && <Typography sx={{ px:'14px', py:4, fontSize:12.5, color:'rgba(255,255,255,.45)' }}>Nessun risultato</Typography>}
+            </Box>
+          </Box>
+        )}
+      </Box>
+    );
+  }
 
   return (
     <Box ref={containerRef} sx={{ position: "relative" }} data-testid="search-box">
-      {/* Toggle Button / Input */}
-      <Box sx={{
-        display: 'flex', alignItems: 'center', gap: '6px',
-        bgcolor: open ? 'rgba(255,255,255,0.08)' : 'transparent',
-        border: open ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
-        borderRadius: '10px', px: open ? 1.5 : 0.7, py: 0.5,
-        transition: 'all 0.3s cubic-bezier(0.4,0,0.2,1)',
-        width: open ? { xs: '240px', md: '380px' } : '42px',
-        height: '42px',
-        overflow: 'hidden',
-        cursor: open ? 'text' : 'pointer',
-        '&:hover': !open ? { bgcolor: 'rgba(255,255,255,0.06)', borderRadius: '8px' } : {},
-      }}
-        onClick={() => { if (!open) setOpen(true); }}
-      >
-        <SearchIcon sx={{ fontSize: 24, color: open ? '#fff' : 'rgba(255,255,255,0.75)', flexShrink: 0, transition: 'color 0.2s' }} />
-        {open && (
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Cerca film, serie TV..."
-            data-testid="search-input"
-            style={{
-              background: 'none', border: 'none', outline: 'none',
-              color: '#fff', fontSize: '15px', fontFamily: "'Inter', sans-serif",
-              width: '100%', padding: 0,
-            }}
-          />
-        )}
-        {open && query && (
-          <CloseIcon
-            onClick={(e) => { e.stopPropagation(); setQuery(""); setResults([]); }}
-            sx={{ fontSize: 19, color: 'rgba(255,255,255,0.4)', cursor: 'pointer', flexShrink: 0, '&:hover': { color: '#fff' } }}
-          />
-        )}
-        {loading && <CircularProgress size={14} sx={{ color: '#E50914', flexShrink: 0 }} />}
+      <Box sx={{ display:'flex',alignItems:'center',gap:'6px',bgcolor:open?'rgba(255,255,255,0.08)':'transparent',border:open?'1px solid rgba(255,255,255,0.15)':'1px solid transparent',borderRadius:'10px',px:open?1.5:.7,py:.5,transition:'all .3s cubic-bezier(.4,0,.2,1)',width:open?'380px':'42px',height:'42px',overflow:'hidden',cursor:open?'text':'pointer' }} onClick={()=>{if(!open)setOpen(true);}}>
+        <SearchIcon sx={{ fontSize:24,color:open?'#fff':'rgba(255,255,255,.75)',flexShrink:0 }} />
+        {open && <input ref={inputRef} value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Cerca film, serie TV..." data-testid="search-input" style={{background:'none',border:'none',outline:'none',color:'#fff',fontSize:'15px',fontFamily:"'Inter', sans-serif",width:'100%',padding:0}} />}
+        {open && query && <CloseIcon onClick={(e)=>{e.stopPropagation();setQuery('');setResults([]);}} sx={{fontSize:19,color:'rgba(255,255,255,.4)',cursor:'pointer',flexShrink:0}} />}
+        {loading && <CircularProgress size={14} sx={{color:'#E50914',flexShrink:0}} />}
       </Box>
-
-      {/* Results Dropdown */}
-      {open && results.length > 0 && (
-        <Box sx={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-          width: { xs: '300px', md: '400px' },
-          bgcolor: 'rgba(12,12,12,0.97)', backdropFilter: 'blur(24px) saturate(180%)',
-          border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.6)', overflow: 'hidden', zIndex: 1100,
-        }}>
-          <Box sx={{ px: 1.5, py: 1, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-            <Typography sx={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Risultati
-            </Typography>
-          </Box>
-          {results.map((r) => (
-            <Box
-              key={`${r.media_type}-${r.id}`}
-              onClick={() => { navigate(`/browse/${r.media_type}/${r.id}`); setQuery(""); setOpen(false); }}
-              data-testid={`search-result-${r.id}`}
-              sx={{
-                display: 'flex', alignItems: 'center', gap: 1.5, px: 1.5, py: 1,
-                cursor: 'pointer', transition: 'background 0.15s',
-                '&:hover': { bgcolor: 'rgba(255,255,255,0.05)' },
-              }}
-            >
-              <Box sx={{ width: 36, height: 52, borderRadius: '6px', overflow: 'hidden', bgcolor: '#1a1a1a', flexShrink: 0 }}>
-                {r.poster_path ? (
-                  <img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : r.media_type === "movie" ? (
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}><MovieIcon sx={{ color: '#333', fontSize: 18 }} /></Box>
-                ) : (
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}><TvIcon sx={{ color: '#333', fontSize: 18 }} /></Box>
-                )}
-              </Box>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {r.title || r.name}
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, mt: 0.3 }}>
-                  <Typography sx={{ fontSize: 10.5, color: r.media_type === 'movie' ? '#3b82f6' : '#a78bfa', fontWeight: 600 }}>
-                    {r.media_type === 'movie' ? 'Film' : 'Serie TV'}
-                  </Typography>
-                  {(r.release_date || r.first_air_date) && (
-                    <Typography sx={{ fontSize: 10.5, color: 'rgba(255,255,255,0.3)' }}>
-                      {(r.release_date || r.first_air_date).split('-')[0]}
-                    </Typography>
-                  )}
-                  {r.vote_average > 0 && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                      <StarIcon sx={{ fontSize: 10, color: '#f5c518' }} />
-                      <Typography sx={{ fontSize: 10.5, color: 'rgba(255,255,255,0.4)' }}>{r.vote_average.toFixed(1)}</Typography>
-                    </Box>
-                  )}
-                </Box>
-              </Box>
-            </Box>
-          ))}
-        </Box>
-      )}
-      {open && query.length >= 2 && results.length === 0 && !loading && (
-        <Box sx={{
-          position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: { xs: '260px', md: '300px' },
-          bgcolor: 'rgba(12,12,12,0.97)', backdropFilter: 'blur(24px)', border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: '12px', boxShadow: '0 20px 60px rgba(0,0,0,0.6)', p: 3, textAlign: 'center', zIndex: 1100,
-        }}>
-          <Typography sx={{ fontSize: 13, color: 'rgba(255,255,255,0.4)' }}>Nessun risultato</Typography>
-        </Box>
-      )}
+      {open && visible.length>0 && <Box sx={{position:'absolute',top:'calc(100% + 8px)',right:0,width:'400px',bgcolor:'rgba(12,12,12,.97)',border:'1px solid rgba(255,255,255,.08)',borderRadius:'12px',boxShadow:'0 20px 60px rgba(0,0,0,.6)',overflow:'hidden',zIndex:1100}}>{visible.slice(0,8).map(r=><Box key={`${r.media_type}-${r.id}`} onClick={()=>openResult(r)} data-testid={`search-result-${r.id}`} sx={{display:'flex',alignItems:'center',gap:1.5,px:1.5,py:1,cursor:'pointer','&:hover':{bgcolor:'rgba(255,255,255,.05)'}}}><Box sx={{width:36,height:52,borderRadius:'6px',overflow:'hidden',bgcolor:'#1a1a1a',flexShrink:0}}>{r.poster_path?<img src={`https://image.tmdb.org/t/p/w92${r.poster_path}`} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>:null}</Box><Box sx={{flex:1,minWidth:0}}><Typography sx={{fontSize:13,fontWeight:600,color:'#fff'}} noWrap>{r.title||r.name}</Typography><Typography sx={{fontSize:10.5,color:'rgba(255,255,255,.4)'}}>{r.media_type==='movie'?'Film':'Serie TV'} {(r.release_date||r.first_air_date||'').slice(0,4)}</Typography></Box></Box>)}</Box>}
     </Box>
   );
 }
