@@ -14,6 +14,27 @@ function genreNames(payload: any) {
   return [...new Set(names)];
 }
 
+function syncReferencePosterSize() {
+  const selector = [
+    '[data-testid="home-rows"] .slider-row:not(.top10-row):not(#continua) .slick-slide:not(.slick-cloned) .netflix-standard-card-image-wrap',
+    '[data-testid="home-rows"] .slider-row:not(.top10-row):not(#continua) .slick-slide .netflix-standard-card-image-wrap',
+  ];
+
+  let reference: HTMLElement | null = null;
+  for (const query of selector) {
+    reference = document.querySelector<HTMLElement>(query);
+    if (reference) break;
+  }
+  if (!reference) return;
+
+  const rect = reference.getBoundingClientRect();
+  if (!Number.isFinite(rect.width) || rect.width < 48) return;
+
+  const root = document.documentElement;
+  root.style.setProperty("--flixit-reference-poster-w", `${rect.width.toFixed(2)}px`);
+  root.style.setProperty("--flixit-reference-poster-h", `${(rect.width * 1.5).toFixed(2)}px`);
+}
+
 export default function MobileHomeReferenceRuntime() {
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const location = useLocation();
@@ -30,6 +51,8 @@ export default function MobileHomeReferenceRuntime() {
     const apply = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        syncReferencePosterSize();
+
         const hero = document.querySelector<HTMLElement>('[data-testid="hero-section"]');
         if (!hero) return;
 
@@ -85,12 +108,16 @@ export default function MobileHomeReferenceRuntime() {
 
     observer = new MutationObserver(apply);
     observer.observe(document.body, { subtree: true, childList: true });
+    window.addEventListener("resize", apply, { passive: true });
     apply();
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
       observer?.disconnect();
+      window.removeEventListener("resize", apply);
+      document.documentElement.style.removeProperty("--flixit-reference-poster-w");
+      document.documentElement.style.removeProperty("--flixit-reference-poster-h");
     };
   }, [isMobile, isHome]);
 
