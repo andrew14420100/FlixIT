@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v7";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v8-sc-covers";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -134,8 +134,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
 
   // Static cards are embedded-only. StreamingCommunity mappings are curated
   // cover/card artwork with the title already inside the image. A saved GitHub
-  // artwork URL is also treated as curated embedded artwork. A separate logo is
-  // retained for Hero/Detail/hover but never makes a clean static card valid.
+  // artwork URL remains only as a fallback when SC cannot resolve the title.
   const cardBackdrop = mappedBackdrop || (savedLandscapeEmbedded ? savedLandscape : null);
   const cardPoster = mappedPoster || (savedPosterEmbedded ? savedPoster : null);
   const cardBackdropEmbedded = !!cardBackdrop;
@@ -167,7 +166,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "embedded-title-treatment-only_streamingcommunity-or-github-first_v7_no-tmdb-images",
+    image_source_policy: "streamingcommunity-covers-first_v8_no-tmdb-images",
     backdrop_source: cardBackdrop
       ? fallbackSource(cardBackdrop, !!mappedBackdrop && cardBackdrop === mappedBackdrop)
       : null,
@@ -195,6 +194,10 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
   const officialPosterEmbedded = !!(
     officialPoster && official?.poster_embedded_title_treatment
   );
+  const officialIsStreamingCommunity = !!(
+    official?.backdrop_source === "streamingcommunity" ||
+    official?.poster_source === "streamingcommunity"
+  );
 
   const fallbackLandscape = fallback?.backdrop_embedded_title_treatment
     ? firstNonTmdbArtwork(fallback?.backdrop_path)
@@ -203,11 +206,15 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     ? firstNonTmdbArtwork(fallback?.poster_path)
     : null;
 
-  // Prefer the curated StreamingCommunity/GitHub fallback whenever present.
-  // Official provider artwork is accepted for a static card only if the resolver
-  // explicitly verified that its title treatment is already embedded.
-  const backdrop = fallbackLandscape || (officialLandscapeEmbedded ? officialLandscape : null);
-  const poster = fallbackPoster || (officialPosterEmbedded ? officialPoster : null);
+  // Dynamic SC lookup wins over every saved/mapped/GitHub card. Existing static
+  // mappings remain an instant placeholder and a fallback if the live SC match
+  // is unavailable. No separate logo is ever composited on the static card.
+  const backdrop = officialIsStreamingCommunity && officialLandscapeEmbedded
+    ? officialLandscape
+    : (fallbackLandscape || (officialLandscapeEmbedded ? officialLandscape : null));
+  const poster = officialIsStreamingCommunity && officialPosterEmbedded
+    ? officialPoster
+    : (fallbackPoster || (officialPosterEmbedded ? officialPoster : null));
   const hero = officialHero || fallback?.hero_backdrop_path || backdrop || null;
   const logo = officialLogo || fallback?.logo_path || null;
 
@@ -254,8 +261,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     poster_card_ready: top10Ready,
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
-    image_source_policy:
-      "embedded-title-treatment-only_streamingcommunity-or-github-first_v7_no-tmdb-images",
+    image_source_policy: "streamingcommunity-covers-first_v8_no-tmdb-images",
     upscaled: false,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
