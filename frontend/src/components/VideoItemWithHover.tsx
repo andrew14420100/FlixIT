@@ -6,7 +6,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
-import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
+import useAutomaticMediaAssets, { isEmbeddedCardArtwork } from "src/hooks/useAutomaticMediaAssets";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
 import NetflixStandardCard from "./NetflixStandardCard";
@@ -134,11 +134,18 @@ export default function VideoItemWithHover({
     video?.image_url,
     video?.thumbnail_url
   );
+  const legacyLandscapeEmbedded = !!(
+    video?.backdrop_embedded_title_treatment ||
+    video?.embedded_title_treatment ||
+    video?.has_embedded_title_treatment ||
+    isEmbeddedCardArtwork(legacyLandscape)
+  );
 
   const automaticLandscape = firstNonTmdbArtwork(
     automaticAssets?.backdrop_path,
     automaticAssets?.titled_backdrop_path
   );
+  const automaticLandscapeEmbedded = !!automaticAssets?.backdrop_embedded_title_treatment;
   const heroLandscape = firstNonTmdbArtwork(
     automaticAssets?.hero_backdrop_path,
     automaticAssets?.detail_backdrop_path,
@@ -146,13 +153,22 @@ export default function VideoItemWithHover({
   );
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
 
+  // Every candidate in the static card chain already contains its title/logo.
+  // StreamingCommunity mappings are curated card artwork, while GitHub-hosted
+  // merchandising images are accepted only by the embedded-artwork helper.
   const imageCandidates = useMemo(
     () => unique([
+      automaticLandscapeEmbedded ? automaticLandscape : null,
+      mappedBackdrop,
+      legacyLandscapeEmbedded ? legacyLandscape : null,
+    ]),
+    [
       automaticLandscape,
+      automaticLandscapeEmbedded,
       mappedBackdrop,
       legacyLandscape,
-    ]),
-    [automaticLandscape, mappedBackdrop, legacyLandscape]
+      legacyLandscapeEmbedded,
+    ]
   );
 
   const title = automaticAssets?.title || video?.title || video?.name || "";
@@ -212,13 +228,9 @@ export default function VideoItemWithHover({
   const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
   const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
 
-  // Do not bypass the artwork policy with a raw backdrop. `card_ready` is true
-  // only when the card already contains its title treatment or has a real logo
-  // available for the overlay.
-  const staticReady = !!automaticAssets?.card_ready;
-  const embeddedTitleTreatment = !!automaticAssets?.backdrop_embedded_title_treatment;
+  const staticReady = !!automaticAssets?.card_ready && imageCandidates.length > 0;
 
-  if (!staticReady || !imageCandidates.length) return null;
+  if (!staticReady) return null;
 
   return (
     <>
@@ -227,8 +239,7 @@ export default function VideoItemWithHover({
         imageUrl={imageCandidates[0] || null}
         imageCandidates={imageCandidates.slice(1)}
         fallbackImageUrl={null}
-        logoUrl={hoverLogoUrl}
-        embeddedTitleTreatment={embeddedTitleTreatment}
+        embeddedTitleTreatment={true}
         title={title}
         href={detailHref}
         onClick={goDetail}
