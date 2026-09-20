@@ -1,0 +1,41 @@
+@media (max-width: 899px) {
+  /* Film / Serie grid cards are always true vertical posters. */
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-root,
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-link,
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-frame,
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-image-wrap,
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-root {
+    aspect-ratio: 2 / 3 !important;
+    min-height: 0 !important;
+    transform: none !important;
+  }
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-image {
+    object-fit: cover !important;
+    border-radius: 3px !important;
+  }
+
+  /* The dedicated mobile SearchBox owns its full-screen sheet. */
+  [data-testid="mobile-search-page"] input { display: block !important; }
+  [data-testid="mobile-search-page"] [data-testid^="search-result-"] img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+
+  /* Guest header stays compact; no oversized desktop login pill. */
+  [data-testid="main-header"] [data-testid="header-login-button"] {
+    max-width: 68px !important;
+    white-space: nowrap !important;
+  }
+
+  /* Ensure no desktop hover geometry leaks into touch grids. */
+  [data-testid^="mobile-"][data-testid$="-catalog"] .netflix-standard-card-root:hover,
+  [data-testid="archive-grid"] .netflix-standard-card-root:hover {
+    transform: none !important;
+    z-index: 1 !important;
+  }
+}
