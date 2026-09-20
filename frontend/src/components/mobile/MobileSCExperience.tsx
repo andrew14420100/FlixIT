@@ -7,7 +7,6 @@ import MenuRoundedIcon from "@mui/icons-material/MenuRounded";
 import HomeRoundedIcon from "@mui/icons-material/HomeRounded";
 import MovieCreationOutlinedIcon from "@mui/icons-material/MovieCreationOutlined";
 import LiveTvOutlinedIcon from "@mui/icons-material/LiveTvOutlined";
-import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import GridViewRoundedIcon from "@mui/icons-material/GridViewRounded";
 import LocalMoviesOutlinedIcon from "@mui/icons-material/LocalMoviesOutlined";
@@ -58,19 +57,26 @@ type PosterIndex = {
   byTmdb: Map<string, string>;
 };
 
+function loadCatalogPayload() {
+  const globalCache = globalThis as any;
+  if (!globalCache.__flixitScCatalogPayloadPromise) {
+    globalCache.__flixitScCatalogPayloadPromise = fetch(CATALOG_URL, {
+      cache: "force-cache",
+      headers: { Accept: "application/json" },
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
+      return response.json();
+    });
+  }
+  return globalCache.__flixitScCatalogPayloadPromise;
+}
+
 let posterIndexPromise: Promise<PosterIndex> | null = null;
 
 async function loadPosterIndex(): Promise<PosterIndex> {
   if (posterIndexPromise) return posterIndexPromise;
 
-  posterIndexPromise = fetch(CATALOG_URL, {
-    cache: "force-cache",
-    headers: { Accept: "application/json" },
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
-      return response.json();
-    })
+  posterIndexPromise = loadCatalogPayload()
     .then((payload) => {
       const rows = Array.isArray(payload?.titles) ? payload.titles : [];
       const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
@@ -105,15 +111,13 @@ async function loadPosterIndex(): Promise<PosterIndex> {
         );
         if (tmdbId) byTmdb.set(`${type}:${tmdbId}`, poster);
 
-        const aliases = [
+        [
           row?.name,
           row?.title,
           row?.original_title,
           row?.original_name,
           row?.slug?.replace(/-/g, " "),
-        ];
-
-        aliases.forEach((alias) => {
+        ].forEach((alias) => {
           const titleKey = normalize(alias);
           if (!titleKey) return;
           const bucket = byTitle.get(titleKey) || {};
@@ -161,8 +165,16 @@ function markMissingHomePoster(root: HTMLElement) {
   root.closest(".slick-slide")?.classList.add("flixit-mobile-no-poster-slide");
 }
 
-function hydrateMobilePosters(index: PosterIndex) {
-  document.querySelectorAll<HTMLElement>(".netflix-standard-card-root").forEach((root) => {
+function scopedElements(scope: ParentNode, selector: string) {
+  const nodes: HTMLElement[] = [];
+  const element = scope as HTMLElement;
+  if (element?.matches?.(selector)) nodes.push(element);
+  scope.querySelectorAll?.(selector).forEach((node: any) => nodes.push(node));
+  return nodes;
+}
+
+function hydrateMobilePosters(index: PosterIndex, scope: ParentNode = document) {
+  scopedElements(scope, ".netflix-standard-card-root").forEach((root) => {
     const link = root.querySelector<HTMLAnchorElement>('a[data-uia="standard-card"]');
     const img = root.querySelector<HTMLImageElement>("img.netflix-standard-card-image");
     if (!link || !img) return;
@@ -177,36 +189,28 @@ function hydrateMobilePosters(index: PosterIndex) {
       markMissingHomePoster(root);
       return;
     }
-
     setPoster(root, img, poster);
   });
 
-  document.querySelectorAll<HTMLElement>('[data-testid^="horizontal-card-"]').forEach((root) => {
+  scopedElements(scope, '[data-testid^="horizontal-card-"]').forEach((root) => {
     const img = root.querySelector<HTMLImageElement>("img");
     if (!img) return;
-
-    const id = Number(
-      (root.getAttribute("data-testid") || "").replace("horizontal-card-", "")
-    );
+    const id = Number((root.getAttribute("data-testid") || "").replace("horizontal-card-", ""));
     const poster =
       index.byTmdb.get(`movie:${id}`) ||
       index.byTmdb.get(`tv:${id}`) ||
       index.byArtwork.get(assetKey(img.currentSrc || img.src)) ||
       titlePoster(index, img.alt || "");
-
     if (!poster) return;
     root.classList.add("flixit-mobile-list-poster");
     img.removeAttribute("srcset");
     if (img.src !== poster) img.src = poster;
   });
 
-  document.querySelectorAll<HTMLElement>('[data-testid^="account-item-"]').forEach((root) => {
+  scopedElements(scope, '[data-testid^="account-item-"]').forEach((root) => {
     const img = root.querySelector<HTMLImageElement>("img");
-    const id = Number(
-      (root.getAttribute("data-testid") || "").replace("account-item-", "")
-    );
+    const id = Number((root.getAttribute("data-testid") || "").replace("account-item-", ""));
     if (!img || !id) return;
-
     const poster =
       index.byTmdb.get(`movie:${id}`) ||
       index.byTmdb.get(`tv:${id}`) ||
@@ -214,21 +218,13 @@ function hydrateMobilePosters(index: PosterIndex) {
     if (poster && img.src !== poster) img.src = poster;
   });
 
-  document.querySelectorAll<HTMLElement>('[data-testid^="search-result-"]').forEach((row) => {
+  scopedElements(scope, '[data-testid^="search-result-"]').forEach((row) => {
     const img = row.querySelector<HTMLImageElement>("img");
     const titleNode = row.querySelector<HTMLElement>(".MuiTypography-root");
-    const id = Number(
-      (row.getAttribute("data-testid") || "").replace("search-result-", "")
-    );
+    const id = Number((row.getAttribute("data-testid") || "").replace("search-result-", ""));
     if (!img || !titleNode) return;
-
     const allText = row.textContent || "";
-    const type = /Serie TV/i.test(allText)
-      ? "tv"
-      : /Film/i.test(allText)
-        ? "movie"
-        : null;
-
+    const type = /Serie TV/i.test(allText) ? "tv" : /Film/i.test(allText) ? "movie" : null;
     const poster =
       (id && type ? index.byTmdb.get(`${type}:${id}`) : "") ||
       titlePoster(index, titleNode.textContent || "", type);
@@ -255,14 +251,23 @@ export default function MobileSCExperience() {
       root.classList.remove("flixit-mobile-sc", "flixit-home-reference");
       return;
     }
-
     root.classList.add("flixit-mobile-sc");
     root.classList.toggle("flixit-home-reference", isHome);
-
-    return () => {
-      root.classList.remove("flixit-mobile-sc", "flixit-home-reference");
-    };
+    return () => root.classList.remove("flixit-mobile-sc", "flixit-home-reference");
   }, [isMobile, isHome]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    ["https://cdn.streamingunity.win", "https://cdn.streamingunity-premium.to"].forEach((href) => {
+      if (document.head.querySelector(`link[data-flixit-preconnect="${href}"]`)) return;
+      const link = document.createElement("link");
+      link.rel = "preconnect";
+      link.href = href;
+      link.crossOrigin = "anonymous";
+      link.dataset.flixitPreconnect = href;
+      document.head.appendChild(link);
+    });
+  }, [isMobile]);
 
   useEffect(() => {
     if (!isMobile) return;
@@ -270,48 +275,45 @@ export default function MobileSCExperience() {
     let cancelled = false;
     let observer: MutationObserver | null = null;
     let raf = 0;
+    const pending = new Set<ParentNode>();
 
     loadPosterIndex().then((index) => {
       if (cancelled) return;
 
-      const apply = () => {
-        cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(() => hydrateMobilePosters(index));
+      const flush = () => {
+        raf = 0;
+        const scopes = Array.from(pending);
+        pending.clear();
+        if (scopes.length === 0) scopes.push(document);
+        scopes.forEach((scope) => hydrateMobilePosters(index, scope));
       };
 
-      apply();
-      observer = new MutationObserver(apply);
-      observer.observe(document.body, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        attributeFilter: ["src", "href", "aria-label"],
+      const schedule = (scope: ParentNode = document) => {
+        pending.add(scope);
+        if (raf) return;
+        raf = requestAnimationFrame(flush);
+      };
+
+      schedule(document);
+      observer = new MutationObserver((records) => {
+        records.forEach((record) => {
+          record.addedNodes.forEach((node) => {
+            if (node.nodeType === Node.ELEMENT_NODE) schedule(node as HTMLElement);
+          });
+        });
       });
-      window.addEventListener("resize", apply, { passive: true });
-      (observer as any)._flixitApply = apply;
+      observer.observe(document.body, { subtree: true, childList: true });
     });
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
-      const apply = (observer as any)?._flixitApply;
-      if (apply) window.removeEventListener("resize", apply);
+      if (raf) cancelAnimationFrame(raf);
       observer?.disconnect();
+      pending.clear();
     };
   }, [isMobile, location.pathname]);
 
   useEffect(() => setDrawerOpen(false), [location.pathname]);
-
-  const bottomNavItems = useMemo(
-    () => [
-      { label: "Home", path: "/browse", icon: HomeRoundedIcon },
-      { label: "Cinema", path: "/cinema", icon: MovieCreationOutlinedIcon },
-      { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
-      { label: "Cerca", path: "__search__", icon: SearchRoundedIcon },
-      { label: "Account", path: "/account", icon: AccountCircleOutlinedIcon },
-    ],
-    []
-  );
 
   const drawerItems = useMemo(
     () => [
@@ -328,41 +330,7 @@ export default function MobileSCExperience() {
     []
   );
 
-  if (!isMobile || isWatch) return null;
-
-  const openSearch = () => {
-    const container = document.querySelector<HTMLElement>('[data-testid="search-box"]');
-    const trigger = container?.firstElementChild as HTMLElement | null;
-    trigger?.click();
-    window.setTimeout(
-      () => document.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus(),
-      80
-    );
-  };
-
-  if (isHome) {
-    return (
-      <Box className="flixit-mobile-bottom-nav" data-testid="mobile-bottom-nav">
-        {bottomNavItems.map((item) => {
-          const Icon = item.icon;
-          const active = item.path !== "__search__" && isActivePath(location.pathname, item.path);
-          return (
-            <Box
-              key={item.label}
-              component="button"
-              type="button"
-              aria-label={item.label}
-              className={active ? "is-active" : ""}
-              onClick={() => item.path === "__search__" ? openSearch() : navigate(item.path)}
-            >
-              <Icon />
-              <span>{item.label}</span>
-            </Box>
-          );
-        })}
-      </Box>
-    );
-  }
+  if (!isMobile || isWatch || isHome) return null;
 
   return (
     <>
@@ -377,25 +345,15 @@ export default function MobileSCExperience() {
       </Box>
 
       {drawerOpen && (
-        <Box
-          className="flixit-mobile-menu-backdrop"
-          onClick={() => setDrawerOpen(false)}
-        >
+        <Box className="flixit-mobile-menu-backdrop" onClick={() => setDrawerOpen(false)}>
           <Box
             className="flixit-mobile-menu-panel"
             onClick={(event) => event.stopPropagation()}
             data-testid="mobile-navigation-drawer"
           >
             <Box className="flixit-mobile-menu-head">
-              <Box className="flixit-mobile-menu-logo">
-                <span>FLIX</span><b>IT</b>
-              </Box>
-              <Box
-                component="button"
-                type="button"
-                aria-label="Chiudi menu"
-                onClick={() => setDrawerOpen(false)}
-              >
+              <Box className="flixit-mobile-menu-logo"><span>FLIX</span><b>IT</b></Box>
+              <Box component="button" type="button" aria-label="Chiudi menu" onClick={() => setDrawerOpen(false)}>
                 <CloseRoundedIcon />
               </Box>
             </Box>
@@ -406,10 +364,7 @@ export default function MobileSCExperience() {
                   key={label}
                   component="button"
                   type="button"
-                  onClick={() => {
-                    setDrawerOpen(false);
-                    navigate(path);
-                  }}
+                  onClick={() => { setDrawerOpen(false); navigate(path); }}
                   className={isActivePath(location.pathname, path) ? "is-active" : ""}
                 >
                   <Icon />
