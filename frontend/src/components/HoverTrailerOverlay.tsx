@@ -9,19 +9,15 @@ const LOGO_FADE_MS = 300;
 
 /**
  * Netflix-style hover trailer.
- * - logo appears only when the video really fires `playing`;
- * - subtle entrance from the lower-left;
- * - after the entrance it stays fully visible for a real 5 seconds;
- * - then it dissolves for 300ms and stays hidden for that trailer session;
- * - when playback ends/fails the underlying artwork + logo returns immediately.
  *
- * The trailer is limited to the 16:9 visual/player area of the expanded card.
- * The metadata and controls below it must always remain visible and clickable.
+ * As soon as the expanded hover is mounted, the visual area becomes black.
+ * The static cover must not remain visible while the trailer is buffering.
+ * The video then replaces the black loading surface as soon as it can play.
  */
 export default function HoverTrailerOverlay({
   url,
   logoUrl,
-  delay = 70,
+  delay = 0,
   onOpen,
 }: {
   url?: string;
@@ -29,7 +25,7 @@ export default function HoverTrailerOverlay({
   delay?: number;
   onOpen?: (event?: any) => void;
 }) {
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(delay <= 0);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -51,7 +47,7 @@ export default function HoverTrailerOverlay({
   };
 
   useEffect(() => {
-    setReady(false);
+    setReady(delay <= 0);
     setPlaying(false);
     setMuted(true);
     setFailed(false);
@@ -60,7 +56,7 @@ export default function HoverTrailerOverlay({
     logoTimerStartedRef.current = false;
     clearTimers();
 
-    if (!url) return;
+    if (!url || delay <= 0) return () => clearTimers();
     const timer = window.setTimeout(() => setReady(true), delay);
     return () => {
       window.clearTimeout(timer);
@@ -102,7 +98,7 @@ export default function HoverTrailerOverlay({
     setLogoEntered(false);
   };
 
-  if (!url || !ready || failed) return null;
+  if (!url || failed) return null;
 
   const showLogo = playing && logoVisible;
 
@@ -134,24 +130,25 @@ export default function HoverTrailerOverlay({
         aspectRatio: "1 / .563925",
         overflow: "hidden",
         borderRadius: "6px 6px 0 0",
-        background: playing ? "#000" : "transparent",
+        background: "#000",
         zIndex: 8,
-        opacity: playing ? 1 : 0,
-        transition: "opacity 180ms ease",
-        pointerEvents: playing ? "auto" : "none",
+        opacity: 1,
+        pointerEvents: "auto",
         cursor: onOpen ? "pointer" : "default",
       }}
     >
-      <TrailerPlayer
-        videoKey={url}
-        muted={muted}
-        playing
-        loop={false}
-        zoom={1.02}
-        onPlaying={handlePlaying}
-        onEnded={handleEnded}
-        onError={handleError}
-      />
+      {ready ? (
+        <TrailerPlayer
+          videoKey={url}
+          muted={muted}
+          playing
+          loop={false}
+          zoom={1.02}
+          onPlaying={handlePlaying}
+          onEnded={handleEnded}
+          onError={handleError}
+        />
+      ) : null}
 
       {logoUrl ? (
         <div
