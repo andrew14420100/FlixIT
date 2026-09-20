@@ -110,15 +110,14 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     legacyLandscapeEmbedded ? legacyLandscape : null,
   ]), [automaticLandscape, automaticLandscapeEmbedded, mappedBackdrop, legacyLandscape, legacyLandscapeEmbedded]);
 
-  // Phone layout is poster-first everywhere except Continue Watching, which keeps
-  // the landscape artwork + progress bar from the desktop experience.
+  // Mobile Home is poster-first for every standard row, including Continue Watching.
   const posterCandidates = useMemo(() => unique([
     automaticPoster,
     mappedPoster,
     legacyPoster,
   ]), [automaticPoster, mappedPoster, legacyPoster]);
 
-  const usePosterCard = isMobile && !watch;
+  const usePosterCard = isMobile;
   const imageCandidates = usePosterCard ? posterCandidates : landscapeCandidates;
 
   const title = automaticAssets?.title || video?.title || video?.name || "";
