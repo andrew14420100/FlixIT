@@ -4,6 +4,12 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "17 4 * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/build_sc_artwork_catalog.py
+      - .github/workflows/update-sc-artwork-catalog.yml
 
 permissions:
   contents: write
@@ -22,7 +28,19 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build full StreamingCommunity artwork index
-        run: python scripts/build_sc_artwork_catalog.py --output backend/data/sc_artwork_catalog.json
+        run: python scripts/build_sc_artwork_catalog.py --minimum 15000 --output backend/data/sc_artwork_catalog.json
+      - name: Validate catalog coverage
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("backend/data/sc_artwork_catalog.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          count = int(data.get("count") or 0)
+          print(f"SC catalog entries: {count}")
+          if count < 15000:
+              raise SystemExit(f"Catalog incomplete: expected at least 15000 entries, got {count}")
+          PY
       - name: Commit updated catalog
         run: |
           if git diff --quiet -- backend/data/sc_artwork_catalog.json; then
