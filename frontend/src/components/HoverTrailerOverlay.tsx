@@ -15,8 +15,8 @@ const LOGO_FADE_MS = 300;
  * - then it dissolves for 300ms and stays hidden for that trailer session;
  * - when playback ends/fails the underlying artwork + logo returns immediately.
  *
- * The trailer fills the whole visual area of the expanded card so no coloured
- * artwork strip remains between the video and the metadata/description panel.
+ * The trailer is limited to the 16:9 visual/player area of the expanded card.
+ * The metadata and controls below it must always remain visible and clickable.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -125,9 +125,13 @@ export default function HoverTrailerOverlay({
       }}
       style={{
         position: "absolute",
-        inset: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: "auto",
         width: "100%",
-        height: "100%",
+        height: "auto",
+        aspectRatio: "1 / .563925",
         overflow: "hidden",
         borderRadius: "6px 6px 0 0",
         background: playing ? "#000" : "transparent",
