@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v11-sc-exhaustive";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v12-poster-hero-identity";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -43,6 +43,23 @@ function firstNonTmdbArtwork(...values: any[]) {
     if (resolved) return resolved;
   }
   return null;
+}
+
+function normalizedIdentityTitle(value: any) {
+  return String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function hasGenericParentMatch(official: any) {
+  const expected = normalizedIdentityTitle(official?.title);
+  const provider = normalizedIdentityTitle(official?.sc_provider_name);
+  if (!expected || !provider || expected === provider) return false;
+  return expected.startsWith(`${provider} `) || provider.startsWith(`${expected} `);
 }
 
 export function isEmbeddedCardArtwork(value: any) {
@@ -122,7 +139,10 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
   );
 
   const cardBackdrop = mappedBackdrop || null;
-  const cardPoster = mappedPoster || null;
+  // The old mapping intentionally stored the same SC cover in both backdrop and
+  // poster. That is fine for legacy landscape cards but it is NOT a Top 10
+  // poster. Only expose a mapped poster when it is genuinely distinct.
+  const cardPoster = mappedPoster && mappedPoster !== mappedBackdrop ? mappedPoster : null;
   const cardBackdropEmbedded = !!cardBackdrop;
   const cardPosterEmbedded = !!cardPoster;
   const cardReady = !!cardBackdrop;
@@ -152,7 +172,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-exhaustive_v11_no-detail-background-as-card",
+    image_source_policy: "streamingcommunity-exhaustive_v12_real-poster-and-hero-identity",
     backdrop_source: cardBackdrop
       ? fallbackSource(cardBackdrop, !!mappedBackdrop && cardBackdrop === mappedBackdrop)
       : null,
@@ -160,20 +180,34 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
       ? fallbackSource(cardPoster, !!mappedPoster && cardPoster === mappedPoster)
       : null,
     mapped_backdrop: mappedBackdrop,
-    mapped_poster: mappedPoster,
+    mapped_poster: cardPoster,
     mapped_detail_backdrop: mappedDetailBackdrop,
   };
 }
 
 export function mergeOfficialArtwork(fallback: any, official: any) {
   const officialLandscape = firstNonTmdbArtwork(official?.backdrop_url);
-  const officialPoster = firstNonTmdbArtwork(official?.poster_url);
+  const rawOfficialPoster = firstNonTmdbArtwork(official?.poster_url);
   const officialHero = firstNonTmdbArtwork(
     official?.hero_backdrop_url,
     official?.detail_backdrop_url,
     official?.backdrop_url
   );
-  const officialLogo = firstNonTmdbArtwork(official?.logo_url);
+  const rawOfficialLogo = firstNonTmdbArtwork(official?.logo_url);
+
+  // A Top 10 entry must use a true vertical poster. SC's previous resolver used
+  // the landscape cover as poster fallback, which produced horizontal covers in
+  // the ranked row. Treat an identical backdrop/poster URL as no poster.
+  const officialPoster = rawOfficialPoster && rawOfficialPoster !== officialLandscape
+    ? rawOfficialPoster
+    : null;
+
+  // Protect Hero/hover from parent-series matches. Example: when the selected
+  // identity is "Stranger Things: Storie dal 1985", an approximate SC hit named
+  // only "Stranger Things" must never donate the parent show's logo. In that
+  // case the UI falls back to the full selected title until an exact logo exists.
+  const rejectGenericParentLogo = hasGenericParentMatch(official);
+  const officialLogo = rejectGenericParentLogo ? null : rawOfficialLogo;
 
   const officialLandscapeEmbedded = !!(
     officialLandscape && official?.backdrop_embedded_title_treatment
@@ -189,9 +223,13 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
   const fallbackLandscape = fallback?.backdrop_embedded_title_treatment
     ? firstNonTmdbArtwork(fallback?.backdrop_path)
     : null;
-  const fallbackPoster = fallback?.poster_embedded_title_treatment
+  const rawFallbackPoster = fallback?.poster_embedded_title_treatment
     ? firstNonTmdbArtwork(fallback?.poster_path)
     : null;
+  const fallbackPoster = rawFallbackPoster && rawFallbackPoster !== fallbackLandscape
+    ? rawFallbackPoster
+    : null;
+  const fallbackLogo = firstNonTmdbArtwork(fallback?.logo_path);
 
   const backdrop = officialIsStreamingCommunity && officialLandscapeEmbedded
     ? officialLandscape
@@ -200,10 +238,11 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     ? officialPoster
     : (fallbackPoster || (officialPosterEmbedded ? officialPoster : null));
   const hero = officialHero || fallback?.hero_backdrop_path || backdrop || null;
-  const logo = officialLogo || fallback?.logo_path || null;
+  const logo = officialLogo || fallbackLogo || null;
 
   const usingFallbackBackdrop = !!fallbackLandscape && backdrop === fallbackLandscape;
   const usingFallbackPoster = !!fallbackPoster && poster === fallbackPoster;
+  const usingOfficialLogo = !!officialLogo && logo === officialLogo;
   const backdropEmbedded = !!backdrop;
   const posterEmbedded = !!poster;
   const cardReady = !!backdrop;
@@ -218,7 +257,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     hero_backdrop_path: hero,
     detail_backdrop_path: firstNonTmdbArtwork(official?.detail_backdrop_url) || fallback?.detail_backdrop_path || hero,
     logo_path: logo,
-    netflix_logo_url: official?.logo_source === "netflix" ? officialLogo : null,
+    netflix_logo_url: usingOfficialLogo && official?.logo_source === "netflix" ? officialLogo : null,
     official_artwork_source:
       official?.backdrop_source || official?.poster_source || official?.hero_backdrop_source || null,
     backdrop_source: usingFallbackBackdrop
@@ -226,12 +265,14 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
       : (official?.backdrop_source || null),
     poster_source: usingFallbackPoster
       ? (fallback?.poster_source || "streamingcommunity_mapping")
-      : (official?.poster_source || null),
+      : (poster ? (official?.poster_source || null) : null),
     hero_backdrop_source: official?.hero_backdrop_source || null,
-    logo_source: official?.logo_source || (fallback?.logo_path ? "saved_non_tmdb" : null),
-    logo_locale: official?.logo_locale || null,
+    logo_source: usingOfficialLogo
+      ? (official?.logo_source || null)
+      : (fallbackLogo ? (fallback?.logo_source || "saved_non_tmdb") : null),
+    logo_locale: usingOfficialLogo ? (official?.logo_locale || null) : null,
     backdrop_locale: usingFallbackBackdrop ? null : (official?.backdrop_locale || null),
-    poster_locale: usingFallbackPoster ? null : (official?.poster_locale || null),
+    poster_locale: usingFallbackPoster ? null : (poster ? (official?.poster_locale || null) : null),
     hero_backdrop_locale: official?.hero_backdrop_locale || null,
     backdrop_embedded_title_treatment: backdropEmbedded,
     poster_embedded_title_treatment: posterEmbedded,
@@ -245,11 +286,13 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     poster_card_ready: top10Ready,
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-exhaustive_v11_no-detail-background-as-card",
+    image_source_policy: "streamingcommunity-exhaustive_v12_real-poster-and-hero-identity",
     upscaled: false,
     sc_cover_imported: !!official?.sc_cover_imported,
     sc_provider_id: official?.sc_provider_id || null,
     sc_provider_name: official?.sc_provider_name || null,
+    sc_confidence: official?.sc_confidence ?? null,
+    logo_identity_rejected: rejectGenericParentLogo,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
 }
