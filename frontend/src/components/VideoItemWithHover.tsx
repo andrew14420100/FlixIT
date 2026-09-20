@@ -110,12 +110,15 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     legacyLandscapeEmbedded ? legacyLandscape : null,
   ]), [automaticLandscape, automaticLandscapeEmbedded, mappedBackdrop, legacyLandscape, legacyLandscapeEmbedded]);
 
-  // Mobile Home is poster-first for every standard row, including Continue Watching.
+  // Mobile Home must never use the legacy/mapped landscape artwork as a poster.
+  // Only accept the true vertical poster resolved from the SC catalogue. This
+  // applies to Continue Watching too; the only extra element there is progress.
+  const exactScPoster = automaticAssets?.poster_source === "streamingcommunity"
+    ? automaticPoster
+    : null;
   const posterCandidates = useMemo(() => unique([
-    automaticPoster,
-    mappedPoster,
-    legacyPoster,
-  ]), [automaticPoster, mappedPoster, legacyPoster]);
+    exactScPoster,
+  ]), [exactScPoster]);
 
   const usePosterCard = isMobile;
   const imageCandidates = usePosterCard ? posterCandidates : landscapeCandidates;
@@ -151,7 +154,9 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const hoverLogoUrl = firstNonTmdbArtwork(automaticAssets?.logo_path, assets?.logo_path, video?.netflix_logo_url, video?.logo_path, video?.logo);
   const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
   const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
-  const staticReady = imageCandidates.length > 0 && (usePosterCard ? !!automaticAssets?.poster_path || !!mappedPoster || !!legacyPoster : !!automaticAssets?.card_ready);
+  const staticReady = usePosterCard
+    ? !!exactScPoster
+    : imageCandidates.length > 0 && !!automaticAssets?.card_ready;
 
   if (!staticReady) return null;
 
