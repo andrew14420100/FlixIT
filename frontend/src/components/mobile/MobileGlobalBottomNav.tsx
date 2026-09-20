@@ -74,6 +74,77 @@ export default function MobileGlobalBottomNav() {
     );
   }, [location.pathname, activeIndex, isMobile, isWatch]);
 
+  // Chrome on iPhone moves the visual viewport when its bottom toolbar hides or
+  // reappears. A fixed element normally snaps to the new viewport edge. We use a
+  // FLIP compensation so the menu visually stays where it was, then glides to
+  // Chrome's new resting position instead of jumping.
+  useEffect(() => {
+    if (!isMobile || isWatch || !window.visualViewport) return;
+
+    const viewport = window.visualViewport;
+    let lastTop: number | null = null;
+    let raf = 0;
+    let settleTimer: number | null = null;
+
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const nav = document.querySelector<HTMLElement>('[data-testid="global-mobile-bottom-nav"]');
+        if (!nav) return;
+
+        nav.getAnimations?.().forEach((animation: Animation) => {
+          if ((animation as any).__flixitBrowserChromeMotion) animation.cancel();
+        });
+
+        const top = nav.getBoundingClientRect().top;
+        if (lastTop == null) {
+          lastTop = top;
+          return;
+        }
+
+        const delta = lastTop - top;
+        lastTop = top;
+        if (Math.abs(delta) < 1.5 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+        const animation = nav.animate(
+          [
+            { transform: `translate3d(0, ${delta}px, 0)` },
+            { transform: "translate3d(0, 0, 0)" },
+          ],
+          {
+            duration: 300,
+            easing: "cubic-bezier(.22,1,.36,1)",
+            fill: "both",
+          }
+        );
+        (animation as any).__flixitBrowserChromeMotion = true;
+
+        if (settleTimer) window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(() => {
+          lastTop = nav.getBoundingClientRect().top;
+        }, 340);
+      });
+    };
+
+    const reset = () => {
+      lastTop = null;
+      measure();
+    };
+
+    measure();
+    viewport.addEventListener("resize", measure, { passive: true });
+    viewport.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("orientationchange", reset, { passive: true });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      if (settleTimer) window.clearTimeout(settleTimer);
+      viewport.removeEventListener("resize", measure);
+      viewport.removeEventListener("scroll", measure);
+      window.removeEventListener("orientationchange", reset);
+    };
+  }, [isMobile, isWatch]);
+
   if (!isMobile || isWatch) return null;
 
   const openSearch = () => {
