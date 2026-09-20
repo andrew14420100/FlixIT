@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { forwardRef, useEffect, useMemo, useState } from "react";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import "./NetflixMiniModalExact.css";
 
 interface Props {
@@ -117,7 +118,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
           title="Rimuovi da Continua a guardare"
           onClick={removeFromContinueWatching}
         >
-          <span aria-hidden="true">×</span>
+          <CloseRoundedIcon className="netflix-standard-card-remove-icon" aria-hidden="true" />
         </button>
       ) : null}
     </div>
