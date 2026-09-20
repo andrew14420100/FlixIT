@@ -15,6 +15,7 @@ import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import "src/components/mobile/mobile-sc-rails.css";
 import "src/components/mobile/mobile-sc-pages.css";
 import "src/components/mobile/mobile-sc-v2.css";
+import "src/components/mobile/mobile-sc-final.css";
 
 export default function MainLayout() {
   const location = useLocation();
