@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Slider from "react-slick";
 import { styled, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -42,11 +42,28 @@ const StyledSlider = styled(Slider)(({ theme, padding }) => ({
   },
 }));
 
+function top10Key(item: any) {
+  const id = item?.id || item?.tmdbId || item?.tmdb_id;
+  if (!id) return "";
+  const type = item?.type === "tv" || item?.media_type === "tv" ? "tv" : "movie";
+  return `${type}-${id}`;
+}
+
+function payloadItems(payload: any) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
+  if (Array.isArray(payload?.data?.results)) return payload.data.results;
+  return [];
+}
+
 export default function Top10Slider({ title, items }) {
   const sliderRef = useRef<Slider>(null);
   const theme = useTheme();
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isSliding, setIsSliding] = useState(false);
+  const [fallbackItems, setFallbackItems] = useState<any[]>([]);
 
   const up1536 = useMediaQuery("(min-width:1536px)");
   const up1200 = useMediaQuery("(min-width:1200px)");
@@ -54,14 +71,68 @@ export default function Top10Slider({ title, items }) {
   const up600 = useMediaQuery("(min-width:600px)");
   const tiles = up1536 ? 6 : up1200 ? 5 : up900 ? 4 : up600 ? 3 : 2;
 
-  const list = useMemo(() => (items || []).slice(0, 10), [items]);
-  const artworkBatch = useArtworkBatch(list, list.length > 0);
+  // The local FlixIT ranking remains first. A deeper trending/popular reserve is
+  // hydrated only to replace entries whose title-bearing artwork is unavailable;
+  // this prevents a valid Top 10 header from being rendered with zero cards.
+  useEffect(() => {
+    let cancelled = false;
+    const urls = [
+      "/api/public/homepage/trending?page=1",
+      "/api/public/homepage/trending?page=2",
+      "/api/public/tmdb/popular/movie?page=1",
+      "/api/public/tmdb/popular/movie?page=2",
+      "/api/public/tmdb/popular/tv?page=1",
+      "/api/public/tmdb/popular/tv?page=2",
+    ];
+
+    Promise.all(
+      urls.map(async (url) => {
+        try {
+          const response = await fetch(url, {
+            cache: "no-store",
+            headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+          });
+          return response.ok ? payloadItems(await response.json()) : [];
+        } catch {
+          return [];
+        }
+      })
+    ).then((groups) => {
+      if (cancelled) return;
+      const seen = new Set<string>();
+      const merged = groups.flat().filter((item) => {
+        const key = top10Key(item);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setFallbackItems(merged);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const candidates = useMemo(() => {
+    const seen = new Set<string>();
+    return [...(items || []), ...fallbackItems]
+      .filter((item) => {
+        const key = top10Key(item);
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 60);
+  }, [items, fallbackItems]);
+
+  const artworkBatch = useArtworkBatch(candidates, candidates.length > 0);
   const published = useMemo(
-    () => list.filter((item) => artworkBatch.isReady(item, "poster")),
-    [list, artworkBatch.data]
+    () => candidates.filter((item) => artworkBatch.isReady(item, "poster")).slice(0, 10),
+    [candidates, artworkBatch.data]
   );
 
-  if (!list.length) return null;
+  if (!candidates.length) return null;
 
   const isEnd =
     published.length <= tiles ||
@@ -132,48 +203,67 @@ export default function Top10Slider({ title, items }) {
       </Stack>
 
       <Box className="slider" sx={{ position: "relative", px: "4%", overflow: "visible" }}>
-        <CustomNavigation
-          isEnd={isEnd}
-          arrowWidth={ARROW_MAX_WIDTH}
-          onNext={() => sliderRef.current?.slickNext()}
-          onPrevious={() => sliderRef.current?.slickPrev()}
-          activeSlideIndex={activeSlideIndex}
-        >
-          <StyledSlider
-            ref={sliderRef}
-            {...settings}
-            padding={ARROW_MAX_WIDTH}
-            theme={theme}
+        {published.length === 0 && artworkBatch.isFetching ? (
+          <Box sx={{ display: "flex", gap: 1, width: "100%", overflow: "hidden" }}>
+            {Array.from({ length: Math.max(tiles, 6) }).map((_, index) => (
+              <Box
+                key={index}
+                sx={{
+                  flex: `0 0 ${100 / Math.max(2, tiles)}%`,
+                  maxWidth: `calc(${100 / Math.max(2, tiles)}% - 8px)`,
+                  aspectRatio: "1.4 / 1",
+                  borderRadius: "4px",
+                  bgcolor: "#222",
+                  opacity: 0.72,
+                  animation: "flixPulse 1.15s ease-in-out infinite",
+                }}
+              />
+            ))}
+          </Box>
+        ) : (
+          <CustomNavigation
+            isEnd={isEnd}
+            arrowWidth={ARROW_MAX_WIDTH}
+            onNext={() => sliderRef.current?.slickNext()}
+            onPrevious={() => sliderRef.current?.slickPrev()}
+            activeSlideIndex={activeSlideIndex}
           >
-            {published.map((item) => {
-              const id = item.id || item.tmdbId || item.tmdb_id;
-              const mediaType =
-                item.type === "tv" || item.media_type === "tv"
-                  ? MEDIA_TYPE.Tv
-                  : MEDIA_TYPE.Movie;
-              const originalIndex = Math.max(0, list.indexOf(item));
-              const suppressHover =
-                isSliding || (activeSlideIndex > 0 && originalIndex === activeSlideIndex);
+            <StyledSlider
+              ref={sliderRef}
+              {...settings}
+              padding={ARROW_MAX_WIDTH}
+              theme={theme}
+            >
+              {published.map((item) => {
+                const id = item.id || item.tmdbId || item.tmdb_id;
+                const mediaType =
+                  item.type === "tv" || item.media_type === "tv"
+                    ? MEDIA_TYPE.Tv
+                    : MEDIA_TYPE.Movie;
+                const originalIndex = Math.max(0, candidates.indexOf(item));
+                const suppressHover =
+                  isSliding || (activeSlideIndex > 0 && originalIndex === activeSlideIndex);
 
-              return (
-                <div key={`${item.type || item.media_type || "movie"}-${id}`}>
-                  <NetflixRankedCardWithHover
-                    item={{
-                      ...item,
-                      id,
-                      title: item.title || item.name,
-                      name: item.title || item.name,
-                    }}
-                    rank={originalIndex + 1}
-                    mediaType={mediaType}
-                    watch={item.watch}
-                    suppressHover={suppressHover}
-                  />
-                </div>
-              );
-            })}
-          </StyledSlider>
-        </CustomNavigation>
+                return (
+                  <div key={`${item.type || item.media_type || "movie"}-${id}`}>
+                    <NetflixRankedCardWithHover
+                      item={{
+                        ...item,
+                        id,
+                        title: item.title || item.name,
+                        name: item.title || item.name,
+                      }}
+                      rank={Math.min(10, originalIndex + 1)}
+                      mediaType={mediaType}
+                      watch={item.watch}
+                      suppressHover={suppressHover}
+                    />
+                  </div>
+                );
+              })}
+            </StyledSlider>
+          </CustomNavigation>
+        )}
       </Box>
     </Box>
   );
