@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v5";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v6";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -99,16 +99,16 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     item?.has_embedded_poster_title_treatment
   );
 
-  // Clean provider artwork is valid too. When it has no embedded title treatment
-  // the card composes the real transparent provider logo as a separate layer.
-  // If a logo is temporarily unavailable the artwork still remains publishable:
-  // never hide a catalogue title merely because its merchandising image is clean.
+  // A static catalogue card is publishable only when the title treatment is
+  // guaranteed: either it is embedded in the merchandising artwork or a real
+  // transparent logo is available to layer on top. Existing CDN card mappings
+  // are curated title-bearing card/poster assets and remain valid as embedded.
   const cardBackdrop = mappedBackdrop || savedLandscape || null;
   const cardPoster = mappedPoster || savedPoster || null;
   const cardBackdropEmbedded = !!(mappedBackdrop || (savedLandscape && savedLandscapeEmbedded));
   const cardPosterEmbedded = !!(mappedPoster || (savedPoster && savedPosterEmbedded));
-  const cardReady = !!cardBackdrop;
-  const posterReady = !!cardPoster;
+  const cardReady = !!(cardBackdrop && (cardBackdropEmbedded || savedLogo));
+  const posterReady = !!(cardPoster && (cardPosterEmbedded || savedLogo));
 
   return {
     tmdbId: id,
@@ -132,7 +132,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "official-clean-or-title-treatment_plus-separate-logo_it-first_v5_no-tmdb-images",
+    image_source_policy: "required-title-treatment_embedded-or-real-logo_it-first_v6_no-tmdb-images",
     mapped_backdrop: mappedBackdrop,
     mapped_poster: mappedPoster,
   };
@@ -160,10 +160,10 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     ? !!official?.poster_embedded_title_treatment
     : !!fallback?.poster_embedded_title_treatment;
 
-  // Publication no longer depends on an embedded title treatment. Clean official
-  // artwork is allowed and, when available, the transparent logo is layered over it.
-  const cardReady = !!backdrop;
-  const top10Ready = !!poster;
+  // Never publish a plain static card. A title is valid only when the selected
+  // image already contains its title treatment or a real logo can be overlaid.
+  const cardReady = !!(backdrop && (backdropEmbedded || logo));
+  const top10Ready = !!(poster && (posterEmbedded || logo));
 
   return {
     ...fallback,
@@ -198,7 +198,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
     image_source_policy:
-      official?.policy || "official-clean-or-title-treatment_plus-separate-logo_it-first_v5_no-tmdb-images",
+      official?.policy || "required-title-treatment_embedded-or-real-logo_it-first_v6_no-tmdb-images",
     upscaled: false,
     official_version: official?.version || MEDIA_ASSET_QUALITY_VERSION,
   };
