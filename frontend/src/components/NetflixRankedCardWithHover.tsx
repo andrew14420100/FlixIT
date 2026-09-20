@@ -5,7 +5,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
-import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
+import useAutomaticMediaAssets, { isEmbeddedCardArtwork } from "src/hooks/useAutomaticMediaAssets";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
 import HoverTrailerOverlay from "./HoverTrailerOverlay";
@@ -60,7 +60,6 @@ export default function NetflixRankedCardWithHover({
   const ref = useRef<HTMLDivElement>(null);
   const [nearViewport, setNearViewport] = useState(false);
   const [posterIndex, setPosterIndex] = useState(0);
-  const [logoFailed, setLogoFailed] = useState(false);
 
   const normalizedId = item?.id || item?.tmdbId || item?.tmdb_id;
   const mType = mediaType ||
@@ -128,8 +127,14 @@ export default function NetflixRankedCardWithHover({
     item?.cover_path,
     item?.cover
   );
+  const legacyPosterEmbedded = !!(
+    item?.poster_embedded_title_treatment ||
+    item?.has_embedded_poster_title_treatment ||
+    isEmbeddedCardArtwork(legacyPoster)
+  );
 
   const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
+  const automaticPosterEmbedded = !!automaticAssets?.poster_embedded_title_treatment;
   const automaticBackdrop = firstNonTmdbArtwork(
     automaticAssets?.backdrop_path,
     automaticAssets?.titled_backdrop_path
@@ -148,17 +153,21 @@ export default function NetflixRankedCardWithHover({
     item?.logo
   );
 
-  useEffect(() => {
-    setLogoFailed(false);
-  }, [logoUrl]);
-
+  // Top 10 posters follow the same rule as normal cards: the visible title/logo
+  // must already be baked into the poster. No separate logo layer is rendered.
   const posterCandidates = useMemo(
     () => unique([
+      automaticPosterEmbedded ? automaticPoster : null,
+      mappedPoster,
+      legacyPosterEmbedded ? legacyPoster : null,
+    ]),
+    [
       automaticPoster,
+      automaticPosterEmbedded,
       mappedPoster,
       legacyPoster,
-    ]),
-    [automaticPoster, mappedPoster, legacyPoster]
+      legacyPosterEmbedded,
+    ]
   );
 
   useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
@@ -210,16 +219,9 @@ export default function NetflixRankedCardWithHover({
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
-  // Top 10 follows the same hard rule as normal cards: never bypass the
-  // resolver with a raw poster that has no title treatment.
   const staticReady = !!automaticAssets?.top10_ready;
-  const posterEmbedded = !!automaticAssets?.poster_embedded_title_treatment;
-  const visualReady = !!(
-    posterUrl &&
-    (posterEmbedded || (logoUrl && !logoFailed))
-  );
 
-  if (!staticReady || !visualReady) return null;
+  if (!staticReady || !posterUrl) return null;
 
   return (
     <>
@@ -250,40 +252,6 @@ export default function NetflixRankedCardWithHover({
               onError={() => setPosterIndex((index) => index + 1)}
               className="netflix-ranked-card-poster"
             />
-            {!posterEmbedded && logoUrl && !logoFailed ? (
-              <div
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  left: "8%",
-                  right: "8%",
-                  bottom: watch && Number(watch?.percent || 0) > 0 ? "12%" : "6%",
-                  height: "24%",
-                  display: "flex",
-                  alignItems: "flex-end",
-                  justifyContent: "center",
-                  zIndex: 3,
-                  pointerEvents: "none",
-                }}
-              >
-                <img
-                  src={logoUrl}
-                  alt=""
-                  draggable={false}
-                  decoding="async"
-                  onError={() => setLogoFailed(true)}
-                  style={{
-                    display: "block",
-                    maxWidth: "88%",
-                    maxHeight: "100%",
-                    width: "auto",
-                    height: "auto",
-                    objectFit: "contain",
-                    filter: "drop-shadow(0 2px 6px rgba(0,0,0,.86))",
-                  }}
-                />
-              </div>
-            ) : null}
           </div>
         </a>
       </div>
@@ -302,7 +270,7 @@ export default function NetflixRankedCardWithHover({
               ...assets,
               id: normalizedId,
               preview_video_url: "",
-              netflix_ranked_artwork_url: automaticPoster || mappedPoster || legacyPoster || undefined,
+              netflix_ranked_artwork_url: posterUrl || undefined,
               netflix_artwork_url: hoverBackdrop || undefined,
               netflixArtworkUrl: undefined,
               netflix_cover_url: undefined,
@@ -315,7 +283,7 @@ export default function NetflixRankedCardWithHover({
               titled_backdrop_path: null,
               cover_path: null,
               cover: null,
-              poster_path: automaticPoster || mappedPoster || legacyPoster || null,
+              poster_path: posterUrl || null,
               poster: null,
               logo_path: logoUrl || null,
               logo: null,
