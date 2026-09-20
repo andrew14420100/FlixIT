@@ -17,22 +17,23 @@ permissions:
 
 concurrency:
   group: sc-artwork-catalog
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-catalog:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      SC_ARTWORK_REQUEST_DELAY: "2.5"
+      SC_ARTWORK_REQUEST_DELAY: "0.75"
       SC_ARTWORK_TRANSIENT_RETRIES: "8"
+      SC_ARTWORK_API_MAX_PAGES: "600"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build full StreamingCommunity artwork index
-        run: python scripts/build_sc_artwork_catalog_v4.py --minimum 15000 --output backend/data/sc_artwork_catalog.json
+      - name: Build complete StreamingCommunity artwork index
+        run: python scripts/build_sc_artwork_catalog_v4.py --minimum 17000 --output backend/data/sc_artwork_catalog.json
       - name: Validate catalog coverage
         run: |
           python - <<'PY'
@@ -42,8 +43,8 @@ jobs:
           data = json.loads(path.read_text(encoding="utf-8"))
           count = int(data.get("count") or 0)
           print(f"SC catalog entries: {count}")
-          if count < 15000:
-              raise SystemExit(f"Catalog incomplete: expected at least 15000 entries, got {count}")
+          if count < 17000:
+              raise SystemExit(f"Catalog incomplete: expected at least 17000 artwork titles, got {count}")
           PY
       - name: Publish same catalog as a static frontend asset
         run: cp backend/data/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json

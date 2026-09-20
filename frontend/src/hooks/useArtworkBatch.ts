@@ -10,7 +10,7 @@ import {
 
 const SC_CATALOG_URL = "/sc-artwork-catalog.json";
 const SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/";
-const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v1"];
+const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v2-full-api"];
 
 type NormalizedEntry = {
   item: any;
@@ -76,7 +76,22 @@ function titleVariants(item: any) {
       text,
       text.split(/[:|–—]/, 1)[0],
       text.replace(/\([^)]*\)/g, " "),
+      text.replace(/\b(?:il|lo|la|i|gli|le|un|uno|una)\b/gi, " "),
     ].forEach((candidate) => {
+      const normalized = normalizeText(candidate);
+      if (normalized) out.add(normalized);
+    });
+  });
+  return [...out];
+}
+
+function rowAliases(row: any) {
+  const values = [row?.name, row?.title, row?.slug];
+  const out = new Set<string>();
+  values.forEach((value) => {
+    const text = String(value || "").trim();
+    if (!text) return;
+    [text, text.replace(/-/g, " "), text.replace(/\([^)]*\)/g, " ")].forEach((candidate) => {
       const normalized = normalizeText(candidate);
       if (normalized) out.add(normalized);
     });
@@ -88,11 +103,11 @@ function buildIndex(payload: any): CatalogIndex {
   const rows = Array.isArray(payload?.titles) ? payload.titles : [];
   const byTitle = new Map<string, any[]>();
   rows.forEach((row: any) => {
-    const key = normalizeText(row?.name || row?.title || row?.slug);
-    if (!key) return;
-    const bucket = byTitle.get(key) || [];
-    bucket.push(row);
-    byTitle.set(key, bucket);
+    rowAliases(row).forEach((key) => {
+      const bucket = byTitle.get(key) || [];
+      bucket.push(row);
+      byTitle.set(key, bucket);
+    });
   });
   return { count: Number(payload?.count || rows.length || 0), byTitle };
 }
@@ -101,13 +116,23 @@ async function loadCatalog(): Promise<CatalogIndex> {
   if (catalogMemory) return catalogMemory;
   if (catalogPromise) return catalogPromise;
 
-  catalogPromise = fetch(SC_CATALOG_URL, {
-    cache: "force-cache",
-    headers: { Accept: "application/json" },
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
-      const index = buildIndex(await response.json());
+  const preloaded = typeof window !== "undefined"
+    ? (window as any).__FLIXIT_SC_CATALOG_PROMISE__
+    : null;
+
+  const payloadPromise = preloaded
+    ? Promise.resolve(preloaded)
+    : fetch(SC_CATALOG_URL, {
+        cache: "no-cache",
+        headers: { Accept: "application/json" },
+      }).then(async (response) => {
+        if (!response.ok) throw new Error(`SC catalog ${response.status}`);
+        return response.json();
+      });
+
+  catalogPromise = payloadPromise
+    .then((payload: any) => {
+      const index = buildIndex(payload);
       catalogMemory = index;
       return index;
     })
@@ -150,17 +175,18 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
     .map((row) => {
       let score = 0;
       const type = recordType(row);
-      if (type) score += type === entry.type ? 20 : -20;
+      if (type) score += type === entry.type ? 30 : -40;
       const rowYear = extractYear(row?.year);
       if (expectedYear && rowYear) {
-        if (expectedYear === rowYear) score += 12;
-        else if (Math.abs(expectedYear - rowYear) === 1) score += 3;
-        else score -= 6;
+        if (expectedYear === rowYear) score += 15;
+        else if (Math.abs(expectedYear - rowYear) === 1) score += 4;
+        else score -= 8;
       }
       const images = row?.images || {};
-      if (images.cover || images.cover_desktop) score += 10;
-      if (images.cover_mobile) score += 5;
-      if (images.poster) score += 2;
+      if (images.cover || images.cover_desktop) score += 20;
+      if (images.cover_mobile) score += 8;
+      if (images.background) score += 4;
+      if (images.logo) score += 3;
       return { row, score };
     })
     .sort((a, b) => b.score - a.score)[0]?.row || null;
@@ -185,7 +211,9 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, catalogSize: numb
   if (!row) return null;
   const images = row?.images || {};
 
-  const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile", "poster"]);
+  // SC "cover" is the merchandised horizontal card artwork with the title/logo
+  // already baked in. Never substitute the clean background as a static card.
+  const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile"]);
   const poster = role(images, ["cover_mobile", "cover", "poster", "poster_mobile"]);
   if (!landscape && !poster) return null;
 
@@ -226,7 +254,7 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, catalogSize: numb
     sc_catalog_size: catalogSize,
     sc_provider_id: row?.id || row?.slug || null,
     sc_provider_name: row?.name || null,
-    version: "official-artwork-v12-static-sc-catalog",
+    version: "official-artwork-v13-full-static-sc-catalog",
   };
 }
 
