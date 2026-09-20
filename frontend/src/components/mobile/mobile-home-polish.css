@@ -1,0 +1,119 @@
+/* Mobile Home visual polish based on the latest FLIXIT/SC screenshot comparison. */
+@media (max-width: 899px) {
+  /* Blend the Hero into the Home background instead of ending on a hard edge. */
+  html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-section"]::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: clamp(110px, 18svh, 170px);
+    pointer-events: none;
+    z-index: 2;
+    background: linear-gradient(
+      to bottom,
+      rgba(5,5,5,0) 0%,
+      rgba(5,5,5,.10) 22%,
+      rgba(5,5,5,.46) 58%,
+      rgba(5,5,5,.86) 82%,
+      #050505 100%
+    );
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] .info-wrap {
+    z-index: 3 !important;
+  }
+
+  /* Continue Watching: same footprint as ordinary posters; only progress + remove stay special. */
+  html.flixit-home-reference #continua .slick-slide {
+    width: calc(var(--flixit-reference-poster-w, min(38vw, 170px)) + 5px) !important;
+    max-width: 175px !important;
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-remove {
+    top: 7px !important;
+    right: 7px !important;
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    border-radius: 50% !important;
+    border: 1px solid rgba(255,255,255,.34) !important;
+    background: linear-gradient(145deg, rgba(24,24,26,.94), rgba(5,5,6,.84)) !important;
+    color: #fff !important;
+    box-shadow:
+      0 4px 14px rgba(0,0,0,.38),
+      inset 0 1px 0 rgba(255,255,255,.08) !important;
+    opacity: .92 !important;
+    transition:
+      transform .16s cubic-bezier(.2,.8,.2,1),
+      background-color .16s ease,
+      border-color .16s ease,
+      box-shadow .16s ease !important;
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-remove-icon {
+    width: 17px !important;
+    height: 17px !important;
+    stroke-width: 1.8 !important;
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,.35));
+  }
+
+  html.flixit-home-reference #continua .netflix-standard-card-remove:active {
+    transform: scale(.88) !important;
+    border-color: rgba(229,9,20,.82) !important;
+    background: #e50914 !important;
+    box-shadow: 0 2px 9px rgba(229,9,20,.38) !important;
+  }
+
+  /* Top 10: keep poster size identical to normal rows, but reproduce SC's wider
+     tile spacing so the rank SVG has its own breathing room instead of colliding
+     with the next poster. */
+  html.flixit-home-reference .top10-row .slider,
+  html.flixit-home-reference .top10-row .show-peek {
+    padding-left: clamp(36px, 10vw, 42px) !important;
+  }
+
+  html.flixit-home-reference .top10-row .slick-slide {
+    width: calc(var(--flixit-reference-poster-w, min(38vw, 170px)) + clamp(34px, 10vw, 42px)) !important;
+    max-width: 212px !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference .top10-row .slider-item {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-root,
+  html.flixit-home-reference .top10-row .netflix-ranked-card-link,
+  html.flixit-home-reference .top10-row .netflix-ranked-card-poster-wrap {
+    width: var(--flixit-reference-poster-w, min(38vw, 170px)) !important;
+    height: var(--flixit-reference-poster-h, auto) !important;
+    aspect-ratio: 2 / 3 !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-rank {
+    left: clamp(-20px, -4.8vw, -16px) !important;
+    bottom: 0 !important;
+    width: 52% !important;
+    height: 52% !important;
+    z-index: 3 !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference .top10-row .netflix-ranked-card-rank-svg {
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    opacity: 1 !important;
+  }
+
+  /* SC mobile has no stray browse chevron beside the Top 10 title. */
+  html.flixit-home-reference .top10-row .row-header .browse,
+  html.flixit-home-reference .top10-row .row-header .browse-container,
+  html.flixit-home-reference .top10-row .row-header .header-wrap > :not(.label) {
+    display: none !important;
+  }
+}
