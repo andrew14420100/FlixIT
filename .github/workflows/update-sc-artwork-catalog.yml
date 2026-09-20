@@ -26,14 +26,14 @@ jobs:
     env:
       SC_ARTWORK_REQUEST_DELAY: "0.85"
       SC_ARTWORK_TRANSIENT_RETRIES: "8"
-      SC_ARTWORK_MAX_PAGES: "600"
+      SC_ARTWORK_MIN_YEAR: "1910"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Build complete StreamingCommunity artwork index
-        run: python scripts/build_sc_artwork_catalog_v4.py --minimum 17000 --output backend/data/sc_artwork_catalog.json
+        run: python scripts/build_sc_artwork_catalog_v4.py --minimum 18000 --output backend/data/sc_artwork_catalog.json
       - name: Validate catalog coverage
         run: |
           python - <<'PY'
@@ -42,13 +42,19 @@ jobs:
           path = Path("backend/data/sc_artwork_catalog.json")
           data = json.loads(path.read_text(encoding="utf-8"))
           count = int(data.get("count") or 0)
+          reported = int(data.get("reported_total_count") or 0)
           cdn = data.get("cdn_base_url")
           domain = data.get("source_base_url")
+          coverage = data.get("coverage_ratio")
           print(f"SC catalog entries: {count}")
+          print(f"SC reported titles: {reported}")
+          print(f"SC coverage: {coverage}")
           print(f"SC source: {domain}")
           print(f"SC CDN: {cdn}")
-          if count < 17000:
-              raise SystemExit(f"Catalog incomplete: expected at least 17000 artwork titles, got {count}")
+          if count < 18000:
+              raise SystemExit(f"Catalog incomplete: expected at least 18000 artwork titles, got {count}")
+          if reported and count < int(reported * 0.96):
+              raise SystemExit(f"Catalog coverage too low: {count}/{reported}")
           if not cdn:
               raise SystemExit("Catalog incomplete: missing cdn_base_url")
           PY
