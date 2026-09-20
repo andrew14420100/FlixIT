@@ -14,6 +14,7 @@ import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
 import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenceRuntime";
+import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
 import "src/components/mobile/mobile-home-finish.css";
@@ -39,6 +40,7 @@ export default function MainLayout() {
       <MobileSCExperience />
       <MobileSCExactAssets />
       <MobileHomeReferenceRuntime />
+      <MobileGlobalBottomNav />
       <AuthModal />
       <SessionGuards />
       {navigation.state !== "idle" && <MainLoadingScreen />}
