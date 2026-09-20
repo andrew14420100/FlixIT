@@ -17,11 +17,12 @@ import {
   msUntilNextRomeRefresh,
 } from "src/utils/dailyRefresh";
 
-const CACHE_PREFIX = "flix-home-smart-v9";
+const CACHE_PREFIX = "flix-home-smart-v10";
 const WATCH_AGAIN_DAYS = 28;
 const RECENT_DAYS = 14;
 const MAX_HISTORY = 12;
-const MAX_ROW_ITEMS = 50;
+const MAX_ROW_ITEMS = 160;
+const CLAIM_LIMIT = 60;
 
 const toMediaType = (type) =>
   type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
@@ -43,9 +44,7 @@ function normalize(items, fallbackType = "movie") {
         name: item?.name || item?.title || "",
       };
     })
-  ).filter(
-    (item) => item?.id && (item?.backdrop_path || item?.poster_path)
-  );
+  ).filter((item) => item?.id && (item?.backdrop_path || item?.poster_path));
 }
 
 function daysSince(value) {
@@ -152,7 +151,7 @@ async function genrePool(genreId, mediaType) {
   if (!genreId) return [];
   const slug = toSlug(mediaType);
   const pages = await Promise.all(
-    [1, 2, 3, 4, 5].map((page) =>
+    Array.from({ length: 10 }, (_, index) => index + 1).map((page) =>
       fetchJson(
         `/api/public/tmdb/genre/${genreId}/${slug}?page=${page}`,
         { items: [] }
@@ -163,17 +162,11 @@ async function genrePool(genreId, mediaType) {
 }
 
 async function freshCataloguePool() {
-  const urls = [
-    "/api/public/homepage/latest",
-    "/api/public/tmdb/now_playing?page=1",
-    "/api/public/tmdb/now_playing?page=2",
-    "/api/public/tmdb/now_playing?page=3",
-    "/api/public/tmdb/now_playing?page=4",
-    "/api/public/tmdb/on_the_air?page=1",
-    "/api/public/tmdb/on_the_air?page=2",
-    "/api/public/tmdb/on_the_air?page=3",
-    "/api/public/tmdb/on_the_air?page=4",
-  ];
+  const urls = ["/api/public/homepage/latest"];
+  for (let page = 1; page <= 8; page += 1) {
+    urls.push(`/api/public/tmdb/now_playing?page=${page}`);
+    urls.push(`/api/public/tmdb/on_the_air?page=${page}`);
+  }
   const parts = await Promise.all(
     urls.map((url) => fetchJson(url, { items: [] }))
   );
@@ -181,16 +174,29 @@ async function freshCataloguePool() {
 }
 
 function removeTaken(items, taken) {
-  return normalize(items)
-    .filter((item) => !taken.has(itemKey(item)))
-    .slice(0, MAX_ROW_ITEMS);
+  const source = normalize(items);
+  const selected = source.filter((item) => !taken.has(itemKey(item)));
+  const seen = new Set(selected.map(itemKey));
+
+  // Dedupe is preferred, but it must not empty a smart section. Reuse that
+  // section's own candidates only when necessary to keep a deep artwork pool.
+  if (selected.length < 100) {
+    for (const item of source) {
+      const key = itemKey(item);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      selected.push(item);
+      if (selected.length >= MAX_ROW_ITEMS) break;
+    }
+  }
+  return selected.slice(0, MAX_ROW_ITEMS);
 }
 
 function useClaimRow(key, index, items) {
   const claim = useHomeDedupe((state) => state.claim);
   const release = useHomeDedupe((state) => state.release);
   const idsKey = useMemo(
-    () => (items || []).map(itemKey).filter(Boolean).join("|"),
+    () => (items || []).slice(0, CLAIM_LIMIT).map(itemKey).filter(Boolean).join("|"),
     [items]
   );
 
@@ -431,31 +437,31 @@ export default function HomeSmartSections() {
 
   const visibleNewForYou = useMemo(() => {
     const taken = claimedAbove(rows, -40, "smart-new-for-you");
-    visibleBecause.forEach((item) => taken.add(itemKey(item)));
+    visibleBecause.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
     return removeTaken(newForYouItems, taken);
   }, [newForYouItems, visibleBecause, rows]);
 
   const visibleWatchAgain = useMemo(() => {
     const taken = claimedAbove(rows, -30, "smart-watch-again");
-    visibleBecause.forEach((item) => taken.add(itemKey(item)));
-    visibleNewForYou.forEach((item) => taken.add(itemKey(item)));
+    visibleBecause.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
+    visibleNewForYou.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
     return removeTaken(watchAgainItems, taken);
   }, [watchAgainItems, visibleBecause, visibleNewForYou, rows]);
 
   const visibleMyList = useMemo(() => {
     const taken = claimedAbove(rows, -20, "smart-my-list");
-    visibleBecause.forEach((item) => taken.add(itemKey(item)));
-    visibleNewForYou.forEach((item) => taken.add(itemKey(item)));
-    visibleWatchAgain.forEach((item) => taken.add(itemKey(item)));
+    visibleBecause.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
+    visibleNewForYou.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
+    visibleWatchAgain.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
     return removeTaken(myListItems, taken);
   }, [myListItems, visibleBecause, visibleNewForYou, visibleWatchAgain, rows]);
 
   const visibleGenre = useMemo(() => {
     const taken = claimedAbove(rows, -10, "smart-genre");
-    visibleBecause.forEach((item) => taken.add(itemKey(item)));
-    visibleNewForYou.forEach((item) => taken.add(itemKey(item)));
-    visibleWatchAgain.forEach((item) => taken.add(itemKey(item)));
-    visibleMyList.forEach((item) => taken.add(itemKey(item)));
+    visibleBecause.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
+    visibleNewForYou.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
+    visibleWatchAgain.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
+    visibleMyList.slice(0, CLAIM_LIMIT).forEach((item) => taken.add(itemKey(item)));
     return removeTaken(genreItems, taken);
   }, [genreItems, visibleBecause, visibleNewForYou, visibleWatchAgain, visibleMyList, rows]);
 
