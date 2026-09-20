@@ -1,0 +1,462 @@
+/* FLIXIT mobile presentation – layout only.
+   Desktop/tablet >= 900px is intentionally untouched. */
+@media (max-width: 899px) {
+  html.flixit-mobile-sc,
+  html.flixit-mobile-sc body,
+  html.flixit-mobile-sc #root {
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+    background: #0f0f0f;
+  }
+
+  html.flixit-mobile-sc body {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ---------- Mobile header: only FLIXIT + search/account area ---------- */
+  [data-testid="main-header"] {
+    height: 64px !important;
+    min-height: 64px !important;
+    padding-left: 14px !important;
+    padding-right: 12px !important;
+    background: linear-gradient(to bottom, rgba(0,0,0,.82), rgba(0,0,0,.18)) !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  [data-testid="main-header"] .MuiToolbar-root {
+    min-height: 64px !important;
+    height: 64px !important;
+    gap: 6px !important;
+  }
+
+  /* Existing hamburger/mobile dropdown is removed; navigation lives at bottom. */
+  [data-testid="main-header"] .flixit-logo + .MuiBox-root {
+    display: none !important;
+  }
+
+  [data-testid="main-header"] .flixit-logo {
+    margin-right: auto !important;
+    flex: 0 0 auto !important;
+  }
+
+  [data-testid="main-header"] .flixit-logo svg {
+    height: 30px !important;
+    width: auto !important;
+  }
+
+  [data-testid="main-header"] [data-testid="search-box"] > div {
+    height: 38px !important;
+    max-width: min(58vw, 250px) !important;
+  }
+
+  [data-testid="main-header"] [data-testid="header-avatar"] {
+    width: 34px !important;
+    height: 34px !important;
+  }
+
+  /* ---------- SC-style fixed bottom navigation ---------- */
+  .flixit-mobile-bottom-nav {
+    position: fixed;
+    z-index: 13000;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: calc(64px + env(safe-area-inset-bottom, 0px));
+    padding: 6px 6px env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: center;
+    background: rgba(5,5,5,.98);
+    border-top: 1px solid rgba(255,255,255,.10);
+    box-shadow: 0 -8px 30px rgba(0,0,0,.36);
+  }
+
+  .flixit-mobile-bottom-nav > button {
+    appearance: none;
+    border: 0;
+    outline: 0;
+    min-width: 0;
+    height: 54px;
+    padding: 3px 2px 1px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    background: transparent;
+    color: rgba(255,255,255,.66);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .flixit-mobile-bottom-nav > button svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .flixit-mobile-bottom-nav > button span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 1.15;
+  }
+
+  .flixit-mobile-bottom-nav > button.is-active {
+    color: #e50914;
+  }
+
+  /* Desktop footer has no place in the phone presentation. */
+  footer {
+    display: none !important;
+  }
+
+  /* ---------- HOME HERO – deliberately invasive like SC ---------- */
+  [data-testid="hero-section"] {
+    height: 78svh !important;
+    min-height: 590px !important;
+    max-height: 760px !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    background: #0f0f0f !important;
+  }
+
+  [data-testid="hero-section"] [data-testid="hero-backdrop"],
+  [data-testid="hero-section"] .hero-video-container,
+  [data-testid="hero-section"] > .MuiBox-root:nth-child(3) {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 100% !important;
+    max-height: none !important;
+  }
+
+  [data-testid="hero-section"] [data-testid="hero-backdrop"] {
+    object-fit: cover !important;
+    object-position: center top !important;
+  }
+
+  [data-testid="hero-section"] .info-wrap {
+    left: 4% !important;
+    right: 4% !important;
+    top: auto !important;
+    bottom: 7.5% !important;
+    width: 92% !important;
+    height: auto !important;
+  }
+
+  [data-testid="hero-section"] [data-testid="hero-content"] {
+    position: relative !important;
+    inset: auto !important;
+    width: 100% !important;
+    margin: 0 !important;
+  }
+
+  [data-testid="hero-section"] [data-testid="hero-logo"] {
+    width: auto !important;
+    max-width: min(72vw, 420px) !important;
+    max-height: 17svh !important;
+    object-fit: contain !important;
+    object-position: left bottom !important;
+  }
+
+  [data-testid="hero-section"] [data-testid="hero-title"] {
+    max-width: 80vw !important;
+    font-size: clamp(30px, 9vw, 50px) !important;
+    line-height: .98 !important;
+  }
+
+  /* The phone hero remains visual; long synopsis/details stay on the detail page. */
+  [data-testid="hero-section"] [data-testid="hero-overview"] {
+    display: none !important;
+  }
+
+  [data-testid="hero-section"] .info-buttons {
+    justify-content: flex-start !important;
+    margin-top: 18px !important;
+    gap: 8px !important;
+  }
+
+  [data-testid="hero-section"] [data-testid="hero-play-button"],
+  [data-testid="hero-section"] [data-testid="hero-info-button"] {
+    min-height: 42px !important;
+    padding: 8px 15px !important;
+    margin-right: 0 !important;
+    border-radius: 4px !important;
+    font-size: 13px !important;
+  }
+
+  [data-testid="hero-section"] [data-testid="hero-controls"] {
+    right: 14px !important;
+    bottom: 12% !important;
+  }
+
+  /* ---------- Cinema / Serie TV Hero: same phone geometry as Home ---------- */
+  [data-testid="hub-hero"] {
+    height: 78svh !important;
+    min-height: 590px !important;
+    max-height: 760px !important;
+    overflow: hidden !important;
+    background: #0f0f0f !important;
+  }
+
+  [data-testid="hub-hero"] > img {
+    object-fit: cover !important;
+    object-position: center top !important;
+  }
+
+  /* On phone the selected title is the hero; desktop hub editorial labels stay desktop-only. */
+  [data-testid="hub-hero"] .MuiTypography-root {
+    display: none !important;
+  }
+
+  [data-testid="hub-hero"] [data-testid="hub-catalog-link"] {
+    display: none !important;
+  }
+
+  [data-testid="hub-hero"] > .MuiBox-root:last-child {
+    left: 4% !important;
+    right: 4% !important;
+    bottom: 8% !important;
+    width: 92% !important;
+    max-width: none !important;
+  }
+
+  [data-testid="hub-hero"] > .MuiBox-root:last-child img {
+    max-width: min(72vw, 420px) !important;
+    max-height: 17svh !important;
+    object-position: left bottom !important;
+  }
+
+  [data-testid="hub-hero"] [data-testid="hub-hero-play"],
+  [data-testid="hub-hero"] [data-testid="hub-hero-info"] {
+    height: 42px !important;
+    padding: 0 15px !important;
+    border-radius: 4px !important;
+    font-size: 13px !important;
+  }
+
+  /* ---------- Content rails ---------- */
+  .slider-row {
+    height: auto !important;
+    margin-top: 22px !important;
+    margin-bottom: 24px !important;
+    contain: layout style !important;
+  }
+
+  .slider-row.compact-row {
+    margin-top: 12px !important;
+    margin-bottom: 20px !important;
+  }
+
+  .slider-row .row-header {
+    padding-left: 16px !important;
+    padding-right: 12px !important;
+    margin-bottom: 8px !important;
+    min-height: 25px !important;
+  }
+
+  .slider-row .row-header .label {
+    font-size: 19px !important;
+    line-height: 1.2 !important;
+    font-weight: 700 !important;
+  }
+
+  .slider-row .slick-slide > div {
+    padding: 0 4px !important;
+    box-sizing: border-box !important;
+  }
+
+  .slider-row .slick-list {
+    overflow: visible !important;
+  }
+
+  /* Normal phone rails use the true vertical SC poster. The JS hydrator adds
+     this class only after the matching poster exists in the committed catalog. */
+  .netflix-standard-card-root.flixit-mobile-poster {
+    aspect-ratio: 2 / 3 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-link,
+  .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-frame,
+  .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-image-wrap,
+  .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 3px !important;
+  }
+
+  .netflix-standard-card-root.flixit-mobile-poster .netflix-standard-card-image {
+    object-fit: cover !important;
+  }
+
+  /* Continue Watching is the explicit exception: landscape cover + integrated
+     title + progress bar, exactly as before. */
+  #continua .netflix-standard-card-root {
+    aspect-ratio: 342 / 192 !important;
+  }
+
+  #continua .netflix-standard-card-image {
+    object-fit: cover !important;
+  }
+
+  #continua .netflix-standard-card-progress-track {
+    left: 4% !important;
+    right: 4% !important;
+    bottom: 4px !important;
+    height: 3px !important;
+  }
+
+  /* Touch has no hover mini-modal. First tap follows the existing detail link. */
+  .previewModal--container,
+  [data-testid^="hover-overlay-"] {
+    display: none !important;
+    pointer-events: none !important;
+  }
+
+  /* Top 10 keeps the SC/Netflix number + TRUE poster construction. */
+  .top10-row .netflix-ranked-card-root {
+    min-height: 0 !important;
+  }
+
+  .top10-row .netflix-ranked-card-poster {
+    object-fit: cover !important;
+  }
+
+  /* ---------- Detail Film / Serie ---------- */
+  [data-testid="detail-page-redesign"] {
+    padding-bottom: 76px !important;
+    background: #090909 !important;
+  }
+
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child {
+    height: 78svh !important;
+    min-height: 610px !important;
+    max-height: 760px !important;
+  }
+
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > img {
+    object-position: center top !important;
+  }
+
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) {
+    left: 16px !important;
+    right: 16px !important;
+    bottom: 34px !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) > img {
+    max-width: min(74vw, 390px) !important;
+    max-height: 18svh !important;
+    margin-bottom: 12px !important;
+  }
+
+  [data-testid="detail-page-redesign"] [data-testid="detail-play"],
+  [data-testid="detail-page-redesign"] [data-testid="detail-my-list"] {
+    min-height: 44px !important;
+    padding: 8px 15px !important;
+    font-size: 14px !important;
+    border-radius: 4px !important;
+  }
+
+  [data-testid="detail-page-redesign"] > .MuiBox-root:nth-child(2) {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    margin-top: 0 !important;
+    padding-bottom: 84px !important;
+  }
+
+  [data-testid="detail-page-redesign"] .netflix-standard-card-root.flixit-mobile-poster {
+    min-width: 0 !important;
+  }
+
+  /* My List legacy cards become touch-safe and poster based. */
+  [data-testid^="horizontal-card-"].flixit-mobile-list-poster {
+    aspect-ratio: 2 / 3 !important;
+    min-width: calc((100vw - 64px) / 3) !important;
+    max-width: calc((100vw - 64px) / 3) !important;
+    transform: none !important;
+    overflow: hidden !important;
+    border-radius: 4px !important;
+    z-index: 1 !important;
+  }
+
+  [data-testid^="horizontal-card-"].flixit-mobile-list-poster > .MuiBox-root:first-child,
+  [data-testid^="horizontal-card-"].flixit-mobile-list-poster img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+
+  [data-testid^="horizontal-card-"].flixit-mobile-list-poster .card-expanded {
+    display: none !important;
+  }
+
+  /* Search opens from the bottom nav and uses a phone-width result sheet. */
+  [data-testid="search-box"] > .MuiBox-root + .MuiBox-root {
+    position: fixed !important;
+    left: 12px !important;
+    right: 12px !important;
+    top: 66px !important;
+    width: auto !important;
+    max-height: calc(100svh - 150px) !important;
+    overflow-y: auto !important;
+    border-radius: 8px !important;
+  }
+
+  /* ---------- Player ---------- */
+  [data-testid="watch-page"],
+  [data-testid="custom-video-player"] {
+    width: 100vw !important;
+    height: 100svh !important;
+    background: #000 !important;
+  }
+
+  [data-testid="native-video"] {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+    background: #000 !important;
+  }
+
+  [data-testid="player-controls"] {
+    padding-left: max(12px, env(safe-area-inset-left, 0px)) !important;
+    padding-right: max(12px, env(safe-area-inset-right, 0px)) !important;
+    padding-bottom: max(12px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  [data-testid="player-center-play"] > .MuiBox-root {
+    width: 70px !important;
+    height: 70px !important;
+  }
+
+  [data-testid="volume-slider"] {
+    display: none !important;
+  }
+}
+
+@media (max-width: 899px) and (orientation: landscape) {
+  html.flixit-mobile-sc body {
+    padding-bottom: 0 !important;
+  }
+
+  .flixit-mobile-bottom-nav {
+    display: none !important;
+  }
+
+  [data-testid="watch-page"],
+  [data-testid="custom-video-player"],
+  [data-testid="native-video"] {
+    width: 100vw !important;
+    height: 100dvh !important;
+  }
+}
