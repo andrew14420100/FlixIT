@@ -1,0 +1,118 @@
+@media (max-width: 899px) {
+  /* Account mockup: profile header + simple action list. The currently selected
+     desktop detail pane remains available on larger screens only. */
+  [data-testid="account-page"] {
+    padding: 78px 14px 84px !important;
+    min-height: 100svh !important;
+    background: #0f0f0f !important;
+  }
+
+  [data-testid="account-page"] > .MuiBox-root:first-child {
+    display: none !important;
+  }
+
+  [data-testid="account-page"] > .MuiBox-root:has(> [data-testid="account-sidebar"]) {
+    display: block !important;
+  }
+
+  [data-testid="account-page"] > .MuiBox-root:has(> [data-testid="account-sidebar"]) > .MuiBox-root:last-child:not([data-testid="account-sidebar"]) {
+    display: none !important;
+  }
+
+  [data-testid="account-sidebar"] {
+    position: static !important;
+    top: auto !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+  }
+
+  [data-testid="account-header"] {
+    margin-bottom: 14px !important;
+    padding: 18px 12px !important;
+    border-radius: 6px !important;
+    background: transparent !important;
+    border: 0 !important;
+    text-align: center !important;
+  }
+
+  [data-testid="account-header"] > .MuiBox-root:last-child {
+    justify-content: center !important;
+    flex-direction: column !important;
+    text-align: center !important;
+  }
+
+  [data-testid="account-avatar"] {
+    width: 72px !important;
+    height: 72px !important;
+    border-radius: 8px !important;
+  }
+
+  [data-testid="account-name"] {
+    font-size: 19px !important;
+    text-align: center !important;
+  }
+
+  [data-testid="account-email"],
+  [data-testid="account-premium-badge"] {
+    display: none !important;
+  }
+
+  [data-testid^="account-nav-"] ,
+  [data-testid="account-logout"] {
+    min-height: 52px !important;
+    padding: 8px 10px !important;
+    border-radius: 0 !important;
+    border-bottom: 1px solid rgba(255,255,255,.08) !important;
+    background: transparent !important;
+    transform: none !important;
+  }
+
+  [data-testid^="account-nav-"] .MuiBox-root:has(> .MuiTypography-root) .MuiTypography-root:last-child {
+    display: none !important;
+  }
+
+  [data-testid^="account-nav-"] .MuiSvgIcon-root:last-child {
+    opacity: .55 !important;
+  }
+
+  /* My List: compact poster shelf/grid, no desktop hover expansion. */
+  [data-testid^="horizontal-card-"] {
+    transition: none !important;
+  }
+
+  [data-testid^="horizontal-card-"]:hover {
+    transform: none !important;
+    z-index: 1 !important;
+  }
+
+  /* Detail: keep controls readable and stacked exactly as a phone sheet. */
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) .MuiStack-root {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  [data-testid="detail-page-redesign"] > .MuiBox-root:first-child > .MuiBox-root:has([data-testid="detail-play"]) > .MuiTypography-root {
+    font-size: 14px !important;
+    line-height: 1.35 !important;
+    margin-bottom: 14px !important;
+    max-width: 92vw !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 4 !important;
+    -webkit-box-orient: vertical !important;
+    overflow: hidden !important;
+  }
+
+  [data-testid="detail-page-redesign"] [data-testid="detail-hero-audio-toggle"] {
+    transform: scale(.82) !important;
+    transform-origin: right bottom !important;
+  }
+
+  /* Keep the content below the hero flush and full-width like the reference. */
+  [data-testid="detail-page-redesign"] > .MuiBox-root:nth-child(2) {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+}
