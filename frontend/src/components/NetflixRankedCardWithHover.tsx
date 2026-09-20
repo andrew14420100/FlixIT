@@ -127,6 +127,16 @@ export default function NetflixRankedCardWithHover({
     item?.cover_path,
     item?.cover
   );
+  const legacyBackdrop = firstNonTmdbArtwork(
+    item?.netflix_artwork_url,
+    item?.netflixArtworkUrl,
+    item?.backdrop_path,
+    item?.backdrop,
+    item?.cover_path,
+    item?.cover,
+    item?.artwork,
+    item?.image
+  );
   const legacyPosterEmbedded = !!(
     item?.poster_embedded_title_treatment ||
     item?.has_embedded_poster_title_treatment ||
@@ -153,20 +163,29 @@ export default function NetflixRankedCardWithHover({
     item?.logo
   );
 
-  // Top 10 posters follow the same rule as normal cards: the visible title/logo
-  // must already be baked into the poster. No separate logo layer is rendered.
+  // Ranked cards must be real vertical posters. The legacy SC mapping stored the
+  // same landscape cover in both "poster" and "backdrop"; never accept that as
+  // a Top 10 poster. The same guard also blocks any provider response that has
+  // silently copied its cover into poster_url.
   const posterCandidates = useMemo(
     () => unique([
-      automaticPosterEmbedded ? automaticPoster : null,
-      mappedPoster,
-      legacyPosterEmbedded ? legacyPoster : null,
+      automaticPosterEmbedded && automaticPoster && automaticPoster !== automaticBackdrop
+        ? automaticPoster
+        : null,
+      mappedPoster && mappedPoster !== mappedBackdrop ? mappedPoster : null,
+      legacyPosterEmbedded && legacyPoster && legacyPoster !== legacyBackdrop
+        ? legacyPoster
+        : null,
     ]),
     [
       automaticPoster,
       automaticPosterEmbedded,
+      automaticBackdrop,
       mappedPoster,
+      mappedBackdrop,
       legacyPoster,
       legacyPosterEmbedded,
+      legacyBackdrop,
     ]
   );
 
@@ -219,7 +238,7 @@ export default function NetflixRankedCardWithHover({
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
-  const staticReady = !!automaticAssets?.top10_ready;
+  const staticReady = !!automaticAssets?.top10_ready && posterCandidates.length > 0;
 
   if (!staticReady || !posterUrl) return null;
 
