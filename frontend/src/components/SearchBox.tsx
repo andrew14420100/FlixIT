@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { filterAvailableAsync } from "src/hooks/useAvailability";
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
@@ -10,7 +11,6 @@ import SearchIcon from "@mui/icons-material/Search";
 import CloseIcon from "@mui/icons-material/Close";
 import MovieIcon from "@mui/icons-material/Movie";
 import TvIcon from "@mui/icons-material/Tv";
-import StarIcon from "@mui/icons-material/Star";
 
 const TMDB_API = "https://api.themoviedb.org/3";
 const TMDB_KEY = "4f153630f8d7e92d542dde3a38fbddf2";
@@ -49,47 +49,71 @@ export default function SearchBox() {
     return () => document.removeEventListener("mousedown", handler);
   }, [isMobile]);
 
-  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 80); }, [open]);
+  useEffect(() => {
+    if (!isMobile) return;
+    const handler = () => setOpen(true);
+    window.addEventListener("flixit-open-search", handler);
+    return () => window.removeEventListener("flixit-open-search", handler);
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 80);
+  }, [open]);
+
+  useEffect(() => {
+    if (!isMobile || !open) return;
+    const previousBody = document.body.style.overflow;
+    const previousHtml = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBody;
+      document.documentElement.style.overflow = previousHtml;
+    };
+  }, [isMobile, open]);
 
   const visible = results.filter(r => tab === "all" || r.media_type === tab);
   const openResult = (r) => { navigate(`/browse/${r.media_type}/${r.id}`); setQuery(""); setOpen(false); };
 
   if (isMobile) {
+    const overlay = open && typeof document !== "undefined" ? createPortal(
+      <Box data-testid="mobile-search-page" sx={{ position:"fixed", inset:0, zIndex:30000, bgcolor:"#050505", color:"#fff", pt:"max(14px, env(safe-area-inset-top, 0px))", pb:"calc(82px + env(safe-area-inset-bottom, 0px))", overflowY:"auto", overscrollBehavior:"contain" }}>
+        <Box sx={{ display:"flex", alignItems:"center", gap:1, px:"14px", mb:1.5 }}>
+          <Box sx={{ flex:1, minHeight:48, display:"flex", alignItems:"center", gap:1, bgcolor:"#232323", borderRadius:"6px", px:1.4 }}>
+            <SearchIcon sx={{ fontSize:22, color:"rgba(255,255,255,.8)" }} />
+            <input ref={inputRef} value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Cerca film, serie TV..." data-testid="search-input" style={{ flex:1, minWidth:0, border:0, outline:0, background:"transparent", color:"#fff", fontSize:"16px", fontFamily:"Inter, sans-serif" }} />
+            {loading ? <CircularProgress size={16} sx={{ color:'#e50914' }} /> : query ? <CloseIcon onClick={()=>{setQuery('');setResults([]);}} sx={{ fontSize:21, color:'rgba(255,255,255,.55)', cursor:'pointer' }} /> : null}
+          </Box>
+          <Box component="button" onClick={()=>setOpen(false)} sx={{ minWidth:58, minHeight:48, border:0, bgcolor:'transparent', color:'#fff', fontSize:14, fontWeight:600, p:.5, cursor:'pointer' }}>Chiudi</Box>
+        </Box>
+
+        {query.length >= 2 && <Typography sx={{ px:"14px", fontSize:16, fontWeight:700, mb:1.1 }}>Risultati per “{query}”</Typography>}
+        <Box sx={{ px:"14px", display:'flex', gap:2.5, borderBottom:'1px solid rgba(255,255,255,.08)', mb:.5 }}>
+          {[['all','Tutti'],['movie','Film'],['tv','Serie TV']].map(([k,l]) => <Box key={k} component="button" onClick={()=>setTab(k)} sx={{ position:'relative', minHeight:42, border:0, bgcolor:'transparent', color:tab===k?'#fff':'rgba(255,255,255,.58)', px:0, py:.8, fontSize:13, fontWeight:700, cursor:'pointer', '&::after':tab===k?{content:'""',position:'absolute',left:0,right:0,bottom:0,height:'2px',bgcolor:'#e50914'}:{} }}>{l}</Box>)}
+        </Box>
+
+        <Box>
+          {visible.map((r) => (
+            <Box key={`${r.media_type}-${r.id}`} onClick={()=>openResult(r)} data-testid={`search-result-${r.id}`} sx={{ display:'grid', gridTemplateColumns:'58px minmax(0,1fr)', gap:'12px', alignItems:'center', px:'14px', py:'8px', minHeight:90, cursor:'pointer' }}>
+              <Box sx={{ width:58, height:82, borderRadius:'3px', overflow:'hidden', bgcolor:'#151515' }}>
+                {r.poster_path ? <img src={`https://image.tmdb.org/t/p/w185${r.poster_path}`} alt={r.title || r.name || ''} style={{width:'100%',height:'100%',objectFit:'cover'}} /> : r.media_type==='movie' ? <Box sx={{height:'100%',display:'grid',placeItems:'center'}}><MovieIcon sx={{color:'#333'}} /></Box> : <Box sx={{height:'100%',display:'grid',placeItems:'center'}}><TvIcon sx={{color:'#333'}} /></Box>}
+              </Box>
+              <Box sx={{ minWidth:0 }}>
+                <Typography noWrap sx={{ fontSize:15, fontWeight:700 }}>{r.title || r.name}</Typography>
+                <Typography sx={{ mt:.35, fontSize:12, color:'rgba(255,255,255,.54)' }}>{r.media_type==='movie'?'Film':'Serie TV'}{(r.release_date||r.first_air_date)?` · ${(r.release_date||r.first_air_date).slice(0,4)}`:''}</Typography>
+              </Box>
+            </Box>
+          ))}
+          {query.length >= 2 && !loading && visible.length === 0 && <Typography sx={{ px:'14px', py:4, fontSize:14, color:'rgba(255,255,255,.45)' }}>Nessun risultato</Typography>}
+        </Box>
+      </Box>,
+      document.body
+    ) : null;
+
     return (
       <Box ref={containerRef} data-testid="search-box" sx={{ position:"relative" }}>
-        <Box onClick={() => setOpen(true)} sx={{ width:34, height:34, display:"grid", placeItems:"center", cursor:"pointer" }}><SearchIcon sx={{ fontSize:22, color:"rgba(255,255,255,.86)" }} /></Box>
-        {open && (
-          <Box data-testid="mobile-search-page" sx={{ position:"fixed", inset:0, zIndex:16000, bgcolor:"#050505", color:"#fff", pt:"14px", pb:"70px", overflowY:"auto" }}>
-            <Box sx={{ display:"flex", alignItems:"center", gap:1, px:"14px", mb:1.5 }}>
-              <Box sx={{ flex:1, height:40, display:"flex", alignItems:"center", gap:1, bgcolor:"#232323", borderRadius:"5px", px:1.2 }}>
-                <SearchIcon sx={{ fontSize:19, color:"rgba(255,255,255,.72)" }} />
-                <input ref={inputRef} value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Cerca film, serie TV..." data-testid="search-input" style={{ flex:1, minWidth:0, border:0, outline:0, background:"transparent", color:"#fff", fontSize:"13px", fontFamily:"Inter, sans-serif" }} />
-                {loading ? <CircularProgress size={14} sx={{ color:'#e50914' }} /> : query ? <CloseIcon onClick={()=>{setQuery('');setResults([]);}} sx={{ fontSize:18, color:'rgba(255,255,255,.5)' }} /> : null}
-              </Box>
-              <Box component="button" onClick={()=>setOpen(false)} sx={{ border:0, bgcolor:'transparent', color:'#fff', fontSize:12.5, p:.5, cursor:'pointer' }}>Chiudi</Box>
-            </Box>
-
-            {query.length >= 2 && <Typography sx={{ px:"14px", fontSize:13.5, fontWeight:700, mb:1.1 }}>Risultati per “{query}”</Typography>}
-            <Box sx={{ px:"14px", display:'flex', gap:2.2, borderBottom:'1px solid rgba(255,255,255,.08)', mb:.5 }}>
-              {[['all','Tutti'],['movie','Film'],['tv','Serie TV']].map(([k,l]) => <Box key={k} component="button" onClick={()=>setTab(k)} sx={{ position:'relative', border:0, bgcolor:'transparent', color:tab===k?'#fff':'rgba(255,255,255,.58)', px:0, py:.8, fontSize:11.5, fontWeight:600, cursor:'pointer', '&::after':tab===k?{content:'""',position:'absolute',left:0,right:0,bottom:0,height:'2px',bgcolor:'#e50914'}:{} }}>{l}</Box>)}
-            </Box>
-
-            <Box>
-              {visible.map((r) => (
-                <Box key={`${r.media_type}-${r.id}`} onClick={()=>openResult(r)} data-testid={`search-result-${r.id}`} sx={{ display:'grid', gridTemplateColumns:'48px minmax(0,1fr)', gap:'10px', alignItems:'center', px:'14px', py:'7px', minHeight:76, cursor:'pointer' }}>
-                  <Box sx={{ width:48, height:68, borderRadius:'3px', overflow:'hidden', bgcolor:'#151515' }}>
-                    {r.poster_path ? <img src={`https://image.tmdb.org/t/p/w185${r.poster_path}`} alt={r.title || r.name || ''} style={{width:'100%',height:'100%',objectFit:'cover'}} /> : r.media_type==='movie' ? <Box sx={{height:'100%',display:'grid',placeItems:'center'}}><MovieIcon sx={{color:'#333'}} /></Box> : <Box sx={{height:'100%',display:'grid',placeItems:'center'}}><TvIcon sx={{color:'#333'}} /></Box>}
-                  </Box>
-                  <Box sx={{ minWidth:0 }}>
-                    <Typography noWrap sx={{ fontSize:13, fontWeight:700 }}>{r.title || r.name}</Typography>
-                    <Typography sx={{ mt:.35, fontSize:10.5, color:'rgba(255,255,255,.54)' }}>{r.media_type==='movie'?'Film':'Serie TV'}{(r.release_date||r.first_air_date)?` · ${(r.release_date||r.first_air_date).slice(0,4)}`:''}</Typography>
-                  </Box>
-                </Box>
-              ))}
-              {query.length >= 2 && !loading && visible.length === 0 && <Typography sx={{ px:'14px', py:4, fontSize:12.5, color:'rgba(255,255,255,.45)' }}>Nessun risultato</Typography>}
-            </Box>
-          </Box>
-        )}
+        <Box onClick={() => setOpen(true)} sx={{ width:44, height:44, display:"grid", placeItems:"center", cursor:"pointer" }}><SearchIcon sx={{ fontSize:25, color:"rgba(255,255,255,.9)" }} /></Box>
+        {overlay}
       </Box>
     );
   }
