@@ -36,19 +36,26 @@ type HeroIndex = {
   byTitle: Map<string, HeroAssets>;
 };
 
+function loadCatalogPayload() {
+  const globalCache = globalThis as any;
+  if (!globalCache.__flixitScCatalogPayloadPromise) {
+    globalCache.__flixitScCatalogPayloadPromise = fetch(CATALOG_URL, {
+      cache: "force-cache",
+      headers: { Accept: "application/json" },
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
+      return response.json();
+    });
+  }
+  return globalCache.__flixitScCatalogPayloadPromise;
+}
+
 let heroIndexPromise: Promise<HeroIndex> | null = null;
 
 async function loadHeroIndex(): Promise<HeroIndex> {
   if (heroIndexPromise) return heroIndexPromise;
 
-  heroIndexPromise = fetch(CATALOG_URL, {
-    cache: "force-cache",
-    headers: { Accept: "application/json" },
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error(`SC catalog ${response.status}`);
-      return response.json();
-    })
+  heroIndexPromise = loadCatalogPayload()
     .then((payload) => {
       const rows = Array.isArray(payload?.titles) ? payload.titles : [];
       const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
@@ -57,8 +64,6 @@ async function loadHeroIndex(): Promise<HeroIndex> {
 
       rows.forEach((row: any) => {
         const images = row?.images || {};
-        // Mobile Hero must use the clean SC background, never the merchandised
-        // landscape card/cover. Logo is a separate transparent SC asset.
         const background = absoluteAsset(
           images.background || images.backdrop || images.hero_background || images.detail_background,
           cdnBase
@@ -175,6 +180,7 @@ export default function MobileSCExactAssets() {
     let cancelled = false;
     let observer: MutationObserver | null = null;
     let raf = 0;
+    const timers: number[] = [];
 
     loadHeroIndex().then((index) => {
       if (cancelled) return;
@@ -185,18 +191,22 @@ export default function MobileSCExactAssets() {
       };
 
       apply();
-      observer = new MutationObserver(apply);
+      timers.push(window.setTimeout(apply, 180));
+      timers.push(window.setTimeout(apply, 650));
+
+      observer = new MutationObserver((records) => {
+        if (records.some((record) => record.addedNodes.length > 0)) apply();
+      });
       observer.observe(document.body, {
         subtree: true,
         childList: true,
-        attributes: true,
-        attributeFilter: ["src", "srcset", "alt"],
       });
     });
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      timers.forEach((timer) => window.clearTimeout(timer));
       observer?.disconnect();
     };
   }, [isMobile, location.pathname]);
