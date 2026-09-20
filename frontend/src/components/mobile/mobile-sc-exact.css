@@ -1,5 +1,5 @@
-/* Exact phone layout based on the approved reference mockup.
-   Applies only through 899px. Desktop/tablet remain untouched. */
+/* Phone-only geometry calibrated from the real SC mobile DOM/computed-style dump.
+   Only layout/visibility changes are applied through 899px. Desktop/tablet stay untouched. */
 @media (max-width: 899px) {
   html.flixit-mobile-sc,
   html.flixit-mobile-sc body,
@@ -7,30 +7,34 @@
     width: 100%;
     min-width: 0;
     overflow-x: hidden;
-    background: #0f0f0f;
   }
 
   html.flixit-mobile-sc body {
-    padding-bottom: calc(50px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: 0 !important;
   }
 
-  /* HEADER */
+  /* =========================
+     HEADER / SC SIDE MENU
+     ========================= */
   [data-testid="main-header"] {
-    height: 50px !important;
-    min-height: 50px !important;
-    padding-left: 14px !important;
-    padding-right: 10px !important;
-    background: linear-gradient(to bottom, rgba(0,0,0,.72), rgba(0,0,0,.08)) !important;
+    height: 54px !important;
+    min-height: 54px !important;
+    padding-left: 52px !important;
+    padding-right: 15px !important;
     border: 0 !important;
     box-shadow: none !important;
-    backdrop-filter: none !important;
   }
 
   [data-testid="main-header"] .MuiToolbar-root {
-    height: 50px !important;
-    min-height: 50px !important;
+    height: 54px !important;
+    min-height: 54px !important;
     padding: 0 !important;
     gap: 5px !important;
+  }
+
+  /* Hide the MUI hamburger: the dedicated SC-style fixed trigger below owns mobile navigation. */
+  [data-testid="main-header"] .flixit-logo + .MuiBox-root {
+    display: none !important;
   }
 
   [data-testid="main-header"] .flixit-logo {
@@ -40,12 +44,6 @@
   [data-testid="main-header"] .flixit-logo svg {
     width: auto !important;
     height: 23px !important;
-  }
-
-  /* remove desktop/mobile hamburger nav and notification bell on phone */
-  [data-testid="main-header"] .flixit-logo + .MuiBox-root,
-  [data-testid="notifications-bell"] {
-    display: none !important;
   }
 
   [data-testid="main-header"] [data-testid="search-box"] > div {
@@ -76,14 +74,116 @@
     border-width: 1px !important;
   }
 
-  /* HOME HERO */
-  [data-testid="hero-section"] {
-    height: 65svh !important;
-    min-height: 500px !important;
-    max-height: 640px !important;
+  .flixit-sc-navbar-toggler {
+    position: fixed !important;
+    top: 12.6px !important;
+    left: 16px !important;
+    z-index: 14000 !important;
+    width: 25.44px !important;
+    height: 28.8px !important;
     margin: 0 !important;
-    overflow: hidden !important;
-    background: #0f0f0f !important;
+    padding: 0 !important;
+    display: grid !important;
+    place-items: center !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: inherit !important;
+  }
+
+  .flixit-sc-navbar-toggler svg {
+    width: 25.44px !important;
+    height: 25.44px !important;
+  }
+
+  .flixit-mobile-menu-backdrop {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 15000 !important;
+    background: rgba(0,0,0,.58) !important;
+  }
+
+  .flixit-mobile-menu-panel {
+    position: absolute !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: auto !important;
+    width: min(80vw, 300px) !important;
+    max-width: 300px !important;
+    height: 100dvh !important;
+    padding: 17px 14px calc(16px + env(safe-area-inset-bottom,0px)) !important;
+    box-sizing: border-box !important;
+    overflow-y: auto !important;
+    box-shadow: 2px 0 5px rgba(0,0,0,.25) !important;
+  }
+
+  .flixit-mobile-menu-head {
+    height: 40px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin-bottom: 14px !important;
+  }
+
+  .flixit-mobile-menu-logo span,
+  .flixit-mobile-menu-logo b {
+    font-weight: 900 !important;
+  }
+
+  .flixit-mobile-menu-head button {
+    width: 34px !important;
+    height: 34px !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: inherit !important;
+  }
+
+  .flixit-mobile-menu-list {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+  }
+
+  .flixit-mobile-menu-list > button {
+    width: 100% !important;
+    min-height: 43px !important;
+    padding: 0 8px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    border: 0 !important;
+    border-radius: 3px !important;
+    background: transparent !important;
+    color: inherit !important;
+    text-align: left !important;
+  }
+
+  .flixit-mobile-menu-list > button svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+
+  .flixit-mobile-menu-list > button span {
+    font-size: 12px !important;
+  }
+
+  .flixit-mobile-bottom-nav {
+    display: none !important;
+  }
+
+  /* =========================
+     HOME HERO — SC GEOMETRY
+     375px source viewport:
+     billboard 421.223px = 112.2vw
+     background 433.616px = 115.5vw
+     ========================= */
+  [data-testid="hero-section"] {
+    height: min(65svh, 112.2vw) !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 54px 0 0 !important;
+    overflow: visible !important;
+    font-size: 3.3vw !important;
   }
 
   [data-testid="hero-section"] [data-testid="hero-trailer"],
@@ -93,37 +193,43 @@
 
   [data-testid="hero-section"] [data-testid="hero-backdrop"] {
     position: absolute !important;
-    inset: 0 !important;
+    top: 0 !important;
+    right: 0 !important;
+    left: 0 !important;
     width: 100% !important;
-    height: 100% !important;
-    min-height: 100% !important;
-    max-height: 100% !important;
+    height: min(65svh, 115.5vw) !important;
+    min-height: 0 !important;
+    max-height: none !important;
     object-fit: cover !important;
-    object-position: center 10% !important;
+    object-position: 50% 0% !important;
     opacity: 1 !important;
   }
 
-  [data-testid="hero-section"] > .MuiBox-root:nth-child(3) {
-    height: 100% !important;
-    min-height: 100% !important;
-    max-height: 100% !important;
+  [data-testid="hero-section"] > .MuiBox-root:nth-last-child(2) {
+    height: min(65svh, 115.5vw) !important;
+    min-height: 0 !important;
+    max-height: none !important;
   }
 
   [data-testid="hero-section"] .info-wrap {
     position: absolute !important;
-    left: 14px !important;
-    right: 14px !important;
-    top: auto !important;
-    bottom: 18px !important;
-    width: calc(100% - 28px) !important;
+    top: 28.05vw !important;
+    right: 4vw !important;
+    bottom: 5.61vw !important;
+    left: 4vw !important;
+    width: 92vw !important;
     height: auto !important;
+    z-index: 10 !important;
   }
 
   [data-testid="hero-section"] [data-testid="hero-content"] {
-    position: relative !important;
-    inset: auto !important;
+    position: absolute !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    top: auto !important;
     width: 100% !important;
-    margin: 0 !important;
+    margin: 3.3vw 0 !important;
     display: flex !important;
     flex-direction: column !important;
     align-items: center !important;
@@ -132,6 +238,7 @@
 
   [data-testid="hero-section"] .title {
     width: 100% !important;
+    min-height: 0 !important;
     display: flex !important;
     align-items: flex-end !important;
     justify-content: center !important;
@@ -142,21 +249,22 @@
     display: block !important;
     width: auto !important;
     height: auto !important;
-    max-width: 57vw !important;
-    max-height: 11.5svh !important;
+    max-width: 70% !important;
+    max-height: 29.7vw !important;
     margin: 0 auto !important;
     object-fit: contain !important;
     object-position: center bottom !important;
   }
 
   [data-testid="hero-section"] [data-testid="hero-title"] {
-    max-width: 76vw !important;
+    max-width: 82vw !important;
     margin: 0 auto !important;
-    font-size: clamp(25px, 7.3vw, 38px) !important;
-    line-height: .98 !important;
+    font-size: 9.9vw !important;
+    line-height: 1 !important;
     text-align: center !important;
   }
 
+  /* Keep the user-approved simplified mobile hero content. */
   [data-testid="hero-season-label"],
   [data-testid="hero-overview"],
   [data-testid="hero-section"] .genres {
@@ -164,29 +272,31 @@
   }
 
   [data-testid="hero-section"] .info-buttons {
-    width: min(84vw, 330px) !important;
-    margin: 13px auto 0 !important;
+    width: 92vw !important;
+    min-height: 13.21vw !important;
+    margin: 4.13vw 0 0 !important;
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
-    gap: 7px !important;
-    align-items: stretch !important;
+    gap: 2.24vw !important;
+    align-items: center !important;
   }
 
   [data-testid="hero-play-button"],
   [data-testid="hero-info-button"] {
     width: 100% !important;
     min-width: 0 !important;
-    height: 37px !important;
-    min-height: 37px !important;
+    height: 9.91vw !important;
+    min-height: 34px !important;
+    max-height: 40px !important;
     margin: 0 !important;
-    padding: 0 10px !important;
+    padding: 1.65vw 5.78vw !important;
     border-radius: 3px !important;
-    font-size: 10px !important;
+    font-size: 3.3vw !important;
   }
 
   [data-testid="hero-play-button"] > span,
   [data-testid="hero-info-button"] > span {
-    font-size: 11.5px !important;
+    font-size: 3.3vw !important;
     line-height: 1 !important;
   }
 
@@ -197,33 +307,33 @@
 
   [data-testid="hero-info-button"]::before {
     content: "+";
-    margin-right: 6px;
-    font-size: 18px;
+    margin-right: 1.6vw;
+    font-size: 5vw;
     line-height: 1;
     font-weight: 300;
   }
 
   [data-testid="hero-info-button"]::after {
     content: "La mia lista";
-    font-size: 11.5px;
+    font-size: 3.3vw;
     line-height: 1;
     font-weight: 700;
   }
 
-  /* CINEMA / SERIE HERO: exact same geometry as Home */
+  /* Cinema + Serie TV keep the same approved Home hero geometry. */
   [data-testid="hub-hero"] {
-    height: 65svh !important;
-    min-height: 500px !important;
-    max-height: 640px !important;
-    overflow: hidden !important;
-    background: #0f0f0f !important;
+    height: min(65svh, 112.2vw) !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin-top: 54px !important;
+    overflow: visible !important;
   }
 
   [data-testid="hub-hero"] > img {
     width: 100% !important;
-    height: 100% !important;
+    height: min(65svh, 115.5vw) !important;
     object-fit: cover !important;
-    object-position: center 10% !important;
+    object-position: 50% 0% !important;
   }
 
   [data-testid="hub-hero"] .MuiTypography-root,
@@ -232,10 +342,10 @@
   }
 
   [data-testid="hub-hero"] > .MuiBox-root:last-child {
-    left: 14px !important;
-    right: 14px !important;
-    bottom: 18px !important;
-    width: calc(100% - 28px) !important;
+    left: 4vw !important;
+    right: 4vw !important;
+    bottom: 5.61vw !important;
+    width: 92vw !important;
     max-width: none !important;
     display: flex !important;
     flex-direction: column !important;
@@ -243,80 +353,85 @@
   }
 
   [data-testid="hub-hero"] > .MuiBox-root:last-child img {
-    max-width: 57vw !important;
-    max-height: 11.5svh !important;
+    max-width: 70% !important;
+    max-height: 29.7vw !important;
     margin: 0 auto !important;
     object-fit: contain !important;
     object-position: center bottom !important;
   }
 
   [data-testid="hub-hero"] > .MuiBox-root:last-child > .MuiStack-root {
-    width: min(84vw, 330px) !important;
+    width: 92vw !important;
     display: grid !important;
     grid-template-columns: 1fr 1fr !important;
-    gap: 7px !important;
-    margin-top: 13px !important;
+    gap: 2.24vw !important;
+    margin-top: 4.13vw !important;
   }
 
   [data-testid="hub-hero-play"],
   [data-testid="hub-hero-info"] {
     width: 100% !important;
-    height: 37px !important;
-    min-height: 37px !important;
+    height: 9.91vw !important;
+    min-height: 34px !important;
+    max-height: 40px !important;
     margin: 0 !important;
-    padding: 0 10px !important;
+    padding: 1.65vw 5.78vw !important;
     border-radius: 3px !important;
-    font-size: 11.5px !important;
+    font-size: 3.3vw !important;
   }
 
-  /* HOME ROW ORDER: Top 10 immediately after hero, then Continue Watching, then the rest */
+  /* =========================
+     HOME RAILS — SC MOBILE
+     ========================= */
   [data-testid="home-rows"] {
     display: flex !important;
     flex-direction: column !important;
     gap: 0 !important;
     margin-top: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 8vw !important;
   }
 
-  [data-testid="home-rows"] > .top10-row { order: 1 !important; }
-  [data-testid="home-rows"] > #continua { order: 2 !important; }
-  [data-testid="home-rows"] > :not(.top10-row):not(#continua) { order: 3 !important; }
+  /* Use the real DOM order: Continue Watching, then Top 10, then the remaining rows. */
+  [data-testid="home-rows"] > * {
+    order: initial !important;
+  }
 
-  /* TOUCH RAILS: native horizontal scroll, exact widths independent of slick desktop calculations */
   .slider-row {
     width: 100% !important;
     height: auto !important;
-    margin: 13px 0 15px !important;
+    margin: 0 0 5.76vw !important;
     overflow: visible !important;
     contain: layout style !important;
   }
 
   .slider-row.compact-row {
-    margin-top: 11px !important;
-    margin-bottom: 15px !important;
+    margin-top: 0 !important;
+    margin-bottom: 5.76vw !important;
   }
 
   .slider-row .row-header {
-    min-height: 21px !important;
-    margin: 0 0 7px !important;
-    padding-left: 14px !important;
-    padding-right: 10px !important;
+    min-height: 7.69vw !important;
+    margin: 0 0 2.24vw !important;
+    padding-left: 4vw !important;
+    padding-right: 0 !important;
     display: flex !important;
     align-items: center !important;
   }
 
   .slider-row .row-header .label {
-    font-size: 14.5px !important;
-    line-height: 1.15 !important;
+    font-size: 3.2vw !important;
+    line-height: 4.8vw !important;
     font-weight: 700 !important;
   }
 
   .slider-row .row-header svg {
-    width: 16px !important;
-    height: 16px !important;
+    width: 4.27vw !important;
+    height: 4.27vw !important;
   }
 
   .slider-row .slider {
-    padding-left: 14px !important;
+    padding-left: 4vw !important;
     padding-right: 0 !important;
     overflow: visible !important;
   }
@@ -330,7 +445,9 @@
     touch-action: pan-x !important;
   }
 
-  .slider-row .slick-list::-webkit-scrollbar { display: none !important; }
+  .slider-row .slick-list::-webkit-scrollbar {
+    display: none !important;
+  }
 
   .slider-row .slick-track {
     width: max-content !important;
@@ -344,17 +461,18 @@
     float: none !important;
     flex: 0 0 auto !important;
     height: auto !important;
+    margin-right: 2.24vw !important;
   }
 
   .slider-row .slick-slide > div {
     height: 100% !important;
-    padding: 0 3px !important;
+    padding: 0 !important;
     box-sizing: border-box !important;
   }
 
-  /* normal rows: exactly ~3 posters visible */
+  /* Real SC mobile card width: 103.795px at a 375px viewport = 27.65vw. */
   .slider-row:not(.top10-row):not(#continua) .slick-slide {
-    width: calc((100vw - 34px) / 3) !important;
+    width: 27.65vw !important;
   }
 
   .netflix-standard-card-root.flixit-mobile-poster,
@@ -375,7 +493,7 @@
     border-radius: 3px !important;
   }
 
-  /* Continue Watching: only landscape row, large but less tall */
+  /* User-approved exception: Continue Watching remains landscape with embedded-logo cover. */
   #continua .slick-slide {
     width: 43vw !important;
   }
@@ -403,40 +521,67 @@
     height: 2px !important;
   }
 
-  /* Top 10: large number + true vertical poster, 2 full plus partial third */
+  /* =========================
+     TOP 10 — REAL SC STRUCTURE
+     Full vertical poster with rank SVG overlaid at the bottom-left.
+     ========================= */
   .top10-row {
-    margin-top: 12px !important;
-    margin-bottom: 14px !important;
+    margin: 0 0 5.76vw !important;
   }
 
   .top10-row .slider {
-    padding-left: 12px !important;
+    padding-left: 4vw !important;
   }
 
   .top10-row .slick-slide {
-    width: 39vw !important;
+    width: 34.14vw !important;
+    height: 41.99vw !important;
+    margin-right: 2.24vw !important;
   }
 
-  .top10-row .netflix-ranked-card-root {
-    width: 100% !important;
-    height: 0 !important;
+  .top10-row .netflix-ranked-card-root,
+  .top10-row .netflix-ranked-card-link {
+    width: 34.14vw !important;
+    height: 41.99vw !important;
     min-height: 0 !important;
-    padding: 38% 0 !important;
-  }
-
-  .top10-row .netflix-ranked-card-rank {
-    width: 48% !important;
+    padding: 0 !important;
+    overflow: visible !important;
   }
 
   .top10-row .netflix-ranked-card-poster-wrap {
-    width: 52% !important;
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
     border-radius: 3px !important;
+    overflow: hidden !important;
   }
 
   .top10-row .netflix-ranked-card-poster {
     width: 100% !important;
     height: 100% !important;
     object-fit: cover !important;
+    border-radius: 3px !important;
+  }
+
+  .top10-row .netflix-ranked-card-rank {
+    position: absolute !important;
+    top: auto !important;
+    right: auto !important;
+    bottom: -0.42vw !important;
+    left: -5.12vw !important;
+    width: 34.14vw !important;
+    height: 20.99vw !important;
+    z-index: 3 !important;
+    display: block !important;
+    pointer-events: none !important;
+  }
+
+  .top10-row .netflix-ranked-card-rank-svg {
+    width: 100% !important;
+    height: 100% !important;
+    opacity: 1 !important;
+    overflow: visible !important;
   }
 
   .previewModal--container,
@@ -445,11 +590,13 @@
     pointer-events: none !important;
   }
 
-  /* DETAIL FILM / SERIE */
+  /* =========================
+     DETAIL / SEARCH / ACCOUNT
+     Preserve the already approved phone-only behavior.
+     ========================= */
   [data-testid="detail-page-redesign"] {
     min-height: 100svh !important;
     padding-bottom: 56px !important;
-    background: #090909 !important;
   }
 
   [data-testid="detail-page-redesign"] > .MuiBox-root:first-child {
@@ -511,16 +658,13 @@
     padding-bottom: 62px !important;
   }
 
-  /* ACCOUNT / LIST */
   [data-testid="account-page"] {
     padding: 64px 12px 58px !important;
-    background: #050505 !important;
   }
 
   [data-testid="account-sidebar"] {
     padding: 6px !important;
     border-radius: 6px !important;
-    border-color: rgba(255,255,255,.08) !important;
     backdrop-filter: none !important;
   }
 
@@ -547,136 +691,19 @@
     display: none !important;
   }
 
-  /* SEARCH */
   [data-testid="search-box"] > .MuiBox-root + .MuiBox-root {
     position: fixed !important;
     left: 10px !important;
     right: 10px !important;
-    top: 56px !important;
+    top: 60px !important;
     width: auto !important;
-    max-height: calc(100svh - 114px) !important;
+    max-height: calc(100svh - 72px) !important;
     overflow-y: auto !important;
     border-radius: 5px !important;
   }
 
-  /* BOTTOM NAV */
-  .flixit-mobile-bottom-nav {
-    position: fixed !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
-    z-index: 13000 !important;
-    height: calc(50px + env(safe-area-inset-bottom, 0px)) !important;
-    padding: 2px 4px env(safe-area-inset-bottom, 0px) !important;
-    display: grid !important;
-    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
-    align-items: center !important;
-    background: rgba(4,4,4,.99) !important;
-    border-top: 1px solid rgba(255,255,255,.08) !important;
-    box-shadow: none !important;
-  }
-
-  .flixit-mobile-bottom-nav > button {
-    height: 46px !important;
-    min-width: 0 !important;
-    padding: 2px 1px !important;
-    display: flex !important;
-    flex-direction: column !important;
-    align-items: center !important;
-    justify-content: center !important;
-    gap: 1px !important;
-    border: 0 !important;
-    background: transparent !important;
-    color: rgba(255,255,255,.58) !important;
-  }
-
-  .flixit-mobile-bottom-nav > button svg {
-    width: 18px !important;
-    height: 18px !important;
-  }
-
-  .flixit-mobile-bottom-nav > button span {
-    font-size: 8.5px !important;
-    line-height: 1.05 !important;
-    white-space: nowrap !important;
-  }
-
-  .flixit-mobile-bottom-nav > button.is-active {
-    color: #e50914 !important;
-  }
-
-  footer { display: none !important; }
-
-  /* SC-STYLE SIDE MENU */
-  .flixit-mobile-menu-backdrop {
-    position: fixed !important;
-    inset: 0 !important;
-    z-index: 15000 !important;
-    background: rgba(0,0,0,.58) !important;
-  }
-
-  .flixit-mobile-menu-panel {
-    position: absolute !important;
-    top: 0 !important;
-    right: 0 !important;
-    width: min(82vw, 330px) !important;
-    height: 100% !important;
-    padding: 17px 14px calc(16px + env(safe-area-inset-bottom,0px)) !important;
-    background: #0b0d0f !important;
-    box-sizing: border-box !important;
-  }
-
-  .flixit-mobile-menu-head {
-    height: 40px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: space-between !important;
-    margin-bottom: 14px !important;
-  }
-
-  .flixit-mobile-menu-logo span { color: #e50914 !important; font-weight: 900 !important; }
-  .flixit-mobile-menu-logo b { color: #fff !important; font-weight: 900 !important; }
-
-  .flixit-mobile-menu-head button {
-    width: 34px !important;
-    height: 34px !important;
-    border: 0 !important;
-    background: transparent !important;
-    color: #fff !important;
-  }
-
-  .flixit-mobile-menu-list {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 2px !important;
-  }
-
-  .flixit-mobile-menu-list > button {
-    width: 100% !important;
-    min-height: 43px !important;
-    padding: 0 8px !important;
-    display: flex !important;
-    align-items: center !important;
-    gap: 12px !important;
-    border: 0 !important;
-    border-radius: 3px !important;
-    background: transparent !important;
-    color: rgba(255,255,255,.88) !important;
-    text-align: left !important;
-  }
-
-  .flixit-mobile-menu-list > button svg {
-    width: 18px !important;
-    height: 18px !important;
-  }
-
-  .flixit-mobile-menu-list > button span {
-    font-size: 12px !important;
-  }
-
-  .flixit-mobile-menu-list > button.is-active {
-    color: #fff !important;
-    background: rgba(255,255,255,.06) !important;
+  footer {
+    display: none !important;
   }
 
   /* PLAYER */
@@ -700,12 +727,21 @@
     padding-bottom: max(10px, env(safe-area-inset-bottom,0px)) !important;
   }
 
-  [data-testid="volume-slider"] { display: none !important; }
+  [data-testid="volume-slider"] {
+    display: none !important;
+  }
 }
 
 @media (max-width: 899px) and (orientation: landscape) {
-  html.flixit-mobile-sc body { padding-bottom: 0 !important; }
-  .flixit-mobile-bottom-nav { display: none !important; }
+  html.flixit-mobile-sc body {
+    padding-bottom: 0 !important;
+  }
+
+  .flixit-mobile-menu-backdrop,
+  .flixit-sc-navbar-toggler {
+    display: none !important;
+  }
+
   [data-testid="watch-page"],
   [data-testid="custom-video-player"],
   [data-testid="native-video"] {
