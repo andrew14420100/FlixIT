@@ -7,10 +7,11 @@ const MOBILE_QUERY = "(max-width:899px)";
 
 function genreNames(payload: any) {
   const raw = payload?.detail?.genres || payload?.genres || payload?.detail?.genre_names || [];
-  return (Array.isArray(raw) ? raw : [])
+  const names = (Array.isArray(raw) ? raw : [])
     .map((genre: any) => typeof genre === "string" ? genre : genre?.name)
-    .filter(Boolean)
-    .slice(0, 4);
+    .map((name: any) => String(name || "").trim())
+    .filter(Boolean);
+  return [...new Set(names)];
 }
 
 export default function MobileHomeReferenceRuntime() {
@@ -45,12 +46,16 @@ export default function MobileHomeReferenceRuntime() {
         const title = hero.querySelector<HTMLElement>(".title");
         if (!content || !title) return;
 
-        let season = hero.querySelector<HTMLElement>('[data-testid="hero-season-label"], .mobile-home-season-runtime');
+        const realSeason = hero.querySelector<HTMLElement>('[data-testid="hero-season-label"]');
+        const injectedSeasons = Array.from(hero.querySelectorAll<HTMLElement>(".mobile-home-season-runtime"));
+        if (realSeason) injectedSeasons.forEach((node) => node.remove());
+
         const seasonText = mediaType === "tv" ? String(heroData?.seasonLabel || "").trim() : "";
+        let season = realSeason;
         if (!season && seasonText) {
-          season = document.createElement("div");
+          season = injectedSeasons[0] || document.createElement("div");
           season.className = "mobile-home-season-runtime";
-          title.insertAdjacentElement("afterend", season);
+          if (!season.isConnected) title.insertAdjacentElement("afterend", season);
         }
         if (season) {
           season.textContent = seasonText;
