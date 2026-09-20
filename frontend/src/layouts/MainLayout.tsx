@@ -16,6 +16,7 @@ import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
 import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenceRuntime";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
+import "src/components/mobile/mobile-home-finish.css";
 
 export default function MainLayout() {
   const location = useLocation();
