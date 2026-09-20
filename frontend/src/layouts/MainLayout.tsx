@@ -14,17 +14,16 @@ import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import "src/components/mobile/mobile-sc-rails.css";
 import "src/components/mobile/mobile-sc-pages.css";
+import "src/components/mobile/mobile-sc-v2.css";
 
 export default function MainLayout() {
   const location = useLocation();
   const navigation = useNavigation();
 
-  // Scroll to top on route change
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [location.pathname]);
 
-  // Real layout width (excludes the scrollbar) shared with CSS (--card-h for the Top 10 row)
   useEffect(() => {
     const update = () => document.documentElement.style.setProperty("--page-w", `${document.documentElement.clientWidth}px`);
     update();
