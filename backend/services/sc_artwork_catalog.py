@@ -1,8 +1,9 @@
 """Full StreamingCommunity artwork catalog for FLIX-IT.
 
 The catalogue stores metadata and CDN references only; image binaries stay on the
-upstream CDN. A committed JSON snapshot is preferred, while a lazy archive
-refresh keeps development/deployments useful when the snapshot is missing.
+upstream CDN. The committed JSON snapshot is the primary source. A full runtime
+archive rebuild is optional because walking hundreds of SC pages must never block
+the first card request in production.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Optional
 
-CATALOG_VERSION = "sc-artwork-catalog-v1"
+CATALOG_VERSION = "sc-artwork-catalog-v2-paginated"
 SC_BASE_URL = os.getenv("SC_BASE_URL", "https://streamingcommunityz.ninja").rstrip("/")
 SC_CDN_BASE = os.getenv("SC_CDN_BASE", f"{SC_BASE_URL}/images/").rstrip("/") + "/"
 SC_ARCHIVE_PATHS = (
@@ -31,7 +32,14 @@ CATALOG_PATH = Path(
     )
 )
 MIN_ARCHIVE_ROWS = max(100, int(os.getenv("SC_ARTWORK_MIN_ARCHIVE_ROWS", "1000")))
+MAX_ARCHIVE_PAGES = max(50, int(os.getenv("SC_ARTWORK_MAX_ARCHIVE_PAGES", "500")))
 REFRESH_RETRY_SECONDS = max(60, int(os.getenv("SC_ARTWORK_REFRESH_RETRY_SECONDS", "900")))
+RUNTIME_REFRESH_ENABLED = str(os.getenv("SC_ARTWORK_ALLOW_RUNTIME_REFRESH", "0")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def normalize_title(value: Any) -> str:
@@ -47,10 +55,14 @@ def _year(value: Any) -> Optional[int]:
 
 
 def _flatten_rows(value: Any) -> list[dict]:
-    out: list[dict] = []
     if isinstance(value, dict):
-        out.append(value)
-    elif isinstance(value, list):
+        for key in ("data", "items", "results", "titles"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return _flatten_rows(nested)
+        return [value]
+    out: list[dict] = []
+    if isinstance(value, list):
         for item in value:
             out.extend(_flatten_rows(item))
     return out
@@ -108,10 +120,7 @@ def _image_map(row: dict) -> dict[str, str]:
         ).strip()
         if not kind or not raw:
             continue
-        if raw.startswith("http://") or raw.startswith("https://"):
-            filename = raw.rsplit("/", 1)[-1].split("?", 1)[0]
-        else:
-            filename = raw.rsplit("/", 1)[-1]
+        filename = raw.rsplit("/", 1)[-1].split("?", 1)[0]
         if filename:
             out.setdefault(kind, filename)
     return out
@@ -168,7 +177,9 @@ def _merge_records(rows: list[dict]) -> list[dict]:
         for field in ("slug", "type", "year"):
             if not current.get(field) and record.get(field):
                 current[field] = record[field]
-    return sorted(merged.values(), key=lambda row: (normalize_title(row.get("name")), row.get("id") or 0))
+    return sorted(
+        merged.values(), key=lambda row: (normalize_title(row.get("name")), row.get("id") or 0)
+    )
 
 
 def _url_for(filename: Any) -> Optional[str]:
@@ -194,6 +205,20 @@ def _role_url(record: dict, role: str) -> Optional[str]:
         if images.get(key):
             return _url_for(images[key])
     return None
+
+
+def _paged_path(path: str, page: int) -> str:
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}page={int(page)}"
+
+
+def _page_fingerprint(rows: list[dict]) -> str:
+    values = [
+        str(row.get("id") or row.get("title_id") or row.get("slug") or row.get("name") or "")
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    return "|".join(values[:8] + values[-8:]) if values else ""
 
 
 class SCArtworkCatalog:
@@ -245,18 +270,22 @@ class SCArtworkCatalog:
                 "titles": self.records,
             }
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            tmp.write_text(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
             tmp.replace(self.path)
         except Exception:
             pass
 
-    async def refresh(self, http) -> int:
+    async def _paginate(self, http, path: str) -> list[dict]:
         rows: list[dict] = []
-        self.last_refresh_attempt = time.time()
-        for path in SC_ARCHIVE_PATHS:
+        seen_pages: set[str] = set()
+        first_page_size: Optional[int] = None
+        for page in range(1, MAX_ARCHIVE_PAGES + 1):
             try:
                 response = await http.get(
-                    f"{SC_BASE_URL}{path}",
+                    f"{SC_BASE_URL}{_paged_path(path, page)}",
                     headers={
                         "Accept": "text/html,application/xhtml+xml",
                         "Accept-Language": "it-IT,it;q=0.9,en;q=0.7",
@@ -264,11 +293,35 @@ class SCArtworkCatalog:
                     },
                 )
                 if response.status_code != 200:
-                    continue
-                rows.extend(_extract_archive_rows(response.text))
+                    break
+                page_rows = _extract_archive_rows(response.text)
             except Exception:
-                continue
+                break
+            if not page_rows:
+                break
+            fingerprint = _page_fingerprint(page_rows)
+            if fingerprint and fingerprint in seen_pages:
+                break
+            if fingerprint:
+                seen_pages.add(fingerprint)
+            if first_page_size is None:
+                first_page_size = len(page_rows)
+            rows.extend(page_rows)
+            if first_page_size and len(page_rows) < first_page_size:
+                break
+            await asyncio.sleep(0.03)
+        return rows
+
+    async def refresh(self, http) -> int:
+        """Optional full runtime refresh; disabled by default in production."""
+        rows: list[dict] = []
+        self.last_refresh_attempt = time.time()
+        rows.extend(await self._paginate(http, SC_ARCHIVE_PATHS[0]))
         merged = _merge_records(rows)
+        if len(merged) < MIN_ARCHIVE_ROWS:
+            for path in SC_ARCHIVE_PATHS[1:]:
+                rows.extend(await self._paginate(http, path))
+            merged = _merge_records(rows)
         if len(merged) >= MIN_ARCHIVE_ROWS:
             self.records = merged
             self.loaded = True
@@ -281,6 +334,11 @@ class SCArtworkCatalog:
         self.load()
         if self.records:
             return len(self.records)
+        # With the committed catalog absent, keep the request fast and let the
+        # existing per-title SC resolver handle this one card. Full archive
+        # rebuilds belong to GitHub Actions unless explicitly enabled.
+        if not RUNTIME_REFRESH_ENABLED:
+            return 0
         now = time.time()
         if now - self.last_refresh_attempt < REFRESH_RETRY_SECONDS:
             return 0
@@ -307,7 +365,9 @@ class SCArtworkCatalog:
 
         out: list[dict] = []
         seen: set[int] = set()
-        normalized_variants = [normalize_title(value) for value in variants if normalize_title(value)]
+        normalized_variants = [
+            normalize_title(value) for value in variants if normalize_title(value)
+        ]
         for key in normalized_variants:
             for row in self.by_title.get(key, []):
                 marker = id(row)
@@ -317,7 +377,12 @@ class SCArtworkCatalog:
         if out:
             return out
 
-        tokens = {token for key in normalized_variants for token in key.split() if len(token) >= 3}
+        tokens = {
+            token
+            for key in normalized_variants
+            for token in key.split()
+            if len(token) >= 3
+        }
         ranked_tokens = sorted(tokens, key=len, reverse=True)[:4]
         for token in ranked_tokens:
             for row in self.by_token.get(token, [])[:250]:
@@ -333,6 +398,7 @@ class SCArtworkCatalog:
             "path": str(self.path),
             "count": len(self.records),
             "loaded": self.loaded,
+            "runtime_refresh_enabled": RUNTIME_REFRESH_ENABLED,
             "last_refresh_attempt": self.last_refresh_attempt or None,
             "last_refresh_ok": self.last_refresh_ok,
         }
@@ -352,7 +418,10 @@ def install_sc_catalog(policy_module) -> None:
         candidates = CATALOG.candidates(identity)
         if candidates:
             ranked = sorted(
-                ((float(policy_module._match_score(row, identity)), row) for row in candidates),
+                (
+                    (float(policy_module._match_score(row, identity)), row)
+                    for row in candidates
+                ),
                 key=lambda pair: pair[0],
                 reverse=True,
             )
@@ -397,7 +466,7 @@ def install_sc_catalog(policy_module) -> None:
         return result
 
     policy_module._streamingcommunity = streamingcommunity_from_catalog
-    policy_module.POLICY_VERSION = "official-artwork-v8-sc-full-catalog"
+    policy_module.POLICY_VERSION = "official-artwork-v9-sc-full-catalog-paginated"
     policy_module._flixit_full_sc_catalog_installed = True
 
 

@@ -2,8 +2,8 @@
 """Build a committed StreamingCommunity artwork index for FLIX-IT.
 
 The script stores metadata plus image filenames/URLs, not image binaries. It
-prefers the current SC archive and can fall back to older public GitHub snapshots
-only when the archive is temporarily unavailable.
+walks every page of the current SC archive and can fall back to older public
+GitHub snapshots only when the archive is temporarily unavailable/incomplete.
 """
 from __future__ import annotations
 
@@ -19,8 +19,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "sc-artwork-catalog-v1"
+VERSION = "sc-artwork-catalog-v2-paginated"
 DEFAULT_BASE = os.getenv("SC_BASE_URL", "https://streamingcommunityz.ninja").rstrip("/")
+# Start with the complete archive. If that route does not expose enough rows, the
+# movie/TV archives are walked as a second strategy and merged by SC title id.
 ARCHIVE_PATHS = (
     "/it/archive?sort=name",
     "/it/archive?type=movie&sort=name",
@@ -36,6 +38,8 @@ SEED_URLS = (
     "https://raw.githubusercontent.com/FREEDuu/TelegramBOT-anime/main/3film.json",
 )
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36"
+MAX_ARCHIVE_PAGES = max(50, int(os.getenv("SC_ARTWORK_MAX_ARCHIVE_PAGES", "500")))
+REQUEST_DELAY_SECONDS = max(0.0, float(os.getenv("SC_ARTWORK_REQUEST_DELAY", "0.03")))
 
 
 def normalize(value: Any) -> str:
@@ -65,6 +69,11 @@ def get_text(url: str, timeout: int = 45) -> str:
 
 def flatten(value: Any) -> list[dict]:
     if isinstance(value, dict):
+        # Laravel/Inertia paginator payloads commonly wrap rows in ``data``.
+        for key in ("data", "items", "results", "titles"):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return flatten(nested)
         return [value]
     out: list[dict] = []
     if isinstance(value, list):
@@ -95,7 +104,10 @@ def data_page_rows(document: str) -> list[dict]:
 def image_map(row: dict) -> dict[str, str]:
     raw = row.get("images") or row.get("artworks") or []
     if isinstance(raw, dict):
-        raw = [({"type": key, **value} if isinstance(value, dict) else {"type": key, "filename": value}) for key, value in raw.items()]
+        raw = [
+            ({"type": key, **value} if isinstance(value, dict) else {"type": key, "filename": value})
+            for key, value in raw.items()
+        ]
     if not isinstance(raw, list):
         raw = []
     out: dict[str, str] = {}
@@ -103,7 +115,15 @@ def image_map(row: dict) -> dict[str, str]:
         if not isinstance(image, dict):
             continue
         kind = str(image.get("type") or image.get("kind") or image.get("role") or "").strip().lower()
-        value = str(image.get("filename") or image.get("file") or image.get("uuid") or image.get("path") or image.get("url") or image.get("src") or "").strip()
+        value = str(
+            image.get("filename")
+            or image.get("file")
+            or image.get("uuid")
+            or image.get("path")
+            or image.get("url")
+            or image.get("src")
+            or ""
+        ).strip()
         if not kind or not value:
             continue
         filename = value.rsplit("/", 1)[-1].split("?", 1)[0]
@@ -133,7 +153,12 @@ def record_from_archive(row: dict) -> Optional[dict]:
         "slug": str(row.get("slug") or "").strip(),
         "name": name,
         "type": kind or None,
-        "year": year(row.get("release_date") or row.get("first_air_date") or row.get("last_air_date") or row.get("year")),
+        "year": year(
+            row.get("release_date")
+            or row.get("first_air_date")
+            or row.get("last_air_date")
+            or row.get("year")
+        ),
         "images": images,
     }
 
@@ -167,27 +192,122 @@ def merge(records: list[dict]) -> list[dict]:
         if current is None:
             merged[key] = row
             continue
-        current.setdefault("images", {}).update({k: v for k, v in (row.get("images") or {}).items() if v})
+        current.setdefault("images", {}).update(
+            {k: v for k, v in (row.get("images") or {}).items() if v}
+        )
         for field in ("name", "slug", "type", "year"):
-            if (not current.get(field) or (field == "name" and "-" in str(current.get(field)))) and row.get(field):
+            if (
+                not current.get(field)
+                or (field == "name" and "-" in str(current.get(field)))
+            ) and row.get(field):
                 current[field] = row[field]
-    return sorted(merged.values(), key=lambda row: (normalize(row.get("name")), row.get("id") or 0))
+    return sorted(
+        merged.values(), key=lambda row: (normalize(row.get("name")), row.get("id") or 0)
+    )
 
 
-def archive_records(base_url: str) -> list[dict]:
+def _paged_path(path: str, page: int) -> str:
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}page={int(page)}"
+
+
+def _page_fingerprint(rows: list[dict]) -> str:
+    ids = [
+        str(row.get("id") or row.get("title_id") or row.get("slug") or row.get("name") or "")
+        for row in rows
+        if isinstance(row, dict)
+    ]
+    if not ids:
+        return ""
+    sample = ids[:8] + ids[-8:]
+    return "|".join(sample)
+
+
+def paginate_archive(base_url: str, path: str) -> list[dict]:
     records: list[dict] = []
-    for path in ARCHIVE_PATHS:
-        url = f"{base_url}{path}"
+    seen_pages: set[str] = set()
+    first_page_size: Optional[int] = None
+
+    for page in range(1, MAX_ARCHIVE_PAGES + 1):
+        paged_path = _paged_path(path, page)
         try:
-            document = get_text(url)
+            document = get_text(f"{base_url}{paged_path}")
             rows = data_page_rows(document)
-            print(f"archive {path}: {len(rows)} raw rows", file=sys.stderr)
-            for row in rows:
-                item = record_from_archive(row)
-                if item:
-                    records.append(item)
         except Exception as exc:
-            print(f"archive {path}: {exc}", file=sys.stderr)
+            print(f"archive {paged_path}: {exc}", file=sys.stderr)
+            break
+
+        if not rows:
+            print(f"archive {path}: stopped at empty page {page}", file=sys.stderr)
+            break
+
+        fingerprint = _page_fingerprint(rows)
+        if fingerprint and fingerprint in seen_pages:
+            print(
+                f"archive {path}: repeated page detected at page {page}; stopping",
+                file=sys.stderr,
+            )
+            break
+        if fingerprint:
+            seen_pages.add(fingerprint)
+
+        if first_page_size is None:
+            first_page_size = len(rows)
+            print(
+                f"archive {path}: page size {first_page_size}, walking all pages",
+                file=sys.stderr,
+            )
+
+        before = len(records)
+        for row in rows:
+            item = record_from_archive(row)
+            if item:
+                records.append(item)
+        added = len(records) - before
+
+        if page == 1 or page % 25 == 0:
+            print(
+                f"archive {path}: page {page}, {len(rows)} raw / {added} artwork rows, total {len(records)}",
+                file=sys.stderr,
+            )
+
+        # A short final page is the normal paginator terminator.
+        if first_page_size and len(rows) < first_page_size:
+            print(
+                f"archive {path}: final page {page} ({len(rows)} < {first_page_size})",
+                file=sys.stderr,
+            )
+            break
+
+        if REQUEST_DELAY_SECONDS:
+            time.sleep(REQUEST_DELAY_SECONDS)
+    else:
+        print(
+            f"archive {path}: reached safety limit of {MAX_ARCHIVE_PAGES} pages",
+            file=sys.stderr,
+        )
+
+    return records
+
+
+def archive_records(base_url: str, minimum: int) -> list[dict]:
+    # The unfiltered archive should contain the complete catalogue. Only if it
+    # looks incomplete do we spend requests walking movie and TV separately.
+    records = paginate_archive(base_url, ARCHIVE_PATHS[0])
+    current = merge(records)
+    if len(current) >= max(1, minimum):
+        print(
+            f"archive complete route yielded {len(current)} unique artwork titles",
+            file=sys.stderr,
+        )
+        return records
+
+    print(
+        f"archive complete route yielded {len(current)}; walking typed archives too",
+        file=sys.stderr,
+    )
+    for path in ARCHIVE_PATHS[1:]:
+        records.extend(paginate_archive(base_url, path))
     return records
 
 
@@ -217,13 +337,16 @@ def main() -> int:
     parser.add_argument("--no-seed-fallback", action="store_true")
     args = parser.parse_args()
 
-    records = archive_records(args.base_url.rstrip("/"))
+    records = archive_records(args.base_url.rstrip("/"), args.minimum)
     merged = merge(records)
-    source = "streamingcommunity_archive"
+    source = "streamingcommunity_archive_paginated"
     if len(merged) < max(1, args.minimum) and not args.no_seed_fallback:
-        print(f"archive yielded only {len(merged)} entries; adding public GitHub seeds", file=sys.stderr)
+        print(
+            f"archive yielded only {len(merged)} entries; adding public GitHub seeds",
+            file=sys.stderr,
+        )
         merged = merge([*merged, *seed_records()])
-        source = "streamingcommunity_archive+github_seed"
+        source = "streamingcommunity_archive_paginated+github_seed"
 
     if not merged:
         print("no artwork records found; refusing to overwrite the catalog", file=sys.stderr)
@@ -239,7 +362,10 @@ def main() -> int:
         "count": len(merged),
         "titles": merged,
     }
-    output.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
     print(f"wrote {len(merged)} titles to {output}")
     return 0
 
