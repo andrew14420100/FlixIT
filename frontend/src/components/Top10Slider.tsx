@@ -234,7 +234,7 @@ export default function Top10Slider({ title, items }) {
               padding={ARROW_MAX_WIDTH}
               theme={theme}
             >
-              {published.map((item) => {
+              {published.map((item, publishedIndex) => {
                 const id = item.id || item.tmdbId || item.tmdb_id;
                 const mediaType =
                   item.type === "tv" || item.media_type === "tv"
@@ -242,7 +242,7 @@ export default function Top10Slider({ title, items }) {
                     : MEDIA_TYPE.Movie;
                 const originalIndex = Math.max(0, candidates.indexOf(item));
                 const suppressHover =
-                  isSliding || (activeSlideIndex > 0 && originalIndex === activeSlideIndex);
+                  isSliding || (activeSlideIndex > 0 && publishedIndex === activeSlideIndex);
 
                 return (
                   <div key={`${item.type || item.media_type || "movie"}-${id}`}>
@@ -253,7 +253,7 @@ export default function Top10Slider({ title, items }) {
                         title: item.title || item.name,
                         name: item.title || item.name,
                       }}
-                      rank={Math.min(10, originalIndex + 1)}
+                      rank={publishedIndex + 1}
                       mediaType={mediaType}
                       watch={item.watch}
                       suppressHover={suppressHover}
