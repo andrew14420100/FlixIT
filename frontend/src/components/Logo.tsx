@@ -2,10 +2,11 @@
 import Box, { BoxProps } from "@mui/material/Box";
 import { Link as RouterLink } from "react-router-dom";
 import { MAIN_PATH } from "src/constant";
+import { PLAY_GLYPH_PATH } from "src/components/PlayGlyph";
 
 interface Props extends BoxProps { variant?: "header" | "modal"; link?: boolean; }
 
-// FLIX·IT typographic wordmark: Unbounded 900, red "FLIX", play-notch separator, white "IT".
+// FLIX·IT typographic wordmark: Unbounded 900, red "FLIX", unified play-glyph separator, white "IT".
 export function Wordmark({ height = 32, testId = "header-logo-svg" }) {
   const width = Math.round(height * (140 / 36));
   return (
@@ -29,7 +30,9 @@ export function Wordmark({ height = 32, testId = "header-logo-svg" }) {
         fontFamily="'Unbounded', 'Inter', sans-serif" fontWeight="900" fontSize="28" letterSpacing="-1.2" fill="url(#flixit-red)">
         FLIX
       </text>
-      <path d="M86 12.5 L95.5 18 L86 23.5 Z" fill="#E50914" />
+      <g transform="translate(81 9.2) scale(.7)" aria-hidden="true">
+        <path d={PLAY_GLYPH_PATH} fill="#E50914" />
+      </g>
       <text x="99" y="29" textLength="41" lengthAdjust="spacingAndGlyphs"
         fontFamily="'Unbounded', 'Inter', sans-serif" fontWeight="900" fontSize="28" letterSpacing="-1.2" fill="#FFFFFF">
         IT
