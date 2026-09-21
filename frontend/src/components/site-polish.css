@@ -150,6 +150,39 @@ h2,
   height: 14px !important;
 }
 
+/* Episodes that exist only in original language stay visible but cannot be played. */
+.flixit-italian-pending-note {
+  display: block;
+  margin-top: 5px;
+  color: rgba(255,255,255,.62);
+  font-size: 12px;
+  line-height: 1.25;
+  font-weight: 500 !important;
+}
+
+#episodes .flixit-desktop-episode-row.is-italian-pending,
+.mobile-detail-episode.is-italian-pending {
+  opacity: .68;
+}
+
+#episodes .flixit-desktop-episode-row.is-italian-pending {
+  transform: none !important;
+}
+
+#episodes .flixit-desktop-episode-row.is-italian-pending .flixit-episode-actions,
+.mobile-detail-episode.is-italian-pending + .flixit-episode-actions.is-mobile {
+  display: none !important;
+}
+
+.mobile-detail-episode.is-italian-pending {
+  cursor: default !important;
+}
+
+.mobile-detail-episode.is-italian-pending img,
+#episodes .flixit-desktop-episode-row.is-italian-pending img {
+  filter: saturate(.72) brightness(.84);
+}
+
 @media (max-width: 899px) {
   .mobile-detail-overview,
   .mobile-detail-genres,
@@ -170,6 +203,10 @@ h2,
     padding: 5px 0 10px !important;
     border: 0 !important;
     background: transparent !important;
+  }
+
+  .mobile-detail-episode-list > .mobile-detail-episode.is-italian-pending + .flixit-episode-actions.is-mobile {
+    display: none !important;
   }
 
   .flixit-episode-actions.is-mobile .flixit-episode-action {
