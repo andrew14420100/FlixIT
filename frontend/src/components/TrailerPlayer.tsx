@@ -46,14 +46,14 @@ function prepareInlineAutoplay(video: HTMLVideoElement | null, muted: boolean) {
   } catch {}
 }
 
-function tryPlay(video: HTMLVideoElement | null) {
+function tryPlay(video: HTMLVideoElement | null, muted: boolean) {
   if (!video) return;
-  prepareInlineAutoplay(video, true);
+  prepareInlineAutoplay(video, muted);
   const promise = video.play();
   if (promise?.catch) {
     promise.catch(() => {
       window.setTimeout(() => {
-        prepareInlineAutoplay(video, true);
+        prepareInlineAutoplay(video, muted);
         video.play().catch(() => undefined);
       }, 120);
     });
@@ -123,21 +123,21 @@ export default function TrailerPlayer({
         video.currentTime = currentTime;
       } catch {}
     }
-    if (playingRef.current && video.paused) tryPlay(video);
+    if (playingRef.current && video.paused) tryPlay(video, !!muted);
   }, [muted]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     prepareInlineAutoplay(video, mutedRef.current);
-    if (playing) tryPlay(video);
+    if (playing) tryPlay(video, mutedRef.current);
     else video.pause();
   }, [playing, playbackKey]);
 
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== "visible" || !playingRef.current) return;
-      tryPlay(videoRef.current);
+      tryPlay(videoRef.current, mutedRef.current);
     };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pageshow", onVisibility);
@@ -173,7 +173,7 @@ export default function TrailerPlayer({
 
       hls.on(Hls.Events.MEDIA_ATTACHED, () => {
         prepareInlineAutoplay(video, mutedRef.current);
-        if (playingRef.current) tryPlay(video);
+        if (playingRef.current) tryPlay(video, mutedRef.current);
       });
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -206,7 +206,7 @@ export default function TrailerPlayer({
           }
         }
         prepareInlineAutoplay(video, mutedRef.current);
-        if (playingRef.current) tryPlay(video);
+        if (playingRef.current) tryPlay(video, mutedRef.current);
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -238,7 +238,7 @@ export default function TrailerPlayer({
     video.src = playbackKey;
     video.load();
     prepareInlineAutoplay(video, mutedRef.current);
-    if (playingRef.current) tryPlay(video);
+    if (playingRef.current) tryPlay(video, mutedRef.current);
 
     return () => {
       video.pause();
@@ -251,7 +251,7 @@ export default function TrailerPlayer({
 
   const onReadyToPlay = () => {
     prepareInlineAutoplay(videoRef.current, mutedRef.current);
-    if (playingRef.current) tryPlay(videoRef.current);
+    if (playingRef.current) tryPlay(videoRef.current, mutedRef.current);
   };
 
   return (
