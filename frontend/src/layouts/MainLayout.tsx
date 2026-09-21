@@ -20,6 +20,7 @@ import MobileDetailExperience from "src/components/mobile/MobileDetailExperience
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import DetailEpisodeEnhancer from "src/components/DetailEpisodeEnhancer";
 import DetailResumeCardPolish from "src/components/DetailResumeCardPolish";
+import DetailEpisodeVisualPolish from "src/components/detail/DetailEpisodeVisualPolish";
 import WatchEpisodeAdvanceTracker from "src/components/watch/WatchEpisodeAdvanceTracker";
 import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
 import "src/components/mobile/mobile-sc-exact.css";
@@ -28,6 +29,7 @@ import "src/components/mobile/mobile-home-finish.css";
 import "src/components/mobile/mobile-home-polish.css";
 import "src/components/mobile/mobile-detail-v2.css";
 import "src/components/detail-interactions.css";
+import "src/components/detail/detail-episode-polish.css";
 
 export default function MainLayout() {
   const location = useLocation();
@@ -52,6 +54,7 @@ export default function MainLayout() {
       <GlobalPlayGlyphNormalizer />
       <DetailEpisodeEnhancer />
       <DetailResumeCardPolish />
+      <DetailEpisodeVisualPolish />
       <WatchEpisodeAdvanceTracker />
       <MainHeader />
       <MobileSCExperience />
