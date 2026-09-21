@@ -46,7 +46,7 @@ html.flixit-season-menu-open body {
   font-weight: 800;
   line-height: 1;
   cursor: pointer;
-  transition: transform 150ms ease, background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+  transition: transform 150ms ease, background-color 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease, opacity 160ms ease;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -106,6 +106,26 @@ html.flixit-season-menu-open body {
   color: #fff;
 }
 
+.flixit-episode-rewatch {
+  display: none;
+  border-color: rgba(255,255,255,.26);
+  background: rgba(255,255,255,.08);
+  color: #fff;
+}
+
+.flixit-episode-actions.has-completed-episode .flixit-episode-rewatch {
+  display: inline-flex;
+}
+
+.flixit-episode-actions.has-completed-episode .flixit-episode-play {
+  display: none;
+}
+
+.flixit-episode-rewatch:hover {
+  background: rgba(255,255,255,.16);
+  border-color: rgba(255,255,255,.42);
+}
+
 /* Desktop detail: replace React's inferred status action with explicit controls. */
 #episodes .flixit-episode-action-cell {
   display: flex !important;
@@ -145,6 +165,10 @@ html.flixit-season-menu-open body {
     gap: 8px;
   }
 
+  .mobile-detail-episode-list > .mobile-detail-episode + .flixit-episode-actions.is-mobile.has-completed-episode {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .mobile-detail-episode-list > .mobile-detail-episode:has(+ .flixit-episode-actions.is-mobile) {
     margin-bottom: 0 !important;
   }
@@ -168,5 +192,10 @@ html.flixit-season-menu-open body {
 
   .flixit-episode-actions.is-mobile .flixit-episode-complete.is-complete {
     background: rgba(229,9,20,.16);
+  }
+
+  .flixit-episode-actions.is-mobile .flixit-episode-rewatch {
+    min-width: 0;
+    background: rgba(255,255,255,.09);
   }
 }
