@@ -176,9 +176,11 @@ function ensureDesktopRows(mediaId: number) {
 }
 
 function freezeSeasonMenus() {
+  let found = false;
   document.querySelectorAll<HTMLElement>(".MuiPopover-root .MuiPaper-root, .MuiMenu-root .MuiPaper-root").forEach((paper) => {
     const options = Array.from(paper.querySelectorAll<HTMLElement>("[role='option'], .MuiMenuItem-root"));
     if (!options.some((option) => /Stagione\s+\d+/i.test(String(option.textContent || "")))) return;
+    found = true;
 
     if (paper.dataset.flixitFrozenSeasonMenu !== "true") {
       const rect = paper.getBoundingClientRect();
@@ -190,6 +192,7 @@ function freezeSeasonMenus() {
       paper.parentElement?.classList.add("flixit-frozen-season-menu-root");
     }
   });
+  document.documentElement.classList.toggle("flixit-season-menu-open", found);
 }
 
 export default function DetailEpisodeEnhancer() {
@@ -198,7 +201,10 @@ export default function DetailEpisodeEnhancer() {
 
   useEffect(() => {
     const match = location.pathname.match(DETAIL_RE);
-    if (!match) return;
+    if (!match) {
+      document.documentElement.classList.remove("flixit-season-menu-open");
+      return;
+    }
     const mediaId = Number(match[1] || 0);
     if (!mediaId) return;
 
@@ -249,6 +255,7 @@ export default function DetailEpisodeEnhancer() {
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener("click", onClick, true);
       observer.disconnect();
+      document.documentElement.classList.remove("flixit-season-menu-open");
     };
   }, [location.pathname, navigate]);
 
