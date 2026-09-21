@@ -1,0 +1,201 @@
+/* FLIXIT global visual polish — desktop + mobile. */
+:root {
+  --flixit-font: "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html,
+body,
+#root,
+button,
+input,
+textarea,
+select,
+.MuiTypography-root,
+.MuiButton-root,
+.MuiInputBase-root,
+.MuiMenuItem-root,
+.MuiChip-root,
+.MuiTab-root {
+  font-family: var(--flixit-font) !important;
+}
+
+body {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+button,
+.MuiButton-root,
+.MuiTab-root,
+.MuiMenuItem-root {
+  font-weight: 600 !important;
+}
+
+/* Important headings stay strong; ordinary item titles are deliberately softer. */
+h1,
+h2,
+[data-testid="home-page"] .row-title,
+.mobile-detail-section-title,
+#episodes > .MuiStack-root .MuiTypography-root:first-child {
+  font-weight: 700 !important;
+}
+
+.mobile-detail-episode-copy strong,
+#episodes .flixit-desktop-episode-row .MuiTypography-root {
+  font-weight: 500 !important;
+}
+
+#episodes .flixit-desktop-episode-row > :nth-child(3) .MuiTypography-root:first-child {
+  font-weight: 600 !important;
+}
+
+/* Detail overview: compact by default, expandable without replacing the text. */
+.flixit-detail-overview-runtime {
+  position: relative;
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 4 !important;
+  overflow: hidden !important;
+  font-weight: 400 !important;
+}
+
+.flixit-detail-overview-runtime.is-expanded {
+  display: block !important;
+  overflow: visible !important;
+  -webkit-line-clamp: initial !important;
+}
+
+.flixit-detail-overview-toggle {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 6px 0 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255,255,255,.72);
+  font-family: var(--flixit-font);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.flixit-detail-overview-toggle:hover,
+.flixit-detail-overview-toggle:focus-visible {
+  color: #fff;
+}
+
+/* Episode rows — let artwork/title carry the row; controls are secondary. */
+#episodes .flixit-desktop-episode-row {
+  grid-template-columns: 46px 176px minmax(170px, 235px) minmax(0, 1fr) 70px minmax(110px, 155px) auto !important;
+  min-height: 88px !important;
+}
+
+#episodes .flixit-desktop-episode-row > :nth-child(6) {
+  max-width: 150px;
+  justify-self: end;
+  width: 100%;
+}
+
+#episodes .flixit-desktop-episode-row > :nth-child(6) > div:first-child {
+  height: 3px !important;
+  opacity: .78;
+}
+
+#episodes .flixit-episode-action-cell {
+  min-width: 0 !important;
+  padding: 0 12px 0 8px !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop {
+  width: auto !important;
+  gap: 7px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-action {
+  min-width: 0 !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 10px !important;
+  border-radius: 7px !important;
+  border: 1px solid rgba(255,255,255,.14) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-play {
+  background: rgba(255,255,255,.95) !important;
+  border-color: rgba(255,255,255,.95) !important;
+  color: #090909 !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-complete,
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-rewatch {
+  background: rgba(255,255,255,.045) !important;
+  color: rgba(255,255,255,.82) !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-complete.is-complete {
+  border-color: rgba(229,9,20,.48) !important;
+  background: rgba(229,9,20,.10) !important;
+  color: #fff !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-check {
+  width: 14px !important;
+  height: 14px !important;
+}
+
+@media (max-width: 899px) {
+  .mobile-detail-overview,
+  .mobile-detail-genres,
+  .mobile-detail-meta,
+  .mobile-detail-episode-copy small {
+    font-weight: 400 !important;
+  }
+
+  .mobile-detail-episode-copy strong {
+    font-weight: 600 !important;
+  }
+
+  .mobile-detail-episode-list > .mobile-detail-episode + .flixit-episode-actions.is-mobile {
+    display: flex !important;
+    align-items: center;
+    gap: 8px !important;
+    margin: -2px 0 12px !important;
+    padding: 5px 0 10px !important;
+    border: 0 !important;
+    background: transparent !important;
+  }
+
+  .flixit-episode-actions.is-mobile .flixit-episode-action {
+    width: auto !important;
+    flex: 1 1 0;
+    min-height: 38px !important;
+    border-radius: 7px !important;
+    padding: 0 10px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    box-shadow: none !important;
+  }
+
+  .flixit-episode-actions.is-mobile .flixit-episode-play {
+    background: rgba(255,255,255,.95) !important;
+    color: #070707 !important;
+  }
+
+  .flixit-episode-actions.is-mobile .flixit-episode-complete,
+  .flixit-episode-actions.is-mobile .flixit-episode-rewatch {
+    background: rgba(255,255,255,.045) !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    color: rgba(255,255,255,.86) !important;
+  }
+
+  .mobile-detail-more {
+    font-weight: 600 !important;
+  }
+}
