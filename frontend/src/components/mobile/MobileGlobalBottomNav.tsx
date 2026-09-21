@@ -38,8 +38,18 @@ export default function MobileGlobalBottomNav() {
   const activeIndex = useMemo(() => {
     const path = location.pathname;
     if (path === "/" || path === "/browse") return 0;
-    if (path === "/cinema" || path.startsWith("/cinema/") || path.startsWith("/browse/movie/")) return 1;
-    if (path === "/serie" || path.startsWith("/serie/") || path.startsWith("/browse/tv/")) return 2;
+    if (
+      path === "/cinema" ||
+      path.startsWith("/cinema/") ||
+      path.startsWith("/browse/movie/") ||
+      path.startsWith("/detail/movie/")
+    ) return 1;
+    if (
+      path === "/serie" ||
+      path.startsWith("/serie/") ||
+      path.startsWith("/browse/tv/") ||
+      path.startsWith("/detail/tv/")
+    ) return 2;
     if (path === "/account" || path.startsWith("/account/")) return 4;
     return -1;
   }, [location.pathname]);
@@ -49,7 +59,7 @@ export default function MobileGlobalBottomNav() {
     const root = document.documentElement;
     root.classList.remove("flixit-mobile-route-pending");
 
-    const stage = document.querySelector<HTMLElement>(".flixit-route-stage");
+    const stage = document.querySelector<HTMLElement>(".flixit-route-stage") || document.querySelector<HTMLElement>(".mobile-detail-v2");
     if (!stage || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       previousIndexRef.current = activeIndex >= 0 ? activeIndex : previousIndexRef.current;
       return;
