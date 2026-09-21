@@ -27,14 +27,32 @@ function noteHost(row: HTMLElement) {
   return row.children?.[2] as HTMLElement | null;
 }
 
+function actionGroups(row: HTMLElement) {
+  const groups: HTMLElement[] = [];
+  if (row.classList.contains("mobile-detail-episode")) {
+    const sibling = row.nextElementSibling as HTMLElement | null;
+    if (sibling?.classList.contains("flixit-episode-actions")) groups.push(sibling);
+  }
+  row.querySelectorAll<HTMLElement>(".flixit-episode-actions").forEach((node) => groups.push(node));
+  return groups;
+}
+
 function setPending(row: HTMLElement, pending: boolean) {
   row.classList.toggle("is-italian-pending", pending);
   row.dataset.italianAvailable = pending ? "false" : "true";
+  row.setAttribute("aria-disabled", pending ? "true" : "false");
 
-  if (row instanceof HTMLButtonElement) {
-    row.disabled = pending;
-    row.setAttribute("aria-disabled", pending ? "true" : "false");
-  }
+  if (row instanceof HTMLButtonElement) row.disabled = pending;
+
+  actionGroups(row).forEach((actions) => {
+    actions.classList.toggle("is-italian-pending", pending);
+    actions.setAttribute("aria-disabled", pending ? "true" : "false");
+    actions.style.setProperty("display", pending ? "none" : "", pending ? "important" : "");
+    actions.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
+      button.disabled = pending;
+      button.setAttribute("aria-disabled", pending ? "true" : "false");
+    });
+  });
 
   const host = noteHost(row);
   if (!host) return;
@@ -91,7 +109,7 @@ export default function ItalianEpisodeAvailabilityRuntime() {
         const next = new Map<number, boolean>();
         (Array.isArray(payload?.episodes) ? payload.episodes : []).forEach((episode: any, index: number) => {
           const number = Math.max(1, Number(episode?.episode_number || index + 1));
-          next.set(number, episode?.italian_available !== false);
+          next.set(number, episode?.italian_available === true);
         });
         currentMap = next;
         applyAvailability(currentMap);
@@ -115,9 +133,9 @@ export default function ItalianEpisodeAvailabilityRuntime() {
 
     const blockPendingClick = (event: Event) => {
       const target = event.target as HTMLElement | null;
-      const pending = target?.closest?.(".is-italian-pending") as HTMLElement | null;
-      if (!pending) return;
-      if (!pending.matches(".mobile-detail-episode, .flixit-desktop-episode-row")) return;
+      const pendingRow = target?.closest?.(".mobile-detail-episode.is-italian-pending, #episodes .flixit-desktop-episode-row.is-italian-pending") as HTMLElement | null;
+      const pendingActions = target?.closest?.(".flixit-episode-actions.is-italian-pending") as HTMLElement | null;
+      if (!pendingRow && !pendingActions) return;
       event.preventDefault();
       event.stopPropagation();
       if ("stopImmediatePropagation" in event) (event as any).stopImmediatePropagation();
@@ -133,6 +151,7 @@ export default function ItalianEpisodeAvailabilityRuntime() {
     });
 
     document.addEventListener("click", blockPendingClick, true);
+    document.addEventListener("pointerdown", blockPendingClick, true);
     const poll = window.setInterval(() => {
       const season = selectedSeasonFromDom();
       currentSeason = season;
@@ -146,6 +165,7 @@ export default function ItalianEpisodeAvailabilityRuntime() {
       if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
       document.removeEventListener("click", blockPendingClick, true);
+      document.removeEventListener("pointerdown", blockPendingClick, true);
       window.clearInterval(poll);
     };
   }, [location.pathname]);
