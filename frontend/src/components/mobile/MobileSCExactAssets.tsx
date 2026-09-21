@@ -5,6 +5,8 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 
 const MOBILE_QUERY = "(max-width:899px)";
 const CATALOG_URL = "/sc-artwork-catalog.json";
+const CURRENT_SC_CDN_BASE = "https://cdn.streamingunity-premium.to/images/";
+const LEGACY_SC_CDN_RE = /^https?:\/\/cdn\.streamingcommunityz\.ninja\/images\//i;
 
 function normalize(value: any) {
   return String(value || "")
@@ -23,11 +25,23 @@ function assetKey(value: any) {
   return clean.slice(clean.lastIndexOf("/") + 1).replace(/\.(?:webp|jpe?g|png|avif)$/i, "").toLowerCase();
 }
 
+function normalizeCdnBase(value: any) {
+  const raw = String(value || "").trim();
+  if (!/^https?:\/\//i.test(raw) || LEGACY_SC_CDN_RE.test(`${raw.replace(/\/+$/, "")}/`)) {
+    return CURRENT_SC_CDN_BASE;
+  }
+  return `${raw.replace(/\/+$/, "")}/`;
+}
+
 function absoluteAsset(value: any, cdnBase: string) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return `${cdnBase.replace(/\/+$/, "")}/${raw.replace(/^\/+/, "")}`;
+  if (/^https?:\/\//i.test(raw)) {
+    return LEGACY_SC_CDN_RE.test(raw)
+      ? raw.replace(LEGACY_SC_CDN_RE, CURRENT_SC_CDN_BASE)
+      : raw;
+  }
+  return `${normalizeCdnBase(cdnBase)}${raw.replace(/^\/+/, "")}`;
 }
 
 type HeroAssets = { background: string; logo: string; title: string };
@@ -58,7 +72,7 @@ async function loadHeroIndex(): Promise<HeroIndex> {
   heroIndexPromise = loadCatalogPayload()
     .then((payload) => {
       const rows = Array.isArray(payload?.titles) ? payload.titles : [];
-      const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
+      const cdnBase = normalizeCdnBase(payload?.cdn_base_url);
       const byArtwork = new Map<string, HeroAssets>();
       const byTitle = new Map<string, HeroAssets>();
 
