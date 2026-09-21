@@ -18,11 +18,14 @@ import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenc
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import MobileDetailExperience from "src/components/mobile/MobileDetailExperience";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
+import DetailEpisodeEnhancer from "src/components/DetailEpisodeEnhancer";
+import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
 import "src/components/mobile/mobile-home-finish.css";
 import "src/components/mobile/mobile-home-polish.css";
 import "src/components/mobile/mobile-detail-v2.css";
+import "src/components/detail-interactions.css";
 
 export default function MainLayout() {
   const location = useLocation();
@@ -44,6 +47,8 @@ export default function MainLayout() {
   return (
     <Box sx={{ width: "100%", minHeight: "100vh", bgcolor: "background.default", margin: 0, padding: 0, overflowX: "hidden" }}>
       <ScCdnRecovery />
+      <GlobalPlayGlyphNormalizer />
+      <DetailEpisodeEnhancer />
       <MainHeader />
       <MobileSCExperience />
       <MobileSCExactAssets />
