@@ -17,6 +17,7 @@ import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
 import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenceRuntime";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import MobileDetailExperience from "src/components/mobile/MobileDetailExperience";
+import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
 import "src/components/mobile/mobile-home-finish.css";
@@ -42,6 +43,7 @@ export default function MainLayout() {
 
   return (
     <Box sx={{ width: "100%", minHeight: "100vh", bgcolor: "background.default", margin: 0, padding: 0, overflowX: "hidden" }}>
+      <ScCdnRecovery />
       <MainHeader />
       <MobileSCExperience />
       <MobileSCExactAssets />
