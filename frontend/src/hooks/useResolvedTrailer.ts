@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "direct-it-en-v5";
+const TRAILER_QUERY_VERSION = "direct-it-tiered-v6";
 
 function directTrailerUrl(data: any) {
   for (const value of [data?.trailer_url, data?.manifest_url, data?.trailer_key]) {
@@ -51,9 +51,6 @@ export default function useResolvedTrailer(
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
-    // Near-viewport cards warm their trailer in the background. Two-second
-    // polling gives resolver workers enough time without hammering the API once
-    // per second across an entire row.
     refetchInterval: (query: any) => {
       const data = query?.state?.data || {};
       const candidate = directTrailerUrl(data);
