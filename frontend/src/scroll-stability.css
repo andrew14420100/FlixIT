@@ -16,6 +16,24 @@ body,
   overflow-y: visible !important;
 }
 
+/* Keep the Episodes heading + season dropdown anchored while the episode list
+   scrolls underneath it. This prevents the selector from drifting up/down with
+   the page and gives it an opaque surface over episode rows. */
+#episodes > .MuiStack-root:first-child {
+  position: sticky !important;
+  top: 72px;
+  z-index: 30;
+  padding: 10px 0 12px;
+  margin-bottom: 8px !important;
+  background: linear-gradient(180deg, #090909 0%, #090909 82%, rgba(9, 9, 9, 0.96) 100%);
+}
+
+@media (max-width: 899px) {
+  #episodes > .MuiStack-root:first-child {
+    top: 58px;
+  }
+}
+
 /* The enlarged hover card is visual UI, not document content. Keeping its
    portal fixed prevents it from extending page height and creating a second
    scrollbar or fighting the user's wheel/touch scroll. */
