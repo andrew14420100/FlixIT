@@ -32,22 +32,31 @@ function clamp(value: number, min: number, max: number) {
 function syncSeasonMenuToAnchor() {
   const paper = seasonPaper();
   const anchor = seasonAnchor();
-  if (!paper || !anchor) return;
+  if (!paper || !anchor) return false;
 
   const anchorRect = anchor.getBoundingClientRect();
   const paperRect = paper.getBoundingClientRect();
   const viewportWidth = window.visualViewport?.width || window.innerWidth;
   const gap = 6;
-  const width = Math.max(anchorRect.width, paperRect.width || 0);
+  const width = Math.max(anchorRect.width, paperRect.width || 0, 134);
   const desiredLeft = anchorRect.right - width;
   const left = clamp(desiredLeft, 8, Math.max(8, viewportWidth - width - 8));
   const top = anchorRect.bottom + gap;
 
   paper.dataset.flixitFrozenSeasonMenu = "true";
   paper.classList.add("flixit-frozen-season-menu", "flixit-season-menu-anchored");
+  paper.style.setProperty("position", "fixed", "important");
+  paper.style.setProperty("top", `${Math.round(top)}px`, "important");
+  paper.style.setProperty("left", `${Math.round(left)}px`, "important");
+  paper.style.setProperty("right", "auto", "important");
+  paper.style.setProperty("width", `${Math.round(width)}px`, "important");
+  paper.style.setProperty("min-width", `${Math.round(width)}px`, "important");
+  paper.style.setProperty("margin", "0", "important");
+  paper.style.setProperty("transform", "none", "important");
   paper.style.setProperty("--flixit-season-menu-top", `${Math.round(top)}px`);
   paper.style.setProperty("--flixit-season-menu-left", `${Math.round(left)}px`);
   paper.style.setProperty("--flixit-season-menu-width", `${Math.round(width)}px`);
+  return true;
 }
 
 export default function SeasonMenuAnchorTracker() {
@@ -57,30 +66,32 @@ export default function SeasonMenuAnchorTracker() {
     if (!DETAIL_TV_RE.test(location.pathname)) return;
 
     let raf = 0;
-    const schedule = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        syncSeasonMenuToAnchor();
-      });
+    let disposed = false;
+
+    // MUI portals are positioned independently from the scrolled page. While
+    // the menu is open we therefore follow the trigger on every animation
+    // frame, not only on scroll events. This also covers Chrome/iOS toolbar
+    // movement and momentum scrolling where ordinary scroll events can lag.
+    const loop = () => {
+      if (disposed) return;
+      syncSeasonMenuToAnchor();
+      raf = requestAnimationFrame(loop);
     };
 
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "aria-expanded"] });
+    const observer = new MutationObserver(() => syncSeasonMenuToAnchor());
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["class", "aria-expanded"],
+    });
 
-    window.addEventListener("scroll", schedule, true);
-    window.addEventListener("resize", schedule, { passive: true });
-    window.visualViewport?.addEventListener("scroll", schedule, { passive: true });
-    window.visualViewport?.addEventListener("resize", schedule, { passive: true });
-    schedule();
+    raf = requestAnimationFrame(loop);
 
     return () => {
+      disposed = true;
       if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
-      window.removeEventListener("scroll", schedule, true);
-      window.removeEventListener("resize", schedule);
-      window.visualViewport?.removeEventListener("scroll", schedule);
-      window.visualViewport?.removeEventListener("resize", schedule);
     };
   }, [location.pathname]);
 
