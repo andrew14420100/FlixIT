@@ -211,7 +211,7 @@ export default function TrailerPlayer({
       <video
         ref={videoRef}
         autoPlay
-        defaultMuted={muted}
+        muted={muted}
         loop={loop}
         playsInline
         preload="auto"
