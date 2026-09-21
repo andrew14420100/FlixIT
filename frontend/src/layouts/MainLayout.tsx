@@ -19,6 +19,8 @@ import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import MobileDetailExperience from "src/components/mobile/MobileDetailExperience";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import DetailEpisodeEnhancer from "src/components/DetailEpisodeEnhancer";
+import DetailResumeCardPolish from "src/components/DetailResumeCardPolish";
+import WatchEpisodeAdvanceTracker from "src/components/watch/WatchEpisodeAdvanceTracker";
 import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
@@ -49,6 +51,8 @@ export default function MainLayout() {
       <ScCdnRecovery />
       <GlobalPlayGlyphNormalizer />
       <DetailEpisodeEnhancer />
+      <DetailResumeCardPolish />
+      <WatchEpisodeAdvanceTracker />
       <MainHeader />
       <MobileSCExperience />
       <MobileSCExactAssets />
