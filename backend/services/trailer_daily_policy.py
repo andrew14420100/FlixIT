@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from services.trailers.resolver import TrailerResolver, _dt, _now
+from services.trailers.base import candidate_is_usable, candidate_sort_key, language_rank, type_rank
 
 _INSTALLED = False
 ROME_TZ = ZoneInfo("Europe/Rome")
@@ -25,11 +26,63 @@ def _seconds_until_rome_refresh(hour: int = DAILY_REFRESH_HOUR) -> float:
     return max(1.0, (target - now).total_seconds())
 
 
+def _user_trailer_tier(candidate) -> int:
+    """User-approved order: Trailer IT > Teaser IT > Trailer EN."""
+    lang = language_rank(candidate.audio_language)
+    kind = type_rank(candidate.trailer_type)
+    if lang == 3 and kind >= 4:
+        return 60
+    if lang == 3 and kind in {2, 3}:
+        return 50
+    if lang == 2 and kind >= 4:
+        return 40
+    if lang == 3:
+        return 30
+    if lang == 2:
+        return 20
+    if kind >= 4:
+        return 10
+    return 0
+
+
+def _pick_best_user_priority(candidates, *, hdr_supported: bool = False):
+    usable = [candidate for candidate in candidates if candidate_is_usable(candidate)]
+    if not usable:
+        return None
+    return max(
+        usable,
+        key=lambda candidate: (
+            _user_trailer_tier(candidate),
+            candidate_sort_key(candidate, hdr_supported=hdr_supported),
+        ),
+    )
+
+
 def install_trailer_daily_policy() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
     _INSTALLED = True
+
+    # Keep the ranking rule identical everywhere the resolver imports pick_best.
+    # This also preserves English as the fallback when no usable Italian trailer
+    # or teaser is available.
+    try:
+        import services.trailers.base as trailer_base
+        import services.trailers.resolver as trailer_resolver
+        trailer_base.pick_best = _pick_best_user_priority
+        trailer_resolver.pick_best = _pick_best_user_priority
+    except Exception:
+        pass
+
+    # The main app routes already exist because server_core is imported before
+    # this installer. Wrap the season endpoint without touching server_core.
+    try:
+        import server_core as _core
+        from services.italian_episode_policy import install_italian_episode_policy
+        install_italian_episode_policy(_core.app)
+    except Exception:
+        pass
 
     def metadata_ttl(self: TrailerResolver) -> timedelta:
         try:
@@ -82,8 +135,6 @@ def install_trailer_daily_policy() -> None:
                 skipped_fresh += 1
                 continue
 
-            # User hover/detail requests use priority 1. Background work is never
-            # allowed to jump ahead of them.
             self.enqueue(media_type, tmdb_id, priority=priority, reason=reason)
             queued += 1
 
