@@ -227,7 +227,7 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Prefer Italian audio, then full trailers and the best native quality."""
+    """Quality ordering inside the already-selected language/type tier."""
     height = int(candidate.height or 0)
     bitrate = int(candidate.bitrate or 0)
     is_hdr = bool(candidate.hdr or candidate.dolby_vision)
@@ -235,9 +235,7 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
     if not hdr_supported and is_hdr:
         hdr_score = -1
     return (
-        language_rank(candidate.audio_language),
         duration_rank(candidate),
-        type_rank(candidate.trailer_type),
         1 if candidate.official else 0,
         height,
         hdr_score,
@@ -249,15 +247,42 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
     )
 
 
+def _selection_tier(candidate: TrailerCandidate) -> int:
+    """Explicit product policy: Trailer IT > Teaser IT > Trailer EN > everything else."""
+    lang = language_rank(candidate.audio_language)
+    kind = type_rank(candidate.trailer_type)
+    is_it = lang == 3
+    is_en = lang == 2
+    is_trailer = kind >= 4
+    is_teaser = kind in (2, 3)
+
+    if is_it and is_trailer:
+        return 400
+    if is_it and is_teaser:
+        return 300
+    if is_en and is_trailer:
+        return 200
+    if is_en and is_teaser:
+        return 150
+    if is_it:
+        return 120
+    if is_en:
+        return 100
+    return 50 + lang * 10 + kind
+
+
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
-    """Pick Italian audio whenever present, then the best real/native trailer."""
+    """Pick by the explicit FLIXIT policy, then by native quality inside that tier."""
     usable = [c for c in candidates if candidate_is_usable(c)]
     if not usable:
         return None
-
-    italian = [c for c in usable if language_rank(c.audio_language) == 3]
-    pool = italian or usable
-    return max(pool, key=lambda c: candidate_sort_key(c, hdr_supported=hdr_supported))
+    return max(
+        usable,
+        key=lambda c: (
+            _selection_tier(c),
+            candidate_sort_key(c, hdr_supported=hdr_supported),
+        ),
+    )
 
 
 def perfect_candidate(candidate: TrailerCandidate) -> bool:
