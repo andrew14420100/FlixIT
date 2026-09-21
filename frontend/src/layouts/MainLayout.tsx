@@ -22,6 +22,7 @@ import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import DetailEpisodeEnhancer from "src/components/DetailEpisodeEnhancer";
 import DetailResumeCardPolish from "src/components/DetailResumeCardPolish";
 import DetailDescriptionExpander from "src/components/DetailDescriptionExpander";
+import ItalianEpisodeAvailabilityRuntime from "src/components/ItalianEpisodeAvailabilityRuntime";
 import DetailEpisodeVisualPolish from "src/components/detail/DetailEpisodeVisualPolish";
 import SeasonMenuAnchorTracker from "src/components/SeasonMenuAnchorTracker";
 import WatchEpisodeAdvanceTracker from "src/components/watch/WatchEpisodeAdvanceTracker";
@@ -60,6 +61,7 @@ export default function MainLayout() {
       <DetailEpisodeEnhancer />
       <DetailResumeCardPolish />
       <DetailDescriptionExpander />
+      <ItalianEpisodeAvailabilityRuntime />
       <DetailEpisodeVisualPolish />
       <SeasonMenuAnchorTracker />
       <WatchEpisodeAdvanceTracker />
