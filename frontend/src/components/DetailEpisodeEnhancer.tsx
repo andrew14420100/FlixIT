@@ -49,7 +49,7 @@ function playSvg() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true" data-flixit-play-glyph="true"><path d="${PLAY_GLYPH_PATH}" fill="currentColor"/></svg>`;
 }
 
-function actionMarkup(mediaId: number, season: number, episode: number, mobile: boolean) {
+function actionMarkup(mediaId: number, season: number, episode: number) {
   return `
     <button type="button" class="flixit-episode-action flixit-episode-play" data-flixit-episode-action="play" data-media-id="${mediaId}" data-season="${season}" data-episode="${episode}" aria-label="Riproduci episodio ${episode}">
       ${playSvg()}<span>Riproduci</span>
@@ -70,15 +70,28 @@ function removeGeneratedEpisodeLabels(row: HTMLElement) {
   });
 }
 
-function markCompletion(container: HTMLElement, mediaId: number, season: number, episode: number) {
+function syncActionIdentity(actions: HTMLElement, mediaId: number, season: number, episode: number) {
+  const identity = `${mediaId}:${season}:${episode}`;
+  if (actions.dataset.flixitIdentity !== identity) {
+    actions.dataset.flixitIdentity = identity;
+    actions.dataset.mediaId = String(mediaId);
+    actions.dataset.season = String(season);
+    actions.dataset.episode = String(episode);
+    actions.innerHTML = actionMarkup(mediaId, season, episode);
+  }
+}
+
+function markCompletion(actions: HTMLElement, mediaId: number, season: number, episode: number) {
   const set = readCompleted(mediaId);
   const done = set.has(episodeKey(season, episode));
-  const button = container.querySelector<HTMLElement>(".flixit-episode-complete");
+  const button = actions.querySelector<HTMLElement>(".flixit-episode-complete");
   if (button) {
     button.classList.toggle("is-complete", done);
     button.setAttribute("aria-pressed", done ? "true" : "false");
   }
-  container.closest<HTMLElement>(".mobile-detail-episode-wrap, .flixit-desktop-episode-row")?.classList.toggle("is-manual-complete", done);
+  const mobileRow = actions.previousElementSibling as HTMLElement | null;
+  mobileRow?.classList.toggle("is-manual-complete", done);
+  actions.closest<HTMLElement>(".flixit-desktop-episode-row")?.classList.toggle("is-manual-complete", done);
 }
 
 function ensureMobileRows(mediaId: number) {
@@ -86,26 +99,16 @@ function ensureMobileRows(mediaId: number) {
   document.querySelectorAll<HTMLElement>(".mobile-detail-episode").forEach((row) => {
     const match = String(row.textContent || "").trim().match(/^(\d+)\./);
     const episode = Math.max(1, Number(match?.[1] || 0));
-    if (!episode) return;
+    if (!episode || !row.parentElement) return;
 
-    let wrap = row.parentElement;
-    if (!wrap?.classList.contains("mobile-detail-episode-wrap")) {
-      wrap = document.createElement("div");
-      wrap.className = "mobile-detail-episode-wrap";
-      row.parentNode?.insertBefore(wrap, row);
-      wrap.appendChild(row);
-    }
-
-    let actions = wrap.querySelector<HTMLElement>(".flixit-episode-actions");
-    if (!actions) {
+    let actions = row.nextElementSibling as HTMLElement | null;
+    if (!actions?.classList.contains("flixit-episode-actions")) {
       actions = document.createElement("div");
       actions.className = "flixit-episode-actions is-mobile";
-      wrap.appendChild(actions);
+      row.insertAdjacentElement("afterend", actions);
     }
-    actions.dataset.mediaId = String(mediaId);
-    actions.dataset.season = String(season);
-    actions.dataset.episode = String(episode);
-    actions.innerHTML = actionMarkup(mediaId, season, episode, true);
+
+    syncActionIdentity(actions, mediaId, season, episode);
     markCompletion(actions, mediaId, season, episode);
   });
 }
@@ -134,14 +137,14 @@ function ensureDesktopRows(mediaId: number) {
   });
 
   rows.forEach((row) => {
-    const match = String(row.textContent || "").trim().match(/^(\d+)/);
+    const originalText = String(row.textContent || "");
+    const match = originalText.trim().match(/^(\d+)/);
     const episode = Math.max(1, Number(match?.[1] || 0));
     if (!episode) return;
 
     row.classList.add("flixit-desktop-episode-row");
     removeGeneratedEpisodeLabels(row);
 
-    const originalText = String(row.textContent || "");
     const inferredComplete = /100% visto/i.test(originalText);
     const progressCell = row.children?.[5] as HTMLElement | undefined;
     if (progressCell) {
@@ -160,16 +163,14 @@ function ensureDesktopRows(mediaId: number) {
     if (!actionCell) return;
     actionCell.classList.add("flixit-episode-action-cell");
 
-    let actions = actionCell.querySelector<HTMLElement>(".flixit-episode-actions");
+    let actions = actionCell.querySelector<HTMLElement>(":scope > .flixit-episode-actions");
     if (!actions) {
       actions = document.createElement("div");
       actions.className = "flixit-episode-actions is-desktop";
       actionCell.appendChild(actions);
     }
-    actions.dataset.mediaId = String(mediaId);
-    actions.dataset.season = String(season);
-    actions.dataset.episode = String(episode);
-    actions.innerHTML = actionMarkup(mediaId, season, episode, false);
+
+    syncActionIdentity(actions, mediaId, season, episode);
     markCompletion(actions, mediaId, season, episode);
   });
 }
