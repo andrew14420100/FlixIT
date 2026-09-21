@@ -15,12 +15,14 @@ import SessionGuards from "src/components/auth/SessionGuards";
 import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
 import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenceRuntime";
+import MobileHomeSectionRecovery from "src/components/mobile/MobileHomeSectionRecovery";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import MobileDetailExperience from "src/components/mobile/MobileDetailExperience";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import DetailEpisodeEnhancer from "src/components/DetailEpisodeEnhancer";
 import DetailResumeCardPolish from "src/components/DetailResumeCardPolish";
 import DetailEpisodeVisualPolish from "src/components/detail/DetailEpisodeVisualPolish";
+import SeasonMenuAnchorTracker from "src/components/SeasonMenuAnchorTracker";
 import WatchEpisodeAdvanceTracker from "src/components/watch/WatchEpisodeAdvanceTracker";
 import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
 import "src/components/mobile/mobile-sc-exact.css";
@@ -28,6 +30,7 @@ import "src/components/mobile/mobile-home-reference.css";
 import "src/components/mobile/mobile-home-finish.css";
 import "src/components/mobile/mobile-home-polish.css";
 import "src/components/mobile/mobile-detail-v2.css";
+import "src/components/mobile/mobile-detail-runtime-fixes.css";
 import "src/components/detail-interactions.css";
 import "src/components/detail/detail-episode-polish.css";
 
@@ -55,11 +58,13 @@ export default function MainLayout() {
       <DetailEpisodeEnhancer />
       <DetailResumeCardPolish />
       <DetailEpisodeVisualPolish />
+      <SeasonMenuAnchorTracker />
       <WatchEpisodeAdvanceTracker />
       <MainHeader />
       <MobileSCExperience />
       <MobileSCExactAssets />
       <MobileHomeReferenceRuntime />
+      <MobileHomeSectionRecovery />
       <MobileGlobalBottomNav />
       <MobileDetailExperience />
       <AuthModal />
