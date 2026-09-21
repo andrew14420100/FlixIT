@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      SC_BASE_URL: "https://streamingunity-premium.to"
       SC_ARTWORK_REQUEST_DELAY: "0.85"
       SC_ARTWORK_TRANSIENT_RETRIES: "8"
       SC_ARTWORK_MIN_YEAR: "1910"
@@ -59,6 +60,8 @@ jobs:
               raise SystemExit(f"Catalog coverage too low: {count}/{reported}")
           if not cdn:
               raise SystemExit("Catalog incomplete: missing cdn_base_url")
+          if "streamingcommunityz.ninja" in str(cdn).lower():
+              raise SystemExit(f"Catalog rejected: deprecated CDN with invalid browser certificate: {cdn}")
           PY
       - name: Publish same catalog as a static frontend asset
         run: cp backend/data/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json
