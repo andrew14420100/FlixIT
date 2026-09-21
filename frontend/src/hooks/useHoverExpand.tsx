@@ -20,6 +20,14 @@ type AnchorData = {
   anchor: HTMLElement | null;
 };
 
+function isDomNode(value: any): value is Node {
+  return typeof Node !== "undefined" && value instanceof Node;
+}
+
+function isDomElement(value: any): value is Element {
+  return typeof Element !== "undefined" && value instanceof Element;
+}
+
 /**
  * Netflix-style hover intent + expansion.
  *
@@ -103,8 +111,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const onLeave = useCallback(
     (event?: any) => {
       clearOpenTimer();
-      const related = event?.relatedTarget as Element | null;
-      if (related?.closest?.(".previewModal--container")) return;
+      const related = event?.relatedTarget;
+      if (isDomElement(related) && related.closest(".previewModal--container")) return;
       requestClose();
     },
     [clearOpenTimer, requestClose]
@@ -112,8 +120,12 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const onOverlayLeave = useCallback(
     (event?: any) => {
-      const related = event?.relatedTarget as Node | null;
-      if (related && ref.current?.contains?.(related)) return;
+      // React/browser mouseleave relatedTarget is not guaranteed to be a DOM
+      // Node. Chrome can supply Window (especially around portals, route changes
+      // and viewport/browser-chrome transitions). Node.contains() throws when
+      // handed that value, so guard it before containment checks.
+      const related = event?.relatedTarget;
+      if (isDomNode(related) && ref.current?.contains(related)) return;
       requestClose();
     },
     [requestClose, ref]
@@ -212,10 +224,6 @@ export function ExpandOverlay({
     };
   }, [position, calculateGeometry]);
 
-  // getBoundingClientRect() is viewport-relative and the preview portal is fixed.
-  // Re-sync the modal to the source card whenever the document (or any nested
-  // scroller) moves. This prevents the expanded hover from sliding down/up when
-  // the user scrolls slightly with the pointer over it.
   useEffect(() => {
     if (!position || typeof window === "undefined") return;
 
@@ -287,8 +295,8 @@ export function ExpandOverlay({
   }
 
   const handleOverlayClick = (event: any) => {
-    const target = event?.target as HTMLElement | null;
-    if (target?.closest?.("button, a, [role='button'], input, select, textarea")) return;
+    const target = event?.target;
+    if (isDomElement(target) && target.closest("button, a, [role='button'], input, select, textarea")) return;
     onClick?.(event);
   };
 
