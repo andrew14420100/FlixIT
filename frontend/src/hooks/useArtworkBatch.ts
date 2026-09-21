@@ -9,8 +9,9 @@ import {
 } from "./useAutomaticMediaAssets";
 
 const SC_CATALOG_URL = "/sc-artwork-catalog.json";
-const LEGACY_SC_CDN_BASE = "https://cdn.streamingcommunityz.ninja/images/";
-const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v5-poster-deep-match"];
+const CURRENT_SC_CDN_BASE = "https://cdn.streamingunity-premium.to/images/";
+const DEPRECATED_SC_CDN_RE = /^https?:\/\/cdn\.streamingcommunityz\.ninja\/images\//i;
+const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v6-cdn-recovery-poster-deep-match"];
 
 type NormalizedEntry = {
   item: any;
@@ -103,9 +104,16 @@ function rowAliases(row: any) {
   return [...out];
 }
 
-function normalizeCdnBase(value: any) {
+function rewriteDeprecatedScUrl(value: any) {
   const raw = String(value || "").trim();
-  if (!/^https?:\/\//i.test(raw)) return LEGACY_SC_CDN_BASE;
+  if (!raw) return raw;
+  if (!DEPRECATED_SC_CDN_RE.test(raw)) return raw;
+  return raw.replace(DEPRECATED_SC_CDN_RE, CURRENT_SC_CDN_BASE);
+}
+
+function normalizeCdnBase(value: any) {
+  const raw = rewriteDeprecatedScUrl(value);
+  if (!/^https?:\/\//i.test(raw)) return CURRENT_SC_CDN_BASE;
   return `${raw.replace(/\/+$/, "")}/`;
 }
 
@@ -182,7 +190,7 @@ async function loadCatalog(): Promise<CatalogIndex> {
     .catch(() => {
       const empty = {
         count: 0,
-        cdnBase: LEGACY_SC_CDN_BASE,
+        cdnBase: CURRENT_SC_CDN_BASE,
         byTitle: new Map<string, any[]>(),
         byTmdb: new Map<string, any[]>(),
       };
@@ -198,7 +206,6 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
   const candidates: any[] = [];
   const seen = new Set<any>();
 
-  // Strongest path: exact TMDB identity from the SC catalogue.
   (index.byTmdb.get(entry.key) || []).forEach((row) => {
     if (!seen.has(row)) {
       seen.add(row);
@@ -206,7 +213,6 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
     }
   });
 
-  // Fallback: all normalized localized/original title aliases.
   variants.forEach((variant) => {
     (index.byTitle.get(variant) || []).forEach((row) => {
       if (!seen.has(row)) {
@@ -249,7 +255,7 @@ function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
 function cdnUrl(value: any, cdnBase: string) {
   const raw = String(value || "").trim();
   if (!raw) return null;
-  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) return rewriteDeprecatedScUrl(raw);
   return `${normalizeCdnBase(cdnBase)}${raw.replace(/^\/+/, "")}`;
 }
 
@@ -306,7 +312,7 @@ function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogInd
     sc_catalog_cdn: index.cdnBase,
     sc_provider_id: row?.id || row?.slug || null,
     sc_provider_name: row?.name || null,
-    version: "official-artwork-v16-sc-poster-deep-match",
+    version: "official-artwork-v17-sc-cdn-recovery",
   };
 }
 
