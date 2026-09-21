@@ -16,15 +16,18 @@ import MobileSCExperience from "src/components/mobile/MobileSCExperience";
 import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
 import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenceRuntime";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
+import MobileDetailExperience from "src/components/mobile/MobileDetailExperience";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
 import "src/components/mobile/mobile-home-finish.css";
 import "src/components/mobile/mobile-home-polish.css";
+import "src/components/mobile/mobile-detail-v2.css";
 
 export default function MainLayout() {
   const location = useLocation();
   const navigation = useNavigation();
   const isMobile = useMediaQuery("(max-width:899px)");
+  const isMobileDetail = isMobile && /^\/(?:detail|browse)\/(?:movie|tv)\/\d+(?:\/|$)/i.test(location.pathname);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -44,18 +47,21 @@ export default function MainLayout() {
       <MobileSCExactAssets />
       <MobileHomeReferenceRuntime />
       <MobileGlobalBottomNav />
+      <MobileDetailExperience />
       <AuthModal />
       <SessionGuards />
       {!isMobile && navigation.state !== "idle" && <MainLoadingScreen />}
       <DetailModalProvider>
         <PortalProvider>
-          <Box className="flixit-route-stage">
-            <Outlet />
-          </Box>
+          {!isMobileDetail ? (
+            <Box className="flixit-route-stage">
+              <Outlet />
+            </Box>
+          ) : null}
           <VideoPortalContainer />
         </PortalProvider>
       </DetailModalProvider>
-      {location.pathname !== `/${MAIN_PATH.watch}` && <Footer />}
+      {location.pathname !== `/${MAIN_PATH.watch}` && !isMobileDetail && <Footer />}
     </Box>
   );
 }
