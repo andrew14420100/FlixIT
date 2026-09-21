@@ -225,6 +225,29 @@ def _quality_score(stream: dict) -> int:
     return 0
 
 
+def _stream_text(stream: dict) -> str:
+    return " ".join(
+        str(stream.get(k) or "")
+        for k in ("name", "title", "filename", "url")
+    ).lower()
+
+
+def _language_rank(stream: dict) -> int:
+    """Lower is better. Explicit ENG-only streams are rejected by pick_best."""
+    text = _stream_text(stream)
+    has_italian = bool(re.search(r"(^|[^a-z])(ita|italian|italiano|it-it)([^a-z]|$)", text))
+    has_multi = bool(re.search(r"(^|[^a-z])(multi|multiaudio|multi-audio|dual[ ._-]?audio)([^a-z]|$)", text))
+    has_english = bool(re.search(r"(^|[^a-z])(eng|english|inglese|en-us|en-gb)([^a-z]|$)", text))
+
+    if has_italian:
+        return 0
+    if has_multi and not has_english:
+        return 1
+    if has_english:
+        return 99
+    return 2
+
+
 def parse_streams(data: dict) -> list[dict]:
     """
     Keep HTTP(S) `url` streams. Torrent-only infoHash entries remain inside a
@@ -256,12 +279,19 @@ def parse_streams(data: dict) -> list[dict]:
 
 
 def pick_best(streams: list[dict]) -> Optional[dict]:
-    """Prefer web-ready 4K/2160p streams, then lower qualities; prefer HLS on ties."""
+    """Prefer Italian/MULTI web-ready streams, then quality; never select explicit ENG-only streams."""
     if not streams:
         return None
+
+    eligible = [stream for stream in streams if _language_rank(stream) < 99]
+    if not eligible:
+        logger.info("Omni returned only explicit ENG streams; refusing non-Italian playback")
+        return None
+
     ranked = sorted(
-        streams,
+        eligible,
         key=lambda s: (
+            _language_rank(s),
             s["not_web_ready"],
             -_quality_score(s),
             0 if s["type"] == "hls" else 1,
