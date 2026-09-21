@@ -51,14 +51,18 @@ function isForwardEpisode(previous: any, current: any) {
 
 /**
  * Keeps episode completion and Continue Watching aligned with the player's
- * forward-arrow navigation. We deliberately do not infer completion from
- * opening a later episode from Detail: only a real watch -> next transition
- * marks the previous episode completed.
+ * forward-arrow navigation. Opening an arbitrary later episode from Detail
+ * never completes the episodes before it: only watch -> next does.
  */
 export default function WatchEpisodeAdvanceTracker() {
   const location = useLocation();
   const { items, saveProgress } = useContinueWatching();
   const previousRef = useRef<any>(null);
+  const itemsRef = useRef<any[]>(items || []);
+
+  useEffect(() => {
+    itemsRef.current = items || [];
+  }, [items]);
 
   useEffect(() => {
     const current = parseWatchLocation(location.pathname, location.search);
@@ -68,18 +72,18 @@ export default function WatchEpisodeAdvanceTracker() {
     if (!isForwardEpisode(previous, current)) return;
 
     // WatchPage persists the outgoing episode during unmount. Apply the new
-    // target just after that cleanup so the next episode is authoritative on
-    // reload and in Continue Watching.
+    // target just after that cleanup. Progress refreshes must not cancel this
+    // timer, hence items are read through a ref rather than being a dependency.
     const timer = window.setTimeout(() => {
       markEpisodeCompleted(previous.mediaId, previous.season, previous.episode);
 
-      const existing = (items || []).find((item: any) => Number(item?.tmdb_id || 0) === current.mediaId);
+      const existing = (itemsRef.current || []).find((item: any) => Number(item?.tmdb_id || 0) === current.mediaId);
       saveProgress({
         tmdb_id: current.mediaId,
         media_type: "tv",
-        // The backend intentionally ignores values below 10 seconds. Ten
-        // seconds records the new episode while WatchPage still starts it at 0
-        // because resume rewind only applies after 30 seconds.
+        // The backend ignores values below 10 seconds. Ten records the new
+        // episode, while WatchPage still starts it at 0 because resume rewind
+        // is only applied after 30 seconds.
         progress: 10,
         duration: Math.max(60, Number(existing?.duration || 2700)),
         title: existing?.title || `Serie TV ${current.mediaId}`,
@@ -91,7 +95,7 @@ export default function WatchEpisodeAdvanceTracker() {
     }, 140);
 
     return () => window.clearTimeout(timer);
-  }, [location.pathname, location.search, items, saveProgress]);
+  }, [location.pathname, location.search, saveProgress]);
 
   return null;
 }
