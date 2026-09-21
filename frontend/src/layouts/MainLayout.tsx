@@ -21,6 +21,7 @@ import MobileDetailExperience from "src/components/mobile/MobileDetailExperience
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import DetailEpisodeEnhancer from "src/components/DetailEpisodeEnhancer";
 import DetailResumeCardPolish from "src/components/DetailResumeCardPolish";
+import DetailDescriptionExpander from "src/components/DetailDescriptionExpander";
 import DetailEpisodeVisualPolish from "src/components/detail/DetailEpisodeVisualPolish";
 import SeasonMenuAnchorTracker from "src/components/SeasonMenuAnchorTracker";
 import WatchEpisodeAdvanceTracker from "src/components/watch/WatchEpisodeAdvanceTracker";
@@ -33,6 +34,7 @@ import "src/components/mobile/mobile-detail-v2.css";
 import "src/components/mobile/mobile-detail-runtime-fixes.css";
 import "src/components/detail-interactions.css";
 import "src/components/detail/detail-episode-polish.css";
+import "src/components/site-polish.css";
 
 export default function MainLayout() {
   const location = useLocation();
@@ -57,6 +59,7 @@ export default function MainLayout() {
       <GlobalPlayGlyphNormalizer />
       <DetailEpisodeEnhancer />
       <DetailResumeCardPolish />
+      <DetailDescriptionExpander />
       <DetailEpisodeVisualPolish />
       <SeasonMenuAnchorTracker />
       <WatchEpisodeAdvanceTracker />
