@@ -18,7 +18,7 @@ function completionStorageKey(mediaId: number) {
   return `flixit-completed-episodes:${localUserId()}:${mediaId}`;
 }
 
-function markEpisodeCompleted(mediaId: number, season: number, episode: number) {
+function markEpisodeCompleted(mediaId: number, season: number, episode: number, source = "player-ended") {
   try {
     const key = completionStorageKey(mediaId);
     const parsed = JSON.parse(localStorage.getItem(key) || "[]");
@@ -26,7 +26,7 @@ function markEpisodeCompleted(mediaId: number, season: number, episode: number) 
     set.add(`${Math.max(1, season)}:${Math.max(1, episode)}`);
     localStorage.setItem(key, JSON.stringify(Array.from(set)));
     window.dispatchEvent(new CustomEvent("flixit-episode-completion-changed", {
-      detail: { mediaId, season, episode, completed: true, source: "player-next" },
+      detail: { mediaId, season, episode, completed: true, source },
     }));
   } catch {}
 }
@@ -50,19 +50,40 @@ function isForwardEpisode(previous: any, current: any) {
 }
 
 /**
- * Keeps episode completion and Continue Watching aligned with the player's
- * forward-arrow navigation. Opening an arbitrary later episode from Detail
- * never completes the episodes before it: only watch -> next does.
+ * Completion and Continue Watching intentionally use two different signals:
+ * - a real HTMLMediaElement `ended` event marks the current episode completed;
+ * - navigating with the player's forward arrow only moves Continue Watching to
+ *   the target episode and NEVER completes the episode being skipped.
+ *
+ * `ended` does not bubble, therefore it is observed during the capture phase.
  */
 export default function WatchEpisodeAdvanceTracker() {
   const location = useLocation();
   const { items, saveProgress } = useContinueWatching();
   const previousRef = useRef<any>(null);
   const itemsRef = useRef<any[]>(items || []);
+  const locationRef = useRef({ pathname: location.pathname, search: location.search });
 
   useEffect(() => {
     itemsRef.current = items || [];
   }, [items]);
+
+  useEffect(() => {
+    locationRef.current = { pathname: location.pathname, search: location.search };
+  }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    const onEnded = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLMediaElement)) return;
+      const current = parseWatchLocation(locationRef.current.pathname, locationRef.current.search);
+      if (!current?.mediaId) return;
+      markEpisodeCompleted(current.mediaId, current.season, current.episode, "player-ended");
+    };
+
+    document.addEventListener("ended", onEnded, true);
+    return () => document.removeEventListener("ended", onEnded, true);
+  }, []);
 
   useEffect(() => {
     const current = parseWatchLocation(location.pathname, location.search);
@@ -71,19 +92,17 @@ export default function WatchEpisodeAdvanceTracker() {
 
     if (!isForwardEpisode(previous, current)) return;
 
-    // WatchPage persists the outgoing episode during unmount. Apply the new
-    // target just after that cleanup. Progress refreshes must not cancel this
-    // timer, hence items are read through a ref rather than being a dependency.
+    // WatchPage persists the outgoing episode while route state changes. Apply
+    // the target shortly afterwards so Continue Watching resumes the episode the
+    // user actually moved to. Importantly, no completion is written here.
     const timer = window.setTimeout(() => {
-      markEpisodeCompleted(previous.mediaId, previous.season, previous.episode);
-
       const existing = (itemsRef.current || []).find((item: any) => Number(item?.tmdb_id || 0) === current.mediaId);
       saveProgress({
         tmdb_id: current.mediaId,
         media_type: "tv",
-        // The backend ignores values below 10 seconds. Ten records the new
-        // episode, while WatchPage still starts it at 0 because resume rewind
-        // is only applied after 30 seconds.
+        // The backend ignores values below 10 seconds. Ten records the target
+        // episode while WatchPage still starts from 0 because resume rewind is
+        // only used after 30 seconds.
         progress: 10,
         duration: Math.max(60, Number(existing?.duration || 2700)),
         title: existing?.title || `Serie TV ${current.mediaId}`,
