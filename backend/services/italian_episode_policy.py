@@ -1,10 +1,11 @@
-"""Annotate TV episodes with Italian-audio availability from the active source.
+"""Annotate TV episodes with strict Italian-audio availability from the active source.
 
-The detail page keeps the full TMDB episode list, but episodes that the source
-explicitly reports as unavailable or original-language-only are marked as
-"Disponibile prossimamente in italiano". Pending entries are rechecked often,
-so they become playable automatically when the source starts publishing the
-Italian version.
+The detail page keeps the full TMDB episode list, but an episode is playable only
+when the source explicitly advertises Italian audio. Episodes that are missing,
+not aired yet, original-language-only, or whose source payload has no explicit
+Italian-language evidence are marked as "Disponibile prossimamente in italiano".
+Pending entries are rechecked frequently, so they become playable automatically
+as soon as the source starts publishing the Italian version.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ USER_AGENT = (
     "Chrome/122.0.0.0 Safari/537.36"
 )
 ROUTE_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
+POLICY_VERSION = "strict-explicit-it-v2"
 
 _client: Optional[httpx.AsyncClient] = None
 _cache: dict[tuple[int, int, int], tuple[float, dict]] = {}
@@ -58,7 +60,7 @@ def _is_italian(value: Any) -> bool:
     text = _normal(value)
     if not text:
         return False
-    if text in {"it", "ita", "it-it", "italian", "italiano", "italiana"}:
+    if text in {"it", "ita", "it-it", "italian", "italiano", "italiana", "dub ita", "doppiato italiano"}:
         return True
     return bool(re.search(r"(?:^|[^a-z])(it-it|ita|italian(?:o|a)?)(?:$|[^a-z])", text))
 
@@ -74,7 +76,7 @@ def _is_original_only(value: Any) -> bool:
     return bool(re.search(r"(?:^|[^a-z])(en-us|en-gb|eng|english)(?:$|[^a-z])", text))
 
 
-def _leaf_strings(value: Any, limit: int = 30) -> list[str]:
+def _leaf_strings(value: Any, limit: int = 40) -> list[str]:
     out: list[str] = []
 
     def walk(node: Any) -> None:
@@ -114,12 +116,20 @@ def _language_hints(payload: dict) -> list[str]:
                 key = _normal(raw_key).replace("-", "")
                 if any(marker in key for marker in ("lang", "locale", "audio", "dub", "voice")):
                     add(value)
-                if str(raw_key).lower() == "src" and isinstance(value, str):
+                if str(raw_key).lower() in {"src", "url", "embed", "embed_url", "player"} and isinstance(value, str):
                     try:
                         query = parse_qs(urlparse(value).query)
                     except Exception:
                         query = {}
-                    for query_key in ("lang", "language", "locale", "audio", "audio_language", "audio-lang"):
+                    for query_key in (
+                        "lang",
+                        "language",
+                        "locale",
+                        "audio",
+                        "audio_language",
+                        "audio-lang",
+                        "dub",
+                    ):
                         for query_value in query.get(query_key, []):
                             add(query_value)
                 if isinstance(value, (dict, list, tuple)):
@@ -150,6 +160,7 @@ def _result(available: bool, status: str, *, source_available: bool, hints: list
         "source_available": bool(source_available),
         "availability_label": None if available else "Disponibile prossimamente in italiano",
         "detected_languages": (hints or [])[:8],
+        "italian_audio_policy_version": POLICY_VERSION,
     }
 
 
@@ -180,49 +191,60 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
         try:
             response = await _http().get(f"{VIXSRC_BASE}/api/tv/{tmdb_id}/{season}/{episode}")
         except Exception:
-            result = _result(True, "unknown", source_available=True)
-            _cache[key] = (now + 90.0, result)
+            # Transport failures are temporary. Do not mass-hide an entire season
+            # because the source is momentarily unreachable; retry very soon.
+            result = _result(True, "verification_error", source_available=True)
+            _cache[key] = (now + 45.0, result)
             return dict(result)
 
         if response.status_code in {404, 410, 422}:
             result = _result(False, "not_published", source_available=False)
-            _cache[key] = (now + 120.0, result)
+            _cache[key] = (now + 90.0, result)
             return dict(result)
         if response.status_code != 200:
-            result = _result(True, "unknown", source_available=True)
-            _cache[key] = (now + 90.0, result)
+            result = _result(True, "verification_error", source_available=True)
+            _cache[key] = (now + 45.0, result)
             return dict(result)
 
         try:
             payload = response.json()
         except Exception:
-            result = _result(True, "unknown", source_available=True)
-            _cache[key] = (now + 90.0, result)
+            result = _result(True, "verification_error", source_available=True)
+            _cache[key] = (now + 45.0, result)
             return dict(result)
 
         if not isinstance(payload, dict) or not _source_url(payload):
             result = _result(False, "not_published", source_available=False)
-            _cache[key] = (now + 120.0, result)
+            _cache[key] = (now + 90.0, result)
             return dict(result)
 
         hints = _language_hints(payload)
         if any(_is_italian(value) for value in hints):
+            # Positive Italian evidence is the only state that enables playback.
             result = _result(True, "italian", source_available=True, hints=hints)
             ttl = 30 * 60.0
-        elif hints and any(_is_original_only(value) for value in hints):
+        elif any(_is_original_only(value) for value in hints):
             result = _result(False, "original_only", source_available=True, hints=hints)
-            ttl = 120.0
+            ttl = 90.0
         else:
-            # No explicit audio metadata: do not hide a playable episode merely
-            # because the provider omitted the language tag.
-            result = _result(True, "unknown", source_available=True, hints=hints)
-            ttl = 5 * 60.0
+            # VixSrc's player defaults to the original/English language when no
+            # language is explicitly supplied. Therefore an untagged source is
+            # not considered Italian. This fail-closed rule prevents freshly
+            # published original-language episodes from appearing as dubbed IT.
+            result = _result(False, "italian_not_confirmed", source_available=True, hints=hints)
+            ttl = 90.0
 
         _cache[key] = (now + ttl, result)
         return dict(result)
 
 
-async def _annotate_episode(tmdb_id: int, season_number: int, episode: dict, index: int, semaphore: asyncio.Semaphore) -> dict:
+async def _annotate_episode(
+    tmdb_id: int,
+    season_number: int,
+    episode: dict,
+    index: int,
+    semaphore: asyncio.Semaphore,
+) -> dict:
     row = dict(episode or {})
     number = int(row.get("episode_number") or index + 1)
     if _future_episode(row):
@@ -276,8 +298,9 @@ def install_italian_episode_policy(app) -> bool:
         return {
             **value,
             "episodes": annotated,
-            "italian_audio_policy": "source_metadata_recheck",
-            "pending_recheck_seconds": 120,
+            "italian_audio_policy": "explicit_italian_required",
+            "italian_audio_policy_version": POLICY_VERSION,
+            "pending_recheck_seconds": 90,
         }
 
     app.include_router(router)
@@ -285,4 +308,4 @@ def install_italian_episode_policy(app) -> bool:
     return True
 
 
-__all__ = ["install_italian_episode_policy"]
+__all__ = ["install_italian_episode_policy", "POLICY_VERSION"]
