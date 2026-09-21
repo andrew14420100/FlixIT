@@ -1,6 +1,9 @@
 /* FLIXIT global visual polish — desktop + mobile. */
 :root {
   --flixit-font: "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --flixit-red: #e50914;
+  --flixit-control-bg: rgba(255,255,255,.065);
+  --flixit-control-border: rgba(255,255,255,.15);
 }
 
 html,
@@ -31,7 +34,7 @@ button,
   font-weight: 600 !important;
 }
 
-/* Important headings stay strong; ordinary item titles are deliberately softer. */
+/* Important headings stay strong; ordinary item titles stay calmer. */
 h1,
 h2,
 [data-testid="home-page"] .row-title,
@@ -84,73 +87,159 @@ h2,
   color: #fff;
 }
 
-/* Episode rows — let artwork/title carry the row; controls are secondary. */
+/* -------------------------------------------------------------------------
+   DETAIL / EPISODES — desktop
+   The episode image/title remain primary; progress and actions are clear but
+   never enclosed in one giant capsule.
+   ------------------------------------------------------------------------- */
 #episodes .flixit-desktop-episode-row {
-  grid-template-columns: 46px 176px minmax(170px, 235px) minmax(0, 1fr) 70px minmax(110px, 155px) auto !important;
-  min-height: 88px !important;
+  grid-template-columns: 46px 176px minmax(170px, 235px) minmax(0, 1fr) 66px minmax(150px, 185px) minmax(215px, auto) !important;
+  min-height: 92px !important;
+  border-color: rgba(255,255,255,.09) !important;
+  transition: background-color 160ms ease, border-color 160ms ease !important;
 }
 
+#episodes .flixit-desktop-episode-row:hover {
+  background: rgba(255,255,255,.035) !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+
+/* Progress block. */
 #episodes .flixit-desktop-episode-row > :nth-child(6) {
-  max-width: 150px;
-  justify-self: end;
-  width: 100%;
+  max-width: 180px !important;
+  min-width: 145px !important;
+  width: 100% !important;
+  justify-self: end !important;
+  align-self: center !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  color: rgba(255,255,255,.62) !important;
+  font-size: 12px !important;
+  line-height: 1.1 !important;
 }
 
+/* The first child is the progress rail in the current Detail implementation. */
 #episodes .flixit-desktop-episode-row > :nth-child(6) > div:first-child {
-  height: 3px !important;
-  opacity: .78;
+  position: relative !important;
+  width: 100% !important;
+  height: 5px !important;
+  min-height: 5px !important;
+  overflow: hidden !important;
+  border-radius: 999px !important;
+  background: rgba(255,255,255,.16) !important;
+  opacity: 1 !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.35) !important;
 }
 
+#episodes .flixit-desktop-episode-row > :nth-child(6) > div:first-child > * {
+  height: 100% !important;
+  min-height: 100% !important;
+  border-radius: inherit !important;
+}
+
+#episodes .flixit-desktop-episode-row > :nth-child(6) > div:first-child > div,
+#episodes .flixit-desktop-episode-row > :nth-child(6) > div:first-child > span,
+#episodes .flixit-desktop-episode-row > :nth-child(6) [role="progressbar"] > * {
+  background: var(--flixit-red) !important;
+}
+
+#episodes .flixit-desktop-episode-row > :nth-child(6) .MuiTypography-root,
+#episodes .flixit-desktop-episode-row > :nth-child(6) small,
+#episodes .flixit-desktop-episode-row > :nth-child(6) span:not(:first-child) {
+  color: rgba(255,255,255,.60) !important;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+}
+
+/* Explicit actions injected by DetailEpisodeEnhancer. */
 #episodes .flixit-episode-action-cell {
   min-width: 0 !important;
-  padding: 0 12px 0 8px !important;
+  padding: 0 12px 0 16px !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+#episodes .flixit-episode-action-cell > :not(.flixit-episode-actions) {
+  display: none !important;
 }
 
 #episodes .flixit-episode-actions.is-desktop {
   width: auto !important;
-  gap: 7px !important;
+  min-width: 0 !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+  gap: 8px !important;
   padding: 0 !important;
+  margin: 0 !important;
   border: 0 !important;
+  border-radius: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
+  backdrop-filter: none !important;
 }
 
 #episodes .flixit-episode-actions.is-desktop .flixit-episode-action {
   min-width: 0 !important;
-  height: 32px !important;
-  min-height: 32px !important;
-  padding: 0 10px !important;
-  border-radius: 7px !important;
-  border: 1px solid rgba(255,255,255,.14) !important;
-  font-size: 12px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  padding: 0 13px !important;
+  border-radius: 8px !important;
+  border: 1px solid var(--flixit-control-border) !important;
+  font-size: 12.5px !important;
   font-weight: 600 !important;
+  line-height: 1 !important;
   box-shadow: none !important;
+  letter-spacing: 0 !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-action svg {
+  width: 16px !important;
+  height: 16px !important;
+  flex: 0 0 16px !important;
 }
 
 #episodes .flixit-episode-actions.is-desktop .flixit-episode-play {
-  background: rgba(255,255,255,.95) !important;
-  border-color: rgba(255,255,255,.95) !important;
-  color: #090909 !important;
+  background: #fff !important;
+  border-color: #fff !important;
+  color: #080808 !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-play:hover {
+  background: rgba(255,255,255,.86) !important;
+  border-color: rgba(255,255,255,.86) !important;
+  transform: translateY(-1px) !important;
 }
 
 #episodes .flixit-episode-actions.is-desktop .flixit-episode-complete,
 #episodes .flixit-episode-actions.is-desktop .flixit-episode-rewatch {
-  background: rgba(255,255,255,.045) !important;
-  color: rgba(255,255,255,.82) !important;
+  background: var(--flixit-control-bg) !important;
+  color: rgba(255,255,255,.88) !important;
+}
+
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-complete:hover,
+#episodes .flixit-episode-actions.is-desktop .flixit-episode-rewatch:hover {
+  background: rgba(255,255,255,.115) !important;
+  border-color: rgba(255,255,255,.25) !important;
 }
 
 #episodes .flixit-episode-actions.is-desktop .flixit-episode-complete.is-complete {
-  border-color: rgba(229,9,20,.48) !important;
-  background: rgba(229,9,20,.10) !important;
+  border-color: rgba(229,9,20,.64) !important;
+  background: rgba(229,9,20,.14) !important;
   color: #fff !important;
 }
 
 #episodes .flixit-episode-actions.is-desktop .flixit-episode-check {
-  width: 14px !important;
-  height: 14px !important;
+  width: 15px !important;
+  height: 15px !important;
+  border-width: 1.5px !important;
 }
 
-/* Episodes that exist only in original language stay visible but cannot be played. */
+/* Episodes that exist only in original language stay visible but cannot play. */
 .flixit-italian-pending-note {
   display: block;
   margin-top: 5px;
@@ -183,6 +272,13 @@ h2,
   filter: saturate(.72) brightness(.84);
 }
 
+/* Season menu follows the trigger itself. Do not animate its coordinates: an
+   animation here creates visible lag during scroll and makes it look detached. */
+.flixit-frozen-season-menu.flixit-season-menu-anchored {
+  transition: none !important;
+  transform: none !important;
+}
+
 @media (max-width: 899px) {
   .mobile-detail-overview,
   .mobile-detail-genres,
@@ -195,14 +291,31 @@ h2,
     font-weight: 600 !important;
   }
 
+  .mobile-detail-episode-progress {
+    height: 4px !important;
+    border-radius: 999px !important;
+    background: rgba(255,255,255,.20) !important;
+    overflow: hidden !important;
+  }
+
+  .mobile-detail-episode-progress > b {
+    height: 100% !important;
+    border-radius: inherit !important;
+    background: var(--flixit-red) !important;
+    box-shadow: 0 0 8px rgba(229,9,20,.28) !important;
+  }
+
+  /* No shared capsule: each action is a distinct, readable FLIXIT control. */
   .mobile-detail-episode-list > .mobile-detail-episode + .flixit-episode-actions.is-mobile {
     display: flex !important;
-    align-items: center;
-    gap: 8px !important;
-    margin: -2px 0 12px !important;
-    padding: 5px 0 10px !important;
+    align-items: center !important;
+    gap: 9px !important;
+    margin: -2px 0 14px !important;
+    padding: 7px 0 10px !important;
     border: 0 !important;
+    border-radius: 0 !important;
     background: transparent !important;
+    box-shadow: none !important;
   }
 
   .mobile-detail-episode-list > .mobile-detail-episode.is-italian-pending + .flixit-episode-actions.is-mobile {
@@ -211,25 +324,33 @@ h2,
 
   .flixit-episode-actions.is-mobile .flixit-episode-action {
     width: auto !important;
-    flex: 1 1 0;
-    min-height: 38px !important;
-    border-radius: 7px !important;
-    padding: 0 10px !important;
-    font-size: 13px !important;
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    min-height: 43px !important;
+    height: 43px !important;
+    border-radius: 9px !important;
+    padding: 0 12px !important;
+    font-size: 13.5px !important;
     font-weight: 600 !important;
     box-shadow: none !important;
   }
 
   .flixit-episode-actions.is-mobile .flixit-episode-play {
-    background: rgba(255,255,255,.95) !important;
+    background: #fff !important;
+    border-color: #fff !important;
     color: #070707 !important;
   }
 
   .flixit-episode-actions.is-mobile .flixit-episode-complete,
   .flixit-episode-actions.is-mobile .flixit-episode-rewatch {
-    background: rgba(255,255,255,.045) !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
-    color: rgba(255,255,255,.86) !important;
+    background: rgba(255,255,255,.055) !important;
+    border: 1px solid rgba(255,255,255,.14) !important;
+    color: rgba(255,255,255,.90) !important;
+  }
+
+  .flixit-episode-actions.is-mobile .flixit-episode-complete.is-complete {
+    background: rgba(229,9,20,.14) !important;
+    border-color: rgba(229,9,20,.62) !important;
   }
 
   .mobile-detail-more {
