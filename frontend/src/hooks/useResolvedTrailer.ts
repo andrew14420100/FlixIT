@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "direct-it-tiered-v6";
+const TRAILER_QUERY_VERSION = "direct-it-official-second-pass-v7";
 
 function directTrailerUrl(data: any) {
   for (const value of [data?.trailer_url, data?.manifest_url, data?.trailer_key]) {
@@ -11,6 +11,11 @@ function directTrailerUrl(data: any) {
     if (/^https?:\/\//i.test(text) || text.startsWith("/")) return text;
   }
   return null;
+}
+
+function isItalianLanguage(value: any) {
+  const lang = String(value || "").trim().toLowerCase().replace("_", "-");
+  return lang === "it" || lang.startsWith("it-") || lang === "ita" || lang.includes("italian");
 }
 
 export function browserSupportsHdr() {
@@ -54,9 +59,20 @@ export default function useResolvedTrailer(
     refetchInterval: (query: any) => {
       const data = query?.state?.data || {};
       const candidate = directTrailerUrl(data);
-      if (!enabled || data?.enabled === false || candidate) return false;
+      if (!enabled || data?.enabled === false) return false;
+
+      // An English trailer remains playable immediately, but the backend is
+      // allowed a short second-pass window to replace it with an official
+      // Italian trailer/teaser. Italian candidates stop polling at once.
+      if (candidate && isItalianLanguage(data?.language || data?.candidate?.audio_language)) return false;
+
       const updates = Number(query?.state?.dataUpdateCount || 0);
-      return updates < 8 ? 2000 : false;
+      const backendRefreshing = data?.refresh_pending === true;
+      if (!candidate) return updates < 10 ? 2000 : false;
+      if (backendRefreshing || !isItalianLanguage(data?.language || data?.candidate?.audio_language)) {
+        return updates < 8 ? 2500 : false;
+      }
+      return false;
     },
     refetchIntervalInBackground: false,
   });
