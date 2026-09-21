@@ -4,6 +4,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { PLAY_GLYPH_PATH } from "src/components/PlayGlyph";
 
 const DETAIL_RE = /^\/(?:detail|browse)\/tv\/(\d+)(?:\/|$)/i;
+const episodeStillCache = new Map<string, Map<number, string>>();
+const episodeStillInflight = new Map<string, Promise<Map<number, string>>>();
 
 function userId() {
   let id = localStorage.getItem("netflix_user_id");
@@ -30,6 +32,7 @@ function readCompleted(mediaId: number) {
 function writeCompleted(mediaId: number, set: Set<string>) {
   try {
     localStorage.setItem(storageKey(mediaId), JSON.stringify(Array.from(set)));
+    window.dispatchEvent(new CustomEvent("flixit-episode-completion-changed", { detail: { mediaId } }));
   } catch {}
 }
 
@@ -49,6 +52,10 @@ function playSvg() {
   return `<svg viewBox="0 0 24 24" aria-hidden="true" data-flixit-play-glyph="true"><path d="${PLAY_GLYPH_PATH}" fill="currentColor"/></svg>`;
 }
 
+function replaySvg() {
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 5a7 7 0 1 1-6.32 10H8a5 5 0 1 0 4-8V10L7.5 6 12 2v3Z"/></svg>`;
+}
+
 function actionMarkup(mediaId: number, season: number, episode: number) {
   return `
     <button type="button" class="flixit-episode-action flixit-episode-play" data-flixit-episode-action="play" data-media-id="${mediaId}" data-season="${season}" data-episode="${episode}" aria-label="Riproduci episodio ${episode}">
@@ -56,6 +63,9 @@ function actionMarkup(mediaId: number, season: number, episode: number) {
     </button>
     <button type="button" class="flixit-episode-action flixit-episode-complete" data-flixit-episode-action="complete" data-media-id="${mediaId}" data-season="${season}" data-episode="${episode}" aria-pressed="false">
       <span class="flixit-episode-check" aria-hidden="true">✓</span><span>Completato</span>
+    </button>
+    <button type="button" class="flixit-episode-action flixit-episode-rewatch" data-flixit-episode-action="rewatch" data-media-id="${mediaId}" data-season="${season}" data-episode="${episode}" aria-label="Rivedi episodio ${episode} dall'inizio">
+      ${replaySvg()}<span>Rivedi</span>
     </button>
   `;
 }
@@ -89,9 +99,94 @@ function markCompletion(actions: HTMLElement, mediaId: number, season: number, e
     button.classList.toggle("is-complete", done);
     button.setAttribute("aria-pressed", done ? "true" : "false");
   }
+  actions.classList.toggle("has-completed-episode", done);
   const mobileRow = actions.previousElementSibling as HTMLElement | null;
   mobileRow?.classList.toggle("is-manual-complete", done);
   actions.closest<HTMLElement>(".flixit-desktop-episode-row")?.classList.toggle("is-manual-complete", done);
+}
+
+function absoluteEpisodeImage(value: any) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^https?:\/\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) return text;
+  if (text.startsWith("/")) return `https://image.tmdb.org/t/p/w500${text}`;
+  return "";
+}
+
+function episodeImageCandidates(episode: any) {
+  return [
+    episode?.still_path,
+    episode?.still_url,
+    episode?.image_url,
+    episode?.thumbnail_url,
+    episode?.backdrop_path,
+  ].map(absoluteEpisodeImage).filter(Boolean);
+}
+
+async function loadEpisodeStillMap(mediaId: number, season: number) {
+  const cacheKey = `${mediaId}:${season}`;
+  const cached = episodeStillCache.get(cacheKey);
+  if (cached) return cached;
+  const pending = episodeStillInflight.get(cacheKey);
+  if (pending) return pending;
+
+  const request = fetch(`/api/public/tv/${mediaId}/season/${season}`, { headers: { Accept: "application/json" } })
+    .then((response) => response.ok ? response.json() : null)
+    .then((payload) => {
+      const map = new Map<number, string>();
+      const used = new Set<string>();
+      const list = Array.isArray(payload?.episodes) ? payload.episodes : [];
+      list.forEach((episode: any, index: number) => {
+        const number = Math.max(1, Number(episode?.episode_number || index + 1));
+        const candidates = episodeImageCandidates(episode);
+        const distinct = candidates.find((url) => !used.has(url)) || candidates[0] || "";
+        if (distinct) {
+          used.add(distinct);
+          map.set(number, distinct);
+        }
+      });
+      episodeStillCache.set(cacheKey, map);
+      return map;
+    })
+    .catch(() => new Map<number, string>())
+    .finally(() => episodeStillInflight.delete(cacheKey));
+
+  episodeStillInflight.set(cacheKey, request);
+  return request;
+}
+
+function episodeNumberFromRow(row: HTMLElement) {
+  const text = String(row.textContent || "").trim();
+  const match = text.match(/^(\d+)(?:\.|\s)/);
+  return Math.max(0, Number(match?.[1] || 0));
+}
+
+async function syncEpisodeImages(mediaId: number) {
+  const season = selectedSeasonFromDom();
+  const stills = await loadEpisodeStillMap(mediaId, season);
+  if (!stills.size) return;
+
+  document.querySelectorAll<HTMLElement>(".mobile-detail-episode").forEach((row) => {
+    const episode = episodeNumberFromRow(row);
+    const img = row.querySelector<HTMLImageElement>("img");
+    const src = stills.get(episode);
+    if (img && src && img.src !== src) {
+      img.src = src;
+      img.removeAttribute("srcset");
+      img.dataset.flixitEpisodeStill = `${season}:${episode}`;
+    }
+  });
+
+  document.querySelectorAll<HTMLElement>("#episodes .flixit-desktop-episode-row").forEach((row) => {
+    const episode = episodeNumberFromRow(row);
+    const img = row.querySelector<HTMLImageElement>("img");
+    const src = stills.get(episode);
+    if (img && src && img.src !== src) {
+      img.src = src;
+      img.removeAttribute("srcset");
+      img.dataset.flixitEpisodeStill = `${season}:${episode}`;
+    }
+  });
 }
 
 function ensureMobileRows(mediaId: number) {
@@ -216,6 +311,7 @@ export default function DetailEpisodeEnhancer() {
         freezeSeasonMenus();
         ensureMobileRows(mediaId);
         ensureDesktopRows(mediaId);
+        syncEpisodeImages(mediaId);
       });
     };
 
@@ -236,6 +332,12 @@ export default function DetailEpisodeEnhancer() {
         return;
       }
 
+      if (kind === "rewatch") {
+        window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+        navigate(`/watch/tv/${mediaId}?s=${season}&e=${episode}&t=0`);
+        return;
+      }
+
       if (kind === "complete") {
         const set = readCompleted(mediaId);
         const key = episodeKey(season, episode);
@@ -246,14 +348,18 @@ export default function DetailEpisodeEnhancer() {
       }
     };
 
+    const onCompletionChanged = () => scan();
+
     scan();
     document.addEventListener("click", onClick, true);
+    window.addEventListener("flixit-episode-completion-changed", onCompletionChanged as EventListener);
     const observer = new MutationObserver(scan);
     observer.observe(document.body, { subtree: true, childList: true });
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
       document.removeEventListener("click", onClick, true);
+      window.removeEventListener("flixit-episode-completion-changed", onCompletionChanged as EventListener);
       observer.disconnect();
       document.documentElement.classList.remove("flixit-season-menu-open");
     };
