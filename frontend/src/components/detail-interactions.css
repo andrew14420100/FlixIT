@@ -1,4 +1,13 @@
 /* Shared desktop/mobile detail interactions. */
+html.flixit-season-menu-open,
+html.flixit-season-menu-open body {
+  overflow-y: auto !important;
+}
+
+html.flixit-season-menu-open body {
+  padding-right: 0 !important;
+}
+
 .flixit-frozen-season-menu {
   position: fixed !important;
   top: var(--flixit-season-menu-top) !important;
