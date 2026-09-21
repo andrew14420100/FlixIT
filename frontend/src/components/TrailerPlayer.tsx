@@ -32,6 +32,34 @@ function routeIdentity() {
     : null;
 }
 
+function prepareInlineAutoplay(video: HTMLVideoElement | null, muted: boolean) {
+  if (!video) return;
+  try {
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
+    video.controls = false;
+    video.muted = !!muted;
+    video.defaultMuted = !!muted;
+    if (muted) video.setAttribute("muted", "");
+    else video.removeAttribute("muted");
+  } catch {}
+}
+
+function tryPlay(video: HTMLVideoElement | null) {
+  if (!video) return;
+  prepareInlineAutoplay(video, true);
+  const promise = video.play();
+  if (promise?.catch) {
+    promise.catch(() => {
+      window.setTimeout(() => {
+        prepareInlineAutoplay(video, true);
+        video.play().catch(() => undefined);
+      }, 120);
+    });
+  }
+}
+
 /** Direct MP4/HLS trailer player. Audio changes are purely imperative and never
  * rebuild HLS, replace src or reset currentTime. */
 export default function TrailerPlayer({
@@ -47,6 +75,7 @@ export default function TrailerPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const playingRef = useRef(playing);
+  const mutedRef = useRef(muted);
   const onErrorRef = useRef(onError);
   const onPlayingRef = useRef(onPlaying);
   const onEndedRef = useRef(onEnded);
@@ -69,6 +98,10 @@ export default function TrailerPlayer({
   }, [playing]);
 
   useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
+
+  useEffect(() => {
     onErrorRef.current = onError;
   }, [onError]);
 
@@ -80,29 +113,39 @@ export default function TrailerPlayer({
     onEndedRef.current = onEnded;
   }, [onEnded]);
 
-  // Never put muted in the source-initialization dependencies. This changes the
-  // live media element only, preserving currentTime and buffered data.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
-    video.muted = !!muted;
+    prepareInlineAutoplay(video, !!muted);
     if (currentTime > 0 && Math.abs(video.currentTime - currentTime) > 0.25) {
       try {
         video.currentTime = currentTime;
       } catch {}
     }
-    if (playingRef.current && video.paused) {
-      video.play().catch(() => undefined);
-    }
+    if (playingRef.current && video.paused) tryPlay(video);
   }, [muted]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (playing) video.play().catch(() => undefined);
+    prepareInlineAutoplay(video, mutedRef.current);
+    if (playing) tryPlay(video);
     else video.pause();
   }, [playing, playbackKey]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible" || !playingRef.current) return;
+      tryPlay(videoRef.current);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pageshow", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pageshow", onVisibility);
+    };
+  }, []);
 
   useEffect(() => {
     if (!direct || !playbackKey) return;
@@ -111,6 +154,7 @@ export default function TrailerPlayer({
 
     hlsRef.current?.destroy();
     hlsRef.current = null;
+    prepareInlineAutoplay(video, mutedRef.current);
 
     if (isHlsUrl(playbackKey) && Hls.isSupported()) {
       const hls = new Hls({
@@ -126,6 +170,11 @@ export default function TrailerPlayer({
       hlsRef.current = hls;
       hls.loadSource(playbackKey);
       hls.attachMedia(video);
+
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        prepareInlineAutoplay(video, mutedRef.current);
+        if (playingRef.current) tryPlay(video);
+      });
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (hls.levels?.length) {
@@ -156,7 +205,8 @@ export default function TrailerPlayer({
             hls.nextLevel = best.index;
           }
         }
-        if (playingRef.current) video.play().catch(() => undefined);
+        prepareInlineAutoplay(video, mutedRef.current);
+        if (playingRef.current) tryPlay(video);
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -187,7 +237,8 @@ export default function TrailerPlayer({
 
     video.src = playbackKey;
     video.load();
-    if (playingRef.current) video.play().catch(() => undefined);
+    prepareInlineAutoplay(video, mutedRef.current);
+    if (playingRef.current) tryPlay(video);
 
     return () => {
       video.pause();
@@ -197,6 +248,11 @@ export default function TrailerPlayer({
   }, [direct, playbackKey]);
 
   if (!playbackKey || !direct) return null;
+
+  const onReadyToPlay = () => {
+    prepareInlineAutoplay(videoRef.current, mutedRef.current);
+    if (playingRef.current) tryPlay(videoRef.current);
+  };
 
   return (
     <div
@@ -215,7 +271,12 @@ export default function TrailerPlayer({
         loop={loop}
         playsInline
         preload="auto"
+        controls={false}
         disablePictureInPicture
+        disableRemotePlayback
+        onLoadedMetadata={onReadyToPlay}
+        onLoadedData={onReadyToPlay}
+        onCanPlay={onReadyToPlay}
         onPlaying={() => onPlayingRef.current?.()}
         onEnded={() => onEndedRef.current?.()}
         onError={() => {
