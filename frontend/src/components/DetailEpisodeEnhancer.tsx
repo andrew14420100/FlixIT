@@ -5,6 +5,7 @@ import { PLAY_GLYPH_PATH } from "src/components/PlayGlyph";
 
 const DETAIL_RE = /^\/(?:detail|browse)\/tv\/(\d+)(?:\/|$)/i;
 const episodeStillCache = new Map<string, Map<number, string>>();
+const episodeAvailabilityCache = new Map<string, Map<number, { available: boolean | null; label: string; status: string }>>();
 const episodeStillInflight = new Map<string, Promise<Map<number, string>>>();
 
 function userId() {
@@ -123,6 +124,24 @@ function episodeImageCandidates(episode: any) {
   ].map(absoluteEpisodeImage).filter(Boolean);
 }
 
+function normalizeAvailability(episode: any) {
+  if (episode?.italian_available === false || episode?.vixsrc_available === false) {
+    return {
+      available: false,
+      label: String(episode?.availability_label || "Disponibile prossimamente in italiano"),
+      status: String(episode?.italian_audio_status || "not_published"),
+    };
+  }
+  if (episode?.italian_available === true) {
+    return {
+      available: true,
+      label: "",
+      status: String(episode?.italian_audio_status || "italian"),
+    };
+  }
+  return { available: null, label: "", status: "unknown" };
+}
+
 async function loadEpisodeStillMap(mediaId: number, season: number) {
   const cacheKey = `${mediaId}:${season}`;
   const cached = episodeStillCache.get(cacheKey);
@@ -130,10 +149,11 @@ async function loadEpisodeStillMap(mediaId: number, season: number) {
   const pending = episodeStillInflight.get(cacheKey);
   if (pending) return pending;
 
-  const request = fetch(`/api/public/tv/${mediaId}/season/${season}`, { headers: { Accept: "application/json" } })
+  const request = fetch(`/api/public/tv/${mediaId}/season/${season}`, { headers: { Accept: "application/json" }, cache: "no-store" })
     .then((response) => response.ok ? response.json() : null)
     .then((payload) => {
       const map = new Map<number, string>();
+      const availability = new Map<number, { available: boolean | null; label: string; status: string }>();
       const used = new Set<string>();
       const list = Array.isArray(payload?.episodes) ? payload.episodes : [];
       list.forEach((episode: any, index: number) => {
@@ -144,8 +164,10 @@ async function loadEpisodeStillMap(mediaId: number, season: number) {
           used.add(distinct);
           map.set(number, distinct);
         }
+        availability.set(number, normalizeAvailability(episode));
       });
       episodeStillCache.set(cacheKey, map);
+      episodeAvailabilityCache.set(cacheKey, availability);
       return map;
     })
     .catch(() => new Map<number, string>())
@@ -161,32 +183,82 @@ function episodeNumberFromRow(row: HTMLElement) {
   return Math.max(0, Number(match?.[1] || 0));
 }
 
-async function syncEpisodeImages(mediaId: number) {
-  const season = selectedSeasonFromDom();
-  const stills = await loadEpisodeStillMap(mediaId, season);
-  if (!stills.size) return;
+function applyAvailabilityToRow(row: HTMLElement, status: any, mobile: boolean) {
+  const pending = status?.available === false;
+  row.classList.toggle("is-italian-pending", pending);
+  if (pending) {
+    row.setAttribute("aria-disabled", "true");
+    row.dataset.flixitItalianStatus = status?.status || "pending";
+  } else {
+    row.removeAttribute("aria-disabled");
+    delete row.dataset.flixitItalianStatus;
+  }
+
+  let note = row.querySelector<HTMLElement>(":scope .flixit-italian-pending-note");
+  if (!pending) {
+    note?.remove();
+    return;
+  }
+
+  const host = mobile
+    ? row.querySelector<HTMLElement>(".mobile-detail-episode-copy")
+    : (row.children?.[2] as HTMLElement | undefined);
+  if (!host) return;
+
+  if (!note) {
+    note = document.createElement("span");
+    note.className = "flixit-italian-pending-note";
+    host.appendChild(note);
+  }
+  note.textContent = status?.label || "Disponibile prossimamente in italiano";
+}
+
+function syncItalianAvailability(mediaId: number, season: number) {
+  const statuses = episodeAvailabilityCache.get(`${mediaId}:${season}`);
+  if (!statuses) return;
 
   document.querySelectorAll<HTMLElement>(".mobile-detail-episode").forEach((row) => {
     const episode = episodeNumberFromRow(row);
-    const img = row.querySelector<HTMLImageElement>("img");
-    const src = stills.get(episode);
-    if (img && src && img.src !== src) {
-      img.src = src;
-      img.removeAttribute("srcset");
-      img.dataset.flixitEpisodeStill = `${season}:${episode}`;
-    }
+    if (!episode) return;
+    applyAvailabilityToRow(row, statuses.get(episode), true);
   });
 
   document.querySelectorAll<HTMLElement>("#episodes .flixit-desktop-episode-row").forEach((row) => {
     const episode = episodeNumberFromRow(row);
-    const img = row.querySelector<HTMLImageElement>("img");
-    const src = stills.get(episode);
-    if (img && src && img.src !== src) {
-      img.src = src;
-      img.removeAttribute("srcset");
-      img.dataset.flixitEpisodeStill = `${season}:${episode}`;
-    }
+    if (!episode) return;
+    applyAvailabilityToRow(row, statuses.get(episode), false);
   });
+}
+
+async function syncEpisodeImages(mediaId: number) {
+  const season = selectedSeasonFromDom();
+  const stills = await loadEpisodeStillMap(mediaId, season);
+
+  if (stills.size) {
+    document.querySelectorAll<HTMLElement>(".mobile-detail-episode").forEach((row) => {
+      const episode = episodeNumberFromRow(row);
+      const img = row.querySelector<HTMLImageElement>("img");
+      const src = stills.get(episode);
+      if (img && src && img.src !== src) {
+        img.src = src;
+        img.removeAttribute("srcset");
+        img.dataset.flixitEpisodeStill = `${season}:${episode}`;
+      }
+    });
+
+    document.querySelectorAll<HTMLElement>("#episodes .flixit-desktop-episode-row").forEach((row) => {
+      const episode = episodeNumberFromRow(row);
+      const img = row.querySelector<HTMLImageElement>("img");
+      const src = stills.get(episode);
+      if (img && src && img.src !== src) {
+        img.src = src;
+        img.removeAttribute("srcset");
+        img.dataset.flixitEpisodeStill = `${season}:${episode}`;
+      }
+    });
+  }
+
+  syncItalianAvailability(mediaId, season);
 }
 
 function ensureMobileRows(mediaId: number) {
@@ -240,8 +312,6 @@ function ensureDesktopRows(mediaId: number) {
     row.classList.add("flixit-desktop-episode-row");
     removeGeneratedEpisodeLabels(row);
 
-    // Keep the progress rail visible even at 100%. Completion state is now a
-    // separate signal and must never erase useful viewing progress information.
     const progressCell = row.children?.[5] as HTMLElement | undefined;
     if (progressCell) {
       progressCell.style.removeProperty("opacity");
@@ -280,8 +350,6 @@ export default function DetailEpisodeEnhancer() {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        // SeasonMenuAnchorTracker is the single source of truth for popup
-        // positioning. Do not freeze Material UI coordinates here.
         ensureMobileRows(mediaId);
         ensureDesktopRows(mediaId);
         syncEpisodeImages(mediaId);
@@ -290,6 +358,14 @@ export default function DetailEpisodeEnhancer() {
 
     const onClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
+      const pendingRow = target?.closest?.(".mobile-detail-episode.is-italian-pending, #episodes .flixit-desktop-episode-row.is-italian-pending") as HTMLElement | null;
+      if (pendingRow) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        return;
+      }
+
       const action = target?.closest?.("[data-flixit-episode-action]") as HTMLElement | null;
       if (!action) return;
       event.preventDefault();
