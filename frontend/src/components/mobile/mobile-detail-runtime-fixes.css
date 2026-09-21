@@ -1,5 +1,7 @@
 @media (max-width: 899px) {
-  /* Keep the season menu visually attached to its Select while the page scrolls. */
+  /* SeasonMenuAnchorTracker supplies fresh viewport coordinates every frame.
+     Do not animate top/left: doing so makes the popup visibly lag behind its
+     Stagione trigger during momentum scrolling. */
   .flixit-season-menu-anchored {
     position: fixed !important;
     top: var(--flixit-season-menu-top) !important;
@@ -8,16 +10,15 @@
     min-width: var(--flixit-season-menu-width) !important;
     margin: 0 !important;
     transform: none !important;
-    transition: top 90ms linear, left 90ms linear !important;
+    transition: none !important;
   }
 
-  /* The hero keeps the full trailer frame visible instead of cropping the
-     horizontal video into a portrait-shaped viewport. The backdrop remains
-     behind it and the existing shade/logo continue to sit above it. */
+  /* Keep the complete horizontal trailer frame visible on phones. */
   .mobile-detail-trailer {
     display: grid !important;
     place-items: center !important;
     background: #050505 !important;
+    overflow: hidden !important;
   }
 
   .mobile-detail-trailer [data-testid="trailer-player"] {
