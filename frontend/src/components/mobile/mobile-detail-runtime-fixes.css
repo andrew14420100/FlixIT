@@ -1,0 +1,45 @@
+@media (max-width: 899px) {
+  /* Keep the season menu visually attached to its Select while the page scrolls. */
+  .flixit-season-menu-anchored {
+    position: fixed !important;
+    top: var(--flixit-season-menu-top) !important;
+    left: var(--flixit-season-menu-left) !important;
+    width: var(--flixit-season-menu-width) !important;
+    min-width: var(--flixit-season-menu-width) !important;
+    margin: 0 !important;
+    transform: none !important;
+    transition: top 90ms linear, left 90ms linear !important;
+  }
+
+  /* The hero keeps the full trailer frame visible instead of cropping the
+     horizontal video into a portrait-shaped viewport. The backdrop remains
+     behind it and the existing shade/logo continue to sit above it. */
+  .mobile-detail-trailer {
+    display: grid !important;
+    place-items: center !important;
+    background: #050505 !important;
+  }
+
+  .mobile-detail-trailer [data-testid="trailer-player"] {
+    width: 100% !important;
+    height: 100% !important;
+    background: #050505 !important;
+  }
+
+  .mobile-detail-trailer [data-testid="trailer-player"] video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+    object-position: center center !important;
+    transform: translate(-50%, -50%) scale(1) !important;
+    background: #050505 !important;
+  }
+
+  .mobile-detail-hero {
+    background: #050505 !important;
+  }
+
+  .mobile-detail-backdrop {
+    filter: saturate(.98) brightness(.92);
+  }
+}
