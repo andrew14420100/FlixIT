@@ -16,7 +16,9 @@ import { extendedApi } from "./store/slices/configuration";
 import palette from "./theme/palette";
 import router from "./routes";
 import MainLoadingScreen from "./components/MainLoadingScreen";
+import { installEpisodeAvailabilityFilter } from "./lib/installEpisodeAvailabilityFilter";
 
+installEpisodeAvailabilityFilter();
 store.dispatch(extendedApi.endpoints.getConfiguration.initiate(undefined));
 
 const queryClient = new QueryClient({
