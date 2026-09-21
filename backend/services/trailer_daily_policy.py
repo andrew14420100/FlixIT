@@ -20,14 +20,13 @@ from services.trailers.base import (
     TrailerCandidate,
     candidate_is_usable,
     candidate_sort_key,
-    language_rank,
     type_rank,
 )
 
 _INSTALLED = False
 ROME_TZ = ZoneInfo("Europe/Rome")
 DAILY_REFRESH_HOUR = 6
-TRAILER_POLICY_VERSION = "it-official-second-pass-v7"
+TRAILER_POLICY_VERSION = "it-official-second-pass-v8"
 
 
 def _seconds_until_rome_refresh(hour: int = DAILY_REFRESH_HOUR) -> float:
@@ -38,9 +37,28 @@ def _seconds_until_rome_refresh(hour: int = DAILY_REFRESH_HOUR) -> float:
     return max(1.0, (target - now).total_seconds())
 
 
+def _language_rank(value) -> int:
+    """Accept both ISO-639-1 and ffprobe/ISO-639-2 language tags."""
+    lang = str(value or "").strip().lower().replace("_", "-")
+    if lang in {"it", "ita", "italian", "italiano", "italiana"} or lang.startswith("it-"):
+        return 3
+    if lang in {"en", "eng", "english"} or lang.startswith("en-"):
+        return 2
+    return 1 if lang else 0
+
+
+def _normalize_public_language(value):
+    rank = _language_rank(value)
+    if rank == 3:
+        return "it-IT"
+    if rank == 2:
+        return "en"
+    return value
+
+
 def _user_trailer_tier(candidate) -> int:
     """User-approved order: Trailer IT > Teaser IT > Trailer EN."""
-    lang = language_rank(candidate.audio_language)
+    lang = _language_rank(candidate.audio_language)
     kind = type_rank(candidate.trailer_type)
     if lang == 3 and kind >= 4:
         return 60
@@ -210,6 +228,15 @@ def install_trailer_daily_policy() -> None:
         media_type = "tv" if media_type == "tv" else "movie"
         tmdb_id = int(tmdb_id)
         result = original_public_result(self, media_type, tmdb_id, hdr_supported=hdr_supported)
+
+        # ffprobe commonly emits ISO-639-2 tags (`ita`, `eng`). Normalize the
+        # selected result before the FastAPI public endpoint applies its language
+        # allow-list, otherwise a genuine Italian Theryston trailer is discarded.
+        selected = result.get("selected")
+        if isinstance(selected, dict) and selected.get("audio_language"):
+            selected = {**selected, "audio_language": _normalize_public_language(selected.get("audio_language"))}
+            result = {**result, "selected": selected}
+
         doc = self.results.find_one(
             {"type": media_type, "tmdbId": tmdb_id},
             {"_id": 0, "trailerPolicyVersion": 1},
