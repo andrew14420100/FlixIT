@@ -17,6 +17,8 @@ import AccountCircleOutlinedIcon from "@mui/icons-material/AccountCircleOutlined
 
 const MOBILE_QUERY = "(max-width:899px)";
 const CATALOG_URL = "/sc-artwork-catalog.json";
+const CURRENT_SC_CDN_BASE = "https://cdn.streamingunity-premium.to/images/";
+const LEGACY_SC_CDN_RE = /^https?:\/\/cdn\.streamingcommunityz\.ninja\/images\//i;
 
 function normalize(value: any) {
   return String(value || "")
@@ -38,11 +40,22 @@ function assetKey(value: any) {
     .toLowerCase();
 }
 
+function normalizeCdnBase(value: any) {
+  const raw = String(value || "").trim();
+  if (!/^https?:\/\//i.test(raw)) return CURRENT_SC_CDN_BASE;
+  const normalized = `${raw.replace(/\/+$/, "")}/`;
+  return LEGACY_SC_CDN_RE.test(normalized) ? CURRENT_SC_CDN_BASE : normalized;
+}
+
 function absoluteAsset(value: any, cdnBase: string) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return `${cdnBase.replace(/\/+$/, "")}/${raw.replace(/^\/+/, "")}`;
+  if (/^https?:\/\//i.test(raw)) {
+    return LEGACY_SC_CDN_RE.test(raw)
+      ? raw.replace(LEGACY_SC_CDN_RE, CURRENT_SC_CDN_BASE)
+      : raw;
+  }
+  return `${normalizeCdnBase(cdnBase)}${raw.replace(/^\/+/, "")}`;
 }
 
 function normalizeType(value: any) {
@@ -79,7 +92,7 @@ async function loadPosterIndex(): Promise<PosterIndex> {
   posterIndexPromise = loadCatalogPayload()
     .then((payload) => {
       const rows = Array.isArray(payload?.titles) ? payload.titles : [];
-      const cdnBase = String(payload?.cdn_base_url || "https://cdn.streamingunity.win/images/");
+      const cdnBase = normalizeCdnBase(payload?.cdn_base_url);
       const byArtwork = new Map<string, string>();
       const byTitle = new Map<string, PosterBucket>();
       const byTmdb = new Map<string, string>();
@@ -258,7 +271,7 @@ export default function MobileSCExperience() {
 
   useEffect(() => {
     if (!isMobile) return;
-    ["https://cdn.streamingunity.win", "https://cdn.streamingunity-premium.to"].forEach((href) => {
+    ["https://cdn.streamingunity-premium.to", "https://cdn.streamingunity.win"].forEach((href) => {
       if (document.head.querySelector(`link[data-flixit-preconnect="${href}"]`)) return;
       const link = document.createElement("link");
       link.rel = "preconnect";
