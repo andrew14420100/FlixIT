@@ -77,14 +77,14 @@ async function fetchWithTimeout(fetchImpl, url, init, timeoutMs = PLAYER_TIMEOUT
   }
 }
 
-async function checkEpisode(fetchImpl, tmdbId, season, episode) {
+async function checkEpisode(fetchImpl, apiBase, tmdbId, season, episode) {
   const cached = readCache(tmdbId, season, episode);
   if (cached?.state) return cached.state;
 
   try {
     const response = await fetchWithTimeout(
       fetchImpl,
-      `/api/player/tv/${tmdbId}/${season}/${episode}`,
+      `${apiBase}/api/player/tv/${tmdbId}/${season}/${episode}`,
       { cache: "no-store", headers: { Accept: "application/json" } }
     );
 
@@ -174,6 +174,7 @@ export function installEpisodeAvailabilityFilter() {
 
       const tmdbId = Number(match[1]);
       const season = Number(match[2]);
+      const apiBase = url.origin === window.location.origin ? "" : url.origin;
       const data = await response.clone().json();
       if (!Array.isArray(data?.episodes) || data.episodes.length === 0) return response;
 
@@ -181,7 +182,7 @@ export function installEpisodeAvailabilityFilter() {
       const states = await mapLimit(aired, MAX_CONCURRENCY, (episode) => {
         const episodeNumber = Number(episode?.episode_number || 0);
         if (!episodeNumber) return Promise.resolve("unavailable");
-        return checkEpisode(nativeFetch, tmdbId, season, episodeNumber);
+        return checkEpisode(nativeFetch, apiBase, tmdbId, season, episodeNumber);
       });
 
       // Definitive misses / ENG-only streams are hidden. Temporary resolver/network
