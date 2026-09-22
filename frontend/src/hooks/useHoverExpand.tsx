@@ -6,7 +6,7 @@ import "src/components/NetflixMotionOverrides.css";
 import "src/components/NetflixHoverMotionExact.css";
 
 /*
- * Netflix mini-modal motion reconstructed from the user's live frame capture.
+ * Mini-modal motion reconstructed from the user's live frame capture.
  *
  * Directly observed:
  * - the modal is first measured offscreen at top/left -9999px with opacity 0;
@@ -16,15 +16,15 @@ import "src/components/NetflixHoverMotionExact.css";
  * - transform is updated inline every frame while computed CSS transition is 0s;
  * - opacity fades in separately, almost linearly over ~50ms;
  * - the shadow is already present while the opening opacity is still 0;
- * - the separately captured close animation is opacity 1 -> 0, 150ms linear, fill both.
+ * - the captured close animation is opacity 1 -> 0, 150ms linear, fill both.
  *
- * The opening transform curve below uses Netflix's motion bezier already present
- * in the supplied/reconstructed Netflix CSS and is driven by rAF, not a CSS
- * transition. 300ms matches the measured early transform samples closely.
+ * The measured transform samples fit a 200ms CSS-ease curve very closely.
+ * We still drive it frame-by-frame because the captured inline transform changes
+ * continuously while computed transition-duration remains 0s.
  */
 const OPEN_DELAY_MS = 300;
-const OPEN_MOTION_MS = 300;
-const OPEN_OPACITY_DELAY_MS = 7;
+const OPEN_MOTION_MS = 200;
+const OPEN_OPACITY_DELAY_MS = 0;
 const OPEN_OPACITY_MS = 50;
 const CLOSE_FADE_MS = 150;
 const INITIAL_SCALE = 0.666667;
@@ -61,14 +61,14 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
-/* Evaluate cubic-bezier(.21, 0, .07, 1) by solving x(t) and returning y(t). */
+/* Evaluate CSS `ease` = cubic-bezier(.25, .1, .25, 1). */
 function netflixMotionProgress(progress: number) {
   const x = clamp01(progress);
   if (x <= 0 || x >= 1) return x;
 
-  const x1 = 0.21;
-  const y1 = 0;
-  const x2 = 0.07;
+  const x1 = 0.25;
+  const y1 = 0.1;
+  const x2 = 0.25;
   const y2 = 1;
   let low = 0;
   let high = 1;
@@ -179,7 +179,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const onLeave = useCallback((event?: any) => {
     const related = event?.relatedTarget;
-
     if (isElement(related) && related.closest(".preview-wrap")) return;
 
     clearOpenTimer();
@@ -248,7 +247,6 @@ export function ExpandOverlay({
     }
   }, []);
 
-  /* Netflix first mounts/measures the full modal offscreen. */
   useLayoutEffect(() => {
     const node = modalRef.current;
     if (!position || !node || typeof window === "undefined") return;
@@ -280,8 +278,6 @@ export function ExpandOverlay({
     let left = sourceCenterX - modalWidth / 2;
     let transformOrigin = "50% 50%";
 
-    // For true viewport-edge cards, grow inward so the scaled first frame still
-    // lies exactly on the source tile. Normal cards keep Netflix's 50% 50% origin.
     if (left < window.scrollX) {
       left = sourceLeft;
       transformOrigin = "0% 50%";
@@ -290,12 +286,12 @@ export function ExpandOverlay({
       transformOrigin = "100% 50%";
     }
 
-    const top = sourceCenterY - modalHeight / 2;
-
-    // This reproduces the captured +56px start translation. It is not a magic
-    // constant: it aligns the scaled 16:9 player portion with the source card
-    // while the larger info panel is already mounted below it.
+    // In the capture, the modal's FINAL center sits above the source center by
+    // exactly the opening translateY. At the first scaled keyframe, translateY
+    // moves that center back onto the source card. This was the main geometry
+    // mismatch in the previous implementation.
     const startTranslateY = INITIAL_SCALE * Math.max(0, modalHeight - playerHeight) / 2;
+    const top = sourceCenterY - modalHeight / 2 - startTranslateY;
 
     setGeometry({
       top,
@@ -308,7 +304,6 @@ export function ExpandOverlay({
     });
   }, [position, cancelOpenMotion, cancelCloseMotion]);
 
-  /* Frame-driven opening: Netflix mutates inline transform, with CSS transition 0s. */
   useLayoutEffect(() => {
     const node = modalRef.current;
     if (!geometry || !node || closing || typeof window === "undefined") return;
@@ -321,7 +316,7 @@ export function ExpandOverlay({
     node.style.opacity = "0";
     node.style.boxShadow = NETFLIX_SHADOW;
     node.style.transformOrigin = geometry.transformOrigin;
-    node.style.transform = `translateY(${geometry.startTranslateY}px) scale(${INITIAL_SCALE}) translateZ(0px)`;
+    node.style.transform = `translateX(0px) translateY(${geometry.startTranslateY}px) scale(${INITIAL_SCALE}) translateZ(0px)`;
     node.style.willChange = "transform, opacity";
 
     let startTime: number | null = null;
@@ -350,13 +345,10 @@ export function ExpandOverlay({
       node.dataset.phase = "open";
     };
 
-    // Keep the measured first keyframe paintable for one frame before motion.
     openRafRef.current = requestAnimationFrame(tick);
-
     return cancelOpenMotion;
   }, [geometry, closing, cancelOpenMotion, cancelCloseMotion]);
 
-  /* The captured Netflix close animation is a 150ms linear opacity fade only. */
   useLayoutEffect(() => {
     const node = modalRef.current;
     if (!geometry || !node) return;
