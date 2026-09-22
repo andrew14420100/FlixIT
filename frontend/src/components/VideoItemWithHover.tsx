@@ -21,6 +21,8 @@ interface Props {
   artworkContext?: string;
 }
 
+const TRAILER_HOVER_DELAY_MS = 2000;
+
 function firstArtwork(...values: any[]) {
   for (const value of values) {
     if (!value) continue;
@@ -49,6 +51,16 @@ function firstNonTmdbArtwork(...values: any[]) {
   return null;
 }
 
+function firstLogo(...values: any[]) {
+  for (const value of values) {
+    const raw = firstArtwork(value);
+    if (!raw) continue;
+    const text = String(raw).trim();
+    if (/^https?:\/\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) return text;
+  }
+  return null;
+}
+
 function unique(values: Array<string | null | undefined>) {
   const seen = new Set<string>();
   return values.filter((value): value is string => {
@@ -62,6 +74,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const navigate = useNavigate();
   const isMobile = useMediaQuery("(max-width:899px)");
   const ref = useRef<HTMLDivElement>(null);
+  const hoverStartedAtRef = useRef(0);
   const [nearViewport, setNearViewport] = useState(false);
 
   const mType = mediaType || MEDIA_TYPE.Movie;
@@ -81,7 +94,9 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const { open, intent, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
 
   const automaticAssets = useAutomaticMediaAssets({ ...video, id }, mType, nearViewport || intent || open || isMobile);
-  const deferredAssets = useDeferredMediaAssets({ ...video, id }, mType, intent || open);
+  // Warm trailer + fallback logo before hover. Playback itself is still gated by
+  // TRAILER_HOVER_DELAY_MS below, so prefetched cards no longer start instantly.
+  const deferredAssets = useDeferredMediaAssets({ ...video, id }, mType, nearViewport || intent || open);
   const assets = useMemo(() => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }), [automaticAssets, deferredAssets]);
 
   const mappedBackdrop = id ? getCDNImageUrl(Number(id), "backdrop") : null;
@@ -110,8 +125,6 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     legacyLandscapeEmbedded ? legacyLandscape : null,
   ]), [automaticLandscape, automaticLandscapeEmbedded, mappedBackdrop, legacyLandscape, legacyLandscapeEmbedded]);
 
-  // Mobile Home accepts only verified SC vertical posters. Continue Watching
-  // supplies an explicit catalogue match so its historical cover can never win.
   const exactScPoster = explicitScPoster || (
     automaticAssets?.poster_source === "streamingcommunity" ? automaticPoster : null
   );
@@ -136,12 +149,20 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   }, [navigate, detailHref]);
 
   const handleEnter = useCallback((event?: any) => {
-    if (!suppressHover && !isMobile) onEnter(event);
+    if (!suppressHover && !isMobile) {
+      hoverStartedAtRef.current = Date.now();
+      onEnter(event);
+    }
   }, [suppressHover, isMobile, onEnter]);
 
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
     ? (assets?.resolved_trailer?.trailer_url || assets?.resolved_trailer?.trailer_key || assets?.resolved_trailer?.manifest_url || assets?.preview_video_url)
     : null;
+
+  const trailerDelay = useMemo(() => {
+    if (!open || !hoverStartedAtRef.current) return TRAILER_HOVER_DELAY_MS;
+    return Math.max(0, TRAILER_HOVER_DELAY_MS - (Date.now() - hoverStartedAtRef.current));
+  }, [open, trailerUrl]);
 
   useEffect(() => {
     if (!intent || open || !trailerUrl || !/\.m3u8(?:$|\?)/i.test(String(trailerUrl))) return;
@@ -150,7 +171,13 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
-  const hoverLogoUrl = firstNonTmdbArtwork(automaticAssets?.logo_path, assets?.logo_path, video?.netflix_logo_url, video?.logo_path, video?.logo);
+  const scHoverLogo = firstNonTmdbArtwork(
+    automaticAssets?.logo_path,
+    video?.netflix_logo_url,
+    video?.logo_path,
+    video?.logo
+  );
+  const hoverLogoUrl = scHoverLogo || firstLogo(deferredAssets?.logo_path, deferredAssets?.fallback_logo_path);
   const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
   const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
   const staticReady = usePosterCard
@@ -192,7 +219,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
             onDetail={goDetail}
             watch={watch}
           />
-          <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} onOpen={goDetail} />
+          <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} delay={trailerDelay} onOpen={goDetail} />
         </ExpandOverlay>
       ) : null}
     </>
