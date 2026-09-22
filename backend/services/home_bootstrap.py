@@ -15,36 +15,36 @@ from typing import Any
 from fastapi import APIRouter
 
 SNAPSHOT_KEY = "public-home-v1"
-SNAPSHOT_VERSION = "instant-home-v3-sc-structure"
+SNAPSHOT_VERSION = "instant-home-v4-fuller"
 FRESH_FOR = timedelta(minutes=10)
 MAX_STALE_AGE = timedelta(days=3)
-MAX_ITEMS_PER_ROW = 30
-MAX_CANDIDATES_PER_ROW = 54
-GENRE_PAGES = 3
+MAX_ITEMS_PER_ROW = 50
+MAX_CANDIDATES_PER_ROW = 120
+GENRE_PAGES = 5
 
 # Current SC Home core order, followed by the thematic rows historically used
 # by SC. Admin-created duplicate rows are intentionally not mixed into Home.
 CANONICAL_SECTIONS = [
-    {"key": "recent", "name": "Aggiunti di recente", "section_type": "latest", "media_type": "mixed", "limit": 30, "min_items": 8},
-    {"key": "tv-updated", "name": "Serie TV Aggiornate", "section_type": "new_seasons", "media_type": "tv", "limit": 30, "min_items": 6},
+    {"key": "recent", "name": "Aggiunti di recente", "section_type": "latest", "media_type": "mixed", "limit": 50, "min_items": 8},
+    {"key": "tv-updated", "name": "Serie TV Aggiornate", "section_type": "new_seasons", "media_type": "tv", "limit": 50, "min_items": 6},
     {"key": "top10", "name": "Top 10 titoli di oggi", "section_type": "top10", "media_type": "mixed", "limit": 10, "min_items": 5},
     {"key": "upcoming", "name": "In arrivo", "section_type": "upcoming", "media_type": "movie", "limit": 30, "min_items": 6},
-    {"key": "comedy", "name": "Commedia", "section_type": "genre", "media_type": "mixed", "genre_id": 35, "limit": 30, "min_items": 8},
-    {"key": "horror", "name": "Horror", "section_type": "genre", "media_type": "mixed", "genre_id": 27, "limit": 30, "min_items": 8},
-    {"key": "action-adventure", "name": "Action & Adventure", "section_type": "genre", "media_type": "mixed", "genre_id": 28, "limit": 30, "min_items": 8},
-    {"key": "fantasy", "name": "Fantasy", "section_type": "genre", "media_type": "mixed", "genre_id": 14, "limit": 30, "min_items": 8},
-    {"key": "mystery", "name": "Mistero", "section_type": "genre", "media_type": "mixed", "genre_id": 9648, "limit": 30, "min_items": 8},
-    {"key": "drama", "name": "Dramma", "section_type": "genre", "media_type": "mixed", "genre_id": 18, "limit": 30, "min_items": 8},
-    {"key": "science-fiction", "name": "Fantascienza", "section_type": "genre", "media_type": "mixed", "genre_id": 878, "limit": 30, "min_items": 8},
-    {"key": "thriller", "name": "Thriller", "section_type": "genre", "media_type": "mixed", "genre_id": 53, "limit": 30, "min_items": 8},
-    {"key": "family", "name": "Famiglia", "section_type": "genre", "media_type": "mixed", "genre_id": 10751, "limit": 30, "min_items": 8},
-    {"key": "animation", "name": "Animazione", "section_type": "genre", "media_type": "mixed", "genre_id": 16, "limit": 30, "min_items": 8},
-    {"key": "history", "name": "Storia", "section_type": "genre", "media_type": "mixed", "genre_id": 36, "limit": 30, "min_items": 8},
-    {"key": "crime", "name": "Crime", "section_type": "genre", "media_type": "mixed", "genre_id": 80, "limit": 30, "min_items": 8},
-    {"key": "documentary", "name": "Documentario", "section_type": "genre", "media_type": "mixed", "genre_id": 99, "limit": 30, "min_items": 8},
-    {"key": "romance", "name": "Romance", "section_type": "genre", "media_type": "mixed", "genre_id": 10749, "limit": 30, "min_items": 8},
-    {"key": "war", "name": "Guerra", "section_type": "genre", "media_type": "mixed", "genre_id": 10752, "limit": 30, "min_items": 8},
-    {"key": "music", "name": "Musica", "section_type": "genre", "media_type": "mixed", "genre_id": 10402, "limit": 30, "min_items": 8},
+    {"key": "comedy", "name": "Commedia", "section_type": "genre", "media_type": "mixed", "genre_id": 35, "limit": 50, "min_items": 8},
+    {"key": "horror", "name": "Horror", "section_type": "genre", "media_type": "mixed", "genre_id": 27, "limit": 50, "min_items": 8},
+    {"key": "action-adventure", "name": "Action & Adventure", "section_type": "genre", "media_type": "mixed", "genre_id": 28, "limit": 50, "min_items": 8},
+    {"key": "fantasy", "name": "Fantasy", "section_type": "genre", "media_type": "mixed", "genre_id": 14, "limit": 50, "min_items": 8},
+    {"key": "mystery", "name": "Mistero", "section_type": "genre", "media_type": "mixed", "genre_id": 9648, "limit": 50, "min_items": 8},
+    {"key": "drama", "name": "Dramma", "section_type": "genre", "media_type": "mixed", "genre_id": 18, "limit": 50, "min_items": 8},
+    {"key": "science-fiction", "name": "Fantascienza", "section_type": "genre", "media_type": "mixed", "genre_id": 878, "limit": 50, "min_items": 8},
+    {"key": "thriller", "name": "Thriller", "section_type": "genre", "media_type": "mixed", "genre_id": 53, "limit": 50, "min_items": 8},
+    {"key": "family", "name": "Famiglia", "section_type": "genre", "media_type": "mixed", "genre_id": 10751, "limit": 50, "min_items": 8},
+    {"key": "animation", "name": "Animazione", "section_type": "genre", "media_type": "mixed", "genre_id": 16, "limit": 50, "min_items": 8},
+    {"key": "history", "name": "Storia", "section_type": "genre", "media_type": "mixed", "genre_id": 36, "limit": 50, "min_items": 8},
+    {"key": "crime", "name": "Crime", "section_type": "genre", "media_type": "mixed", "genre_id": 80, "limit": 50, "min_items": 8},
+    {"key": "documentary", "name": "Documentario", "section_type": "genre", "media_type": "mixed", "genre_id": 99, "limit": 50, "min_items": 8},
+    {"key": "romance", "name": "Romance", "section_type": "genre", "media_type": "mixed", "genre_id": 10749, "limit": 50, "min_items": 8},
+    {"key": "war", "name": "Guerra", "section_type": "genre", "media_type": "mixed", "genre_id": 10752, "limit": 50, "min_items": 8},
+    {"key": "music", "name": "Musica", "section_type": "genre", "media_type": "mixed", "genre_id": 10402, "limit": 50, "min_items": 8},
 ]
 
 _build_lock = asyncio.Lock()
@@ -159,6 +159,14 @@ async def _genre_payload(app, section: dict) -> dict:
     return {"items": [item for payload in pages for item in _payload_items(payload)]}
 
 
+async def _upcoming_payload(app) -> dict:
+    pages = await asyncio.gather(
+        *(_call_public(app, "/api/public/tmdb/upcoming", page=page) for page in range(1, 4))
+    )
+    merged = [item for payload in pages for item in _payload_items(payload)]
+    return {"items": merged}
+
+
 async def _load_section(app, section: dict) -> dict:
     section_type = str(section.get("section_type") or "")
     if section_type == "latest":
@@ -168,7 +176,7 @@ async def _load_section(app, section: dict) -> dict:
     elif section_type == "top10":
         payload = await _call_public(app, "/api/public/flixit-top10", hours=48)
     elif section_type == "upcoming":
-        payload = await _call_public(app, "/api/public/tmdb/upcoming", page=1)
+        payload = await _upcoming_payload(app)
     elif section_type == "genre" and section.get("genre_id"):
         payload = await _genre_payload(app, section)
     else:
@@ -225,8 +233,6 @@ def _finalize_rows(rows: list[dict]) -> list[dict]:
     """Reserve SC core rows first, then globally dedupe every visible card."""
     by_key = {str(row.get("key")): row for row in rows}
 
-    # Reserve Top 10 and In arrivo so their identities cannot be consumed by an
-    # earlier row. This keeps those signature SC rows full without duplicates.
     reserved_rows: dict[str, list[dict]] = {}
     reserved_keys: set[str] = set()
     for key in ("top10", "upcoming"):
@@ -433,7 +439,6 @@ def install_home_bootstrap(app) -> bool:
         payload, generated = _read_snapshot(core)
         now = _now()
 
-        # A structure version change must never serve the previous row layout.
         if payload and payload.get("version") != SNAPSHOT_VERSION:
             old_payload = payload
             try:
