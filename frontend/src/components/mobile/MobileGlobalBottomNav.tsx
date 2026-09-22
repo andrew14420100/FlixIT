@@ -10,6 +10,23 @@ import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import AccountCircleOutlinedIcon from "@mui/icons-material/AccountCircleOutlined";
 
 const MOBILE_QUERY = "(max-width:899px)";
+const prefetched = new Set<string>();
+
+function prefetchPath(path: string) {
+  if (!path || path === "__search__" || prefetched.has(path)) return;
+  prefetched.add(path);
+  const run = () => {
+    if (path === "/browse") import("src/pages/HomePage").catch(() => prefetched.delete(path));
+    else if (path === "/cinema") import("src/pages/CinemaHubPage").catch(() => prefetched.delete(path));
+    else if (path === "/serie") import("src/pages/SerieHubPage").catch(() => prefetched.delete(path));
+    else if (path === "/account") import("src/pages/AccountPage").catch(() => prefetched.delete(path));
+  };
+  if ((window as any).requestIdleCallback) {
+    (window as any).requestIdleCallback(run, { timeout: 900 });
+  } else {
+    window.setTimeout(run, 0);
+  }
+}
 
 export default function MobileGlobalBottomNav() {
   const isMobile = useMediaQuery(MOBILE_QUERY);
@@ -34,6 +51,16 @@ export default function MobileGlobalBottomNav() {
     root.classList.toggle("flixit-global-bottom-nav-visible", !!isMobile && !isWatch);
     return () => root.classList.remove("flixit-global-bottom-nav-visible");
   }, [isMobile, isWatch]);
+
+  useEffect(() => {
+    if (!isMobile || isWatch) return;
+    // Once the first screen is stable, warm the tiny route chunks behind the
+    // bottom navigation. A tap then swaps screens without waiting for a chunk.
+    const timer = window.setTimeout(() => {
+      items.forEach((item) => prefetchPath(item.path));
+    }, 1400);
+    return () => window.clearTimeout(timer);
+  }, [isMobile, isWatch, items]);
 
   const activeIndex = useMemo(() => {
     const path = location.pathname;
@@ -73,11 +100,11 @@ export default function MobileGlobalBottomNav() {
     stage.getAnimations?.().forEach((animation) => animation.cancel());
     stage.animate(
       [
-        { opacity: 0.72, transform: `translate3d(${10 * direction}px, 0, 0) scale(.995)` },
+        { opacity: 0.82, transform: `translate3d(${8 * direction}px, 0, 0) scale(.997)` },
         { opacity: 1, transform: "translate3d(0,0,0) scale(1)" },
       ],
       {
-        duration: 230,
+        duration: 190,
         easing: "cubic-bezier(.16,1,.3,1)",
         fill: "both",
       }
@@ -122,7 +149,7 @@ export default function MobileGlobalBottomNav() {
             { transform: "translate3d(0, 0, 0)" },
           ],
           {
-            duration: 300,
+            duration: 280,
             easing: "cubic-bezier(.22,1,.36,1)",
             fill: "both",
           }
@@ -132,7 +159,7 @@ export default function MobileGlobalBottomNav() {
         if (settleTimer) window.clearTimeout(settleTimer);
         settleTimer = window.setTimeout(() => {
           lastTop = nav.getBoundingClientRect().top;
-        }, 340);
+        }, 320);
       });
     };
 
@@ -158,12 +185,13 @@ export default function MobileGlobalBottomNav() {
   if (!isMobile || isWatch) return null;
 
   const openSearch = () => {
-    const container = document.querySelector<HTMLElement>('[data-testid="search-box"]');
-    const trigger = container?.firstElementChild as HTMLElement | null;
-    trigger?.click();
+    // SearchBox exposes this event specifically for mobile. Dispatching it is
+    // robust even when the header layout changes; clicking firstElementChild was
+    // a brittle DOM dependency and occasionally failed after lazy navigation.
+    window.dispatchEvent(new CustomEvent("flixit-open-search"));
     window.setTimeout(
       () => document.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus(),
-      60
+      50
     );
   };
 
@@ -174,6 +202,7 @@ export default function MobileGlobalBottomNav() {
     }
     if (location.pathname === path) return;
 
+    prefetchPath(path);
     document.documentElement.classList.add("flixit-mobile-route-pending");
     navigate(path);
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -199,6 +228,8 @@ export default function MobileGlobalBottomNav() {
             type="button"
             aria-label={item.label}
             className={active ? "is-active" : ""}
+            onPointerDown={() => prefetchPath(item.path)}
+            onFocus={() => prefetchPath(item.path)}
             onClick={() => navigateAnimated(item.path)}
           >
             <span className="flixit-mobile-nav-icon-wrap">
