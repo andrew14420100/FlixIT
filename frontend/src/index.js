@@ -22,12 +22,13 @@ import MainLoadingScreen from "./components/MainLoadingScreen";
 // while it opened one player request per episode, so it is intentionally gone.
 
 /**
- * Home used to ask the same public TMDB/catalogue pages from HomePage and
- * HomeSmartSections at the same time (and requested up to 8-10 pages per row).
- * Four TMDB pages already provide up to ~80 candidates — more than the 50 cards
- * a row can expose. Keep a strict Home request budget and coalesce identical
- * public GETs in memory. This wrapper never touches player, trailer, artwork,
- * account or season-availability requests.
+ * Keep Home catalogue traffic inside a strict budget. Several independent Home
+ * sections can mount together and each one may request multiple TMDB pages. If
+ * all of those requests start at once they compete with navigation, account and
+ * player traffic and make the whole UI feel frozen.
+ *
+ * This wrapper only touches cache-safe public catalogue GETs. Player, trailer,
+ * artwork POSTs, account/auth, progress and detail actions always bypass it.
  */
 function installPublicCatalogueRequestBudget() {
   if (typeof window === "undefined" || window.__flixitCatalogueBudgetInstalled) return;
@@ -35,9 +36,79 @@ function installPublicCatalogueRequestBudget() {
 
   const nativeFetch = window.fetch.bind(window);
   const memo = new Map();
-  const MAX_HOME_TMDB_PAGE = 4;
+  const MAX_HOME_TMDB_PAGE = 2;
+  const MAX_CATALOGUE_CONCURRENCY = 4;
+  const queue = [];
+  let activeCatalogueRequests = 0;
 
-  const isHome = () => window.location.pathname === "/" || window.location.pathname === "/browse";
+  const abortError = () => {
+    try {
+      return new DOMException("The operation was aborted.", "AbortError");
+    } catch {
+      const error = new Error("The operation was aborted.");
+      error.name = "AbortError";
+      return error;
+    }
+  };
+
+  const drainQueue = () => {
+    while (activeCatalogueRequests < MAX_CATALOGUE_CONCURRENCY && queue.length) {
+      const job = queue.shift();
+      if (!job || job.settled) continue;
+      if (job.signal?.aborted) {
+        job.settled = true;
+        job.cleanup();
+        job.reject(abortError());
+        continue;
+      }
+
+      activeCatalogueRequests += 1;
+      job.started = true;
+      Promise.resolve()
+        .then(job.run)
+        .then(job.resolve, job.reject)
+        .finally(() => {
+          job.settled = true;
+          job.cleanup();
+          activeCatalogueRequests = Math.max(0, activeCatalogueRequests - 1);
+          drainQueue();
+        });
+    }
+  };
+
+  const runBudgeted = (run, signal) => {
+    if (signal?.aborted) return Promise.reject(abortError());
+
+    return new Promise((resolve, reject) => {
+      const job = {
+        run,
+        signal,
+        resolve,
+        reject,
+        started: false,
+        settled: false,
+        cleanup: () => {},
+      };
+
+      const onAbort = () => {
+        if (job.started || job.settled) return;
+        const index = queue.indexOf(job);
+        if (index >= 0) queue.splice(index, 1);
+        job.settled = true;
+        job.cleanup();
+        reject(abortError());
+      };
+
+      job.cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+      signal?.addEventListener?.("abort", onAbort, { once: true });
+      queue.push(job);
+      drainQueue();
+    });
+  };
+
+  const isHome = () =>
+    window.location.pathname === "/" || window.location.pathname.startsWith("/browse");
+
   const isSafeCataloguePath = (pathname) =>
     pathname.startsWith("/api/public/tmdb/") ||
     pathname.startsWith("/api/public/homepage/") ||
@@ -50,6 +121,16 @@ function installPublicCatalogueRequestBudget() {
     if (pathname === "/api/public/flixit-top10") return 60_000;
     if (pathname === "/api/public/sections" || pathname === "/api/public/available-sections") return 5 * 60_000;
     return 10 * 60_000;
+  };
+
+  const cacheKeyFor = (url) => {
+    const normalized = new URL(url.toString());
+    // This parameter only tells React Query when a new Rome-day starts. It is
+    // not consumed by the backend, so keeping it in the in-memory key prevented
+    // otherwise identical Home/Smart-section requests from coalescing.
+    normalized.searchParams.delete("_flix_window");
+    normalized.searchParams.sort();
+    return normalized.toString();
   };
 
   window.fetch = async (input, init = undefined) => {
@@ -76,7 +157,7 @@ function installPublicCatalogueRequestBudget() {
       }
     }
 
-    const key = url.toString();
+    const key = cacheKeyFor(url);
     const now = Date.now();
     const hit = memo.get(key);
     if (hit && hit.expiresAt > now) {
@@ -88,13 +169,17 @@ function installPublicCatalogueRequestBudget() {
       }
     }
 
-    const promise = nativeFetch(input, init).then((response) => {
-      if (!response.ok) memo.delete(key);
-      return response;
-    }).catch((error) => {
-      memo.delete(key);
-      throw error;
-    });
+    const signal = init?.signal || (input instanceof Request ? input.signal : undefined);
+    const promise = runBudgeted(() => nativeFetch(input, init), signal)
+      .then((response) => {
+        if (!response.ok) memo.delete(key);
+        return response;
+      })
+      .catch((error) => {
+        memo.delete(key);
+        throw error;
+      });
+
     memo.set(key, { expiresAt: now + ttlFor(url.pathname), promise });
     const response = await promise;
     return response.clone();
