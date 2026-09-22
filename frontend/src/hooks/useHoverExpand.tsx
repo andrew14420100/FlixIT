@@ -17,9 +17,9 @@ import "src/components/NetflixHoverMotionExact.css";
  * - opacity fades in separately, almost linearly over ~50ms;
  * - the shadow is already present while the opening opacity is still 0.
  *
- * The measured 366 x 374.557 Netflix box is used as a REFERENCE ratio only.
- * The real hover always scales from the live card width, so smaller/larger rows
- * produce proportionally smaller/larger mini-modals instead of a fixed 366px box.
+ * The measured Netflix box is used only to preserve the lower-panel proportion.
+ * Width AND player height are derived from the live source card, so the hover
+ * remains visually coherent with whatever card dimensions the row actually has.
  */
 const OPEN_DELAY_MS = 300;
 const OPEN_MOTION_MS = 200;
@@ -30,7 +30,9 @@ const INITIAL_SCALE = 0.666667;
 const NETFLIX_SHADOW = "rgba(0, 0, 0, 0.75) 0px 3px 10px";
 const REFERENCE_MODAL_WIDTH = 366;
 const REFERENCE_MODAL_HEIGHT = 374.557;
-const REFERENCE_PLAYER_RATIO = 0.563925;
+const REFERENCE_PLAYER_HEIGHT = 366 * 0.563925;
+const REFERENCE_INFO_TO_PLAYER_RATIO =
+  (REFERENCE_MODAL_HEIGHT - REFERENCE_PLAYER_HEIGHT) / REFERENCE_PLAYER_HEIGHT;
 
 type AnchorData = {
   offsetX: number;
@@ -300,14 +302,13 @@ export function ExpandOverlay({
 
     const modalRect = node.getBoundingClientRect();
     const player = node.querySelector(".previewModal--player_container") as HTMLElement | null;
-    const playerHeight = player?.getBoundingClientRect().height || position.height / INITIAL_SCALE;
+    const playerHeight = player?.getBoundingClientRect().height || position.height * 1.5;
     const modalHeight = modalRect.height || node.offsetHeight || playerHeight;
     const modalWidth = position.modalWidth;
 
     const sourceLeft = position.offsetX + window.scrollX;
     const sourceRight = sourceLeft + position.width;
     const sourceCenterX = sourceLeft + position.width / 2;
-    const sourceCenterY = position.offsetY + position.height / 2;
 
     let left = sourceCenterX - modalWidth / 2;
     let transformOrigin = "50% 50%";
@@ -321,7 +322,15 @@ export function ExpandOverlay({
     }
 
     const startTranslateY = INITIAL_SCALE * Math.max(0, modalHeight - playerHeight) / 2;
-    const top = sourceCenterY - modalHeight / 2 - startTranslateY;
+
+    /*
+     * Netflix's first visible frame is the 2/3-scaled modal. At that moment the
+     * scaled PLAYER, not the full modal including its info panel, must sit on top
+     * of the source card. Centering the whole 374px box around the tile pushed the
+     * hover much too far upward (the exact problem visible in the screenshot).
+     */
+    const scaledTopInset = ((1 - INITIAL_SCALE) * modalHeight) / 2;
+    const top = position.offsetY - scaledTopInset - startTranslateY;
 
     setGeometry({
       top,
@@ -442,11 +451,11 @@ export function ExpandOverlay({
 
   if (!position || typeof document === "undefined" || typeof window === "undefined") return null;
 
-  const modalWidth = position.modalWidth;
+  const modalWidth = position.width * 1.5;
+  const playerHeight = position.height * 1.5;
+  const infoHeight = playerHeight * REFERENCE_INFO_TO_PLAYER_RATIO;
+  const modalHeight = playerHeight + infoHeight;
   const modalScale = modalWidth / REFERENCE_MODAL_WIDTH;
-  const modalHeight = REFERENCE_MODAL_HEIGHT * modalScale;
-  const playerHeight = modalWidth * REFERENCE_PLAYER_RATIO;
-  const infoHeight = Math.max(0, modalHeight - playerHeight);
 
   const handleOverlayClick = (event: any) => {
     const target = event?.target;
