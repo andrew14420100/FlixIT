@@ -3,23 +3,31 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "src/components/NetflixMiniModalExact.css";
 import "src/components/NetflixMotionOverrides.css";
+import "src/components/NetflixHoverMotionExact.css";
 
 /*
- * StreamingCommunity hover behaviour, ported from the supplied sliders bundle.
- * Important values from SC:
- * - hover intent delay: 300ms
- * - preview width: source width * 1.5
- * - initial scale: .666667
- * - preview activation after mount: 25ms
- * - transform transition: 200ms (default CSS easing = ease)
- * - top: offsetY - (source height * 2 / 3)
- * - horizontal origin: left / center / right depending on source x
- * - opening translateY depends on viewport width
- * - close duration: 200ms
+ * Netflix mini-modal motion reconstructed from the user's live Netflix captures.
+ * Captured opening state:
+ *   width: source width * 1.5 (366px from a ~244px card)
+ *   transform-origin: 50% 50%
+ *   transform: translateX(0px) translateY(0px) scale(.666667) translateZ(0px)
+ *   box-shadow: none
+ *   opacity: 1
+ *
+ * Captured final state:
+ *   transform: none
+ *   box-shadow: rgba(0,0,0,.75) 0 3px 10px
+ *   opacity: 1
+ *
+ * Web Animations inspection from Netflix:
+ *   duration: 150ms
+ *   easing: linear
+ *   two keyframes
+ *
+ * The 300ms hover-intent delay is kept separate from the 150ms Netflix motion.
  */
 const OPEN_DELAY_MS = 300;
-const READY_DELAY_MS = 25;
-const TRANSFORM_DURATION_MS = 200;
+const TRANSFORM_DURATION_MS = 150;
 const INITIAL_SCALE = 0.666667;
 
 type AnchorData = {
@@ -28,7 +36,6 @@ type AnchorData = {
   width: number;
   height: number;
   modalWidth: number;
-  fadeImageOut: boolean;
   anchor: HTMLElement | null;
 };
 
@@ -38,13 +45,6 @@ function isElement(value: any): value is Element {
 
 function hasPreview() {
   return typeof document !== "undefined" && !!document.querySelector(".preview-wrap");
-}
-
-function scTranslateY(viewportWidth: number) {
-  let value = (3 / 130) * viewportWidth - 69 / 13;
-  if (viewportWidth < 1400) value = (9 / 299) * viewportWidth - 2126 / 299;
-  if (viewportWidth < 1100) value = (9 / 299) * viewportWidth + 574 / 299;
-  return value;
 }
 
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
@@ -107,28 +107,18 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
     openTimerRef.current = setTimeout(() => {
       openTimerRef.current = null;
-
-      // SC refuses to create a second preview while one is already mounted.
       if (hasPreview() || !element.isConnected) return;
 
       const rect = element.getBoundingClientRect();
-      let offsetY = rect.top + window.scrollY;
-      const isTop10 = element.classList.contains("netflix-ranked-card-root") ||
-        !!element.closest(".top10-row");
-
-      // Exact extra vertical adjustment used by SC for Top 10.
-      if (isTop10) offsetY += rect.top / 16;
-
       const width = element.clientWidth || rect.width;
       const height = element.clientHeight || rect.height;
 
       setPosition({
         offsetX: rect.left,
-        offsetY,
+        offsetY: rect.top + window.scrollY,
         width,
         height,
         modalWidth: width * 1.5,
-        fadeImageOut: isTop10,
         anchor: element,
       });
 
@@ -141,8 +131,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const onLeave = useCallback((event?: any) => {
     const related = event?.relatedTarget;
 
-    // Exact SC hand-off: moving directly from the source card into the
-    // teleported preview does not close it.
+    // Keep the preview alive while the pointer crosses directly from the
+    // source card into the teleported mini-modal.
     if (isElement(related) && related.closest(".preview-wrap")) return;
 
     clearOpenTimer();
@@ -150,7 +140,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   }, [clearOpenTimer, closePreview]);
 
   const onOverlayEnter = useCallback(() => {
-    // SC does not restart the animation when the pointer enters the preview.
     clearRemoveTimer();
   }, [clearRemoveTimer]);
 
@@ -193,38 +182,27 @@ export function ExpandOverlay({
 
   useEffect(() => {
     setReady(false);
-    const timer = setTimeout(() => setReady(true), READY_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [position]);
-
-  // SC starts observing the pointer globally only after the 200ms opening
-  // transition. Leaving .preview-wrap then dispatches the close behaviour.
-  useEffect(() => {
-    if (!position || typeof window === "undefined") return;
-
-    let handler: any = null;
-    const timer = setTimeout(() => {
-      handler = (event: MouseEvent) => {
-        const target = event.target;
-        if (!isElement(target) || !target.closest(".preview-wrap")) {
-          onMouseLeave?.(event);
-        }
-      };
-      window.addEventListener("mousemove", handler);
-    }, TRANSFORM_DURATION_MS);
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      // Paint Netflix's captured 2/3-scale keyframe first, then run the
+      // captured 150ms linear transform to the final state.
+      secondFrame = requestAnimationFrame(() => setReady(true));
+    });
 
     return () => {
-      clearTimeout(timer);
-      if (handler) window.removeEventListener("mousemove", handler);
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
     };
-  }, [position, onMouseLeave]);
+  }, [position]);
 
   if (!position || typeof document === "undefined" || typeof window === "undefined") return null;
 
   const viewportWidth = window.innerWidth;
   const modalWidth = Math.round(position.width * 1.5);
-  const top = Math.round(position.offsetY - (position.height / 3) * 2);
 
+  // The scaled 2/3 mini-modal is exactly the source-card width. Position the
+  // modal so its center keyframe grows out of the source card, while edge cards
+  // stay inside the catalogue viewport.
   let left = position.offsetX;
   let transformOrigin = "left center";
 
@@ -233,28 +211,20 @@ export function ExpandOverlay({
     transformOrigin = "right center";
   } else if (left > (viewportWidth / 100) * 5) {
     left -= position.width / 4;
-    transformOrigin = "center center";
+    transformOrigin = "50% 50%";
   }
 
-  const startTranslateY = scTranslateY(viewportWidth);
+  // Preserve the existing vertical anchor while removing SC's synthetic
+  // translateY motion. Netflix's captured transform starts at translateY(0).
+  const top = Math.round(position.offsetY - (position.height / 3) * 2);
   const expanded = ready && !closing;
-  const transform = expanded
-    ? "translateY(0px) scale(1)"
-    : `translateY(${startTranslateY}px) scale(${INITIAL_SCALE})`;
 
-  let opacity = ready ? 1 : 0;
-  let transition = `transform ${TRANSFORM_DURATION_MS}ms`;
-  let boxShadow = "none";
-
-  if (expanded) {
-    boxShadow = "rgb(0 0 0 / 75%) 0px 3px 10px";
-  }
-
-  // SC fades the Top 10 image out during close, while normal cards only shrink.
-  if (position.fadeImageOut && closing) {
-    opacity = 0;
-    transition += `, opacity ${TRANSFORM_DURATION_MS}ms`;
-  }
+  const initialTransform = `translateX(0px) translateY(0px) scale(${INITIAL_SCALE}) translateZ(0px)`;
+  const transform = expanded ? "none" : initialTransform;
+  const phase = closing ? "close" : expanded ? "open" : "opening";
+  const shadow = expanded
+    ? "rgba(0, 0, 0, 0.75) 0px 3px 10px"
+    : "none";
 
   const handleOverlayClick = (event: any) => {
     const target = event?.target;
@@ -267,7 +237,7 @@ export function ExpandOverlay({
 
   return createPortal(
     <div
-      className="preview-wrap flix-sc-preview-portal"
+      className="preview-wrap flix-netflix-motion-portal"
       style={{
         position: "absolute",
         left: 0,
@@ -276,7 +246,7 @@ export function ExpandOverlay({
         height: 0,
         overflow: "visible",
         pointerEvents: "none",
-        zIndex: 150,
+        zIndex: 99999,
       }}
     >
       <div
@@ -285,31 +255,31 @@ export function ExpandOverlay({
         tabIndex={-1}
         data-uia="modal-motion-container-MINI_MODAL"
         data-testid={testId}
-        className="previewModal--container preview-dialog has-smaller-buttons mini-modal"
+        data-phase={phase}
+        data-motion="netflix"
+        className="previewModal--container has-smaller-buttons mini-modal"
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         onClick={handleOverlayClick}
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
+          ["--flix-netflix-shadow" as any]: shadow,
           position: "absolute",
-          zIndex: 150,
-          borderRadius: ".4em",
+          zIndex: 3,
+          borderRadius: "6px",
           top: `${top}px`,
           left: `${Math.round(left)}px`,
           width: `${modalWidth}px`,
           transform,
           transformOrigin,
-          transition,
-          opacity,
-          boxShadow,
-          fontFamily: '"Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif',
-          fontSize: ".87vw",
-          lineHeight: "inherit",
+          transition: `transform ${TRANSFORM_DURATION_MS}ms linear`,
+          opacity: 1,
+          boxShadow: shadow,
+          fontFamily: '"Netflix Sans", "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, sans-serif',
+          fontSize: "16px",
+          lineHeight: "var(--base-line-height)",
           userSelect: "none",
-          boxSizing: "border-box",
-          borderWidth: 0,
-          borderStyle: "solid",
-          borderColor: "#e5e7eb",
+          boxSizing: "inherit",
           pointerEvents: "auto",
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden",
