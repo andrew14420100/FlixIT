@@ -11,8 +11,9 @@ const OPEN_DURATION_MS = 280;
 const CLOSE_DURATION_MS = 220;
 const OPACITY_OPEN_MS = 70;
 const OPACITY_CLOSE_MS = 120;
-const LEAVE_GRACE_MS = 240;
+const LEAVE_GRACE_MS = 360;
 const VIEWPORT_GUTTER = 4;
+const POINTER_PAD = 10;
 const EASE = "cubic-bezier(.21,0,.07,1)";
 
 type HoverEdge = "left" | "center" | "right";
@@ -34,6 +35,16 @@ function isDomNode(value: any): value is Node {
 
 function isDomElement(value: any): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
+}
+
+function pointInsideRect(x: number, y: number, rect?: DOMRect | null, pad = 0) {
+  if (!rect || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+  return (
+    x >= rect.left - pad &&
+    x <= rect.right + pad &&
+    y >= rect.top - pad &&
+    y <= rect.bottom + pad
+  );
 }
 
 function findRow(element: HTMLElement | null) {
@@ -72,8 +83,12 @@ function measureEdges(element: HTMLElement, rect: DOMRect) {
   const last = visible[visible.length - 1];
   const tolerance = Math.max(4, Math.min(18, rect.width * 0.08));
 
-  const isFirst = !!first && (first.node === element || Math.abs(first.rect.left - rect.left) <= tolerance);
-  const isLast = !!last && (last.node === element || Math.abs(last.rect.right - rect.right) <= tolerance);
+  const isFirst = !!first && (
+    first.node === element || Math.abs(first.rect.left - rect.left) <= tolerance
+  );
+  const isLast = !!last && (
+    last.node === element || Math.abs(last.rect.right - rect.right) <= tolerance
+  );
 
   let edge: HoverEdge = "center";
   if (isFirst && !isLast) edge = "left";
@@ -93,13 +108,16 @@ function measureEdges(element: HTMLElement, rect: DOMRect) {
 
 /**
  * SC-style hover expansion shared by all public rails.
- * Geometry is captured once at open time so ordinary pointer movement never
- * drags the preview around. Closing is allowed only after the pointer has
- * actually left both the source tile and the expanded preview.
+ *
+ * The source card and the portal preview are treated as one continuous hover
+ * surface. Closing is decided from the real pointer coordinates rather than
+ * relying on :hover/mouseleave alone. This prevents the portal appearing over
+ * the source card from immediately cancelling its own hover.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
   const closeTimerRef = useRef<any>(null);
+  const pointerRef = useRef({ x: -1, y: -1 });
   const [intent, setIntent] = useState(false);
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -125,16 +143,12 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   }, [clearOpenTimer, clearCloseTimer]);
 
   const finishClose = useCallback(() => {
+    clearTimers();
     setIntent(false);
     setOpen(false);
     setClosing(false);
     setPosition(null);
-  }, []);
-
-  const closeImmediately = useCallback(() => {
-    clearTimers();
-    finishClose();
-  }, [clearTimers, finishClose]);
+  }, [clearTimers]);
 
   const requestClose = useCallback(() => {
     clearOpenTimer();
@@ -145,45 +159,72 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     closeTimerRef.current = setTimeout(finishClose, CLOSE_DURATION_MS + 20);
   }, [open, closing, clearOpenTimer, clearCloseTimer, finishClose]);
 
-  const pointerStillOnHoverSurface = useCallback(() => {
+  const pointerIsOnSurface = useCallback(() => {
     if (typeof document === "undefined") return false;
+
+    const { x, y } = pointerRef.current;
+    if (x < 0 || y < 0) return false;
+
     const source = ref.current;
-    if (source?.isConnected && source.matches?.(":hover")) return true;
-    return !!document.querySelector(".previewModal--container:hover");
+    if (source?.isConnected) {
+      const sourceRect = source.getBoundingClientRect();
+      if (pointInsideRect(x, y, sourceRect, POINTER_PAD)) return true;
+    }
+
+    const preview = document.querySelector(".previewModal--container") as HTMLElement | null;
+    if (preview?.isConnected) {
+      const previewRect = preview.getBoundingClientRect();
+      if (pointInsideRect(x, y, previewRect, POINTER_PAD)) return true;
+    }
+
+    const hit = document.elementFromPoint(x, y);
+    if (isDomElement(hit)) {
+      if (hit.closest(".previewModal--container")) return true;
+      if (source && source.contains(hit)) return true;
+    }
+
+    return false;
   }, [ref]);
 
   const scheduleClose = useCallback(() => {
     clearOpenTimer();
     clearCloseTimer();
+
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null;
-      if (pointerStillOnHoverSurface()) {
+      if (pointerIsOnSurface()) {
         setIntent(true);
         return;
       }
       requestClose();
     }, LEAVE_GRACE_MS);
-  }, [clearOpenTimer, clearCloseTimer, pointerStillOnHoverSurface, requestClose]);
+  }, [clearOpenTimer, clearCloseTimer, pointerIsOnSurface, requestClose]);
 
   const openFrom = useCallback((element: HTMLElement | null, event?: any) => {
     if (!element || typeof window === "undefined") return;
+
     clearTimers();
     setIntent(true);
     setClosing(false);
 
-    const pointerX = Number.isFinite(event?.clientX) ? Number(event.clientX) : undefined;
-    const pointerY = Number.isFinite(event?.clientY) ? Number(event.clientY) : undefined;
+    if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
+      pointerRef.current = {
+        x: Number(event.clientX),
+        y: Number(event.clientY),
+      };
+    }
 
     openTimerRef.current = setTimeout(() => {
       if (!element.isConnected) return;
+
       const rect = element.getBoundingClientRect();
       const measured = measureEdges(element, rect);
       setPosition({
         cardRect: rect,
         modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
         anchor: element,
-        pointerX,
-        pointerY,
+        pointerX: pointerRef.current.x,
+        pointerY: pointerRef.current.y,
         ...measured,
       });
       setOpen(true);
@@ -192,57 +233,101 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const onEnter = useCallback((event?: any) => {
     clearCloseTimer();
+    if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
+      pointerRef.current = {
+        x: Number(event.clientX),
+        y: Number(event.clientY),
+      };
+    }
     openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
   }, [clearCloseTimer, openFrom, ref]);
 
   const onLeave = useCallback((event?: any) => {
     clearOpenTimer();
-    const related = event?.relatedTarget;
-    if (isDomElement(related) && related.closest(".previewModal--container")) return;
-    scheduleClose();
-  }, [clearOpenTimer, scheduleClose]);
 
-  const onOverlayEnter = useCallback(() => {
+    if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
+      pointerRef.current = {
+        x: Number(event.clientX),
+        y: Number(event.clientY),
+      };
+    }
+
+    const related = event?.relatedTarget;
+    if (isDomElement(related) && related.closest(".previewModal--container")) {
+      clearCloseTimer();
+      return;
+    }
+
+    if (!open) {
+      setIntent(false);
+      return;
+    }
+
+    scheduleClose();
+  }, [clearOpenTimer, clearCloseTimer, open, scheduleClose]);
+
+  const onOverlayEnter = useCallback((event?: any) => {
+    if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
+      pointerRef.current = {
+        x: Number(event.clientX),
+        y: Number(event.clientY),
+      };
+    }
     clearCloseTimer();
     setIntent(true);
   }, [clearCloseTimer]);
 
   const onOverlayLeave = useCallback((event?: any) => {
-    const related = event?.relatedTarget;
-    if (isDomNode(related) && ref.current?.contains(related)) return;
-    scheduleClose();
-  }, [scheduleClose, ref]);
+    if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
+      pointerRef.current = {
+        x: Number(event.clientX),
+        y: Number(event.clientY),
+      };
+    }
 
-  // Pointer events on either interactive surface always cancel a pending close.
+    const related = event?.relatedTarget;
+    if (isDomNode(related) && ref.current?.contains(related)) {
+      clearCloseTimer();
+      return;
+    }
+
+    scheduleClose();
+  }, [clearCloseTimer, scheduleClose, ref]);
+
+  // One global pointer tracker owns persistence while the preview is open.
+  // Moving inside either the source tile or the portal always cancels closing.
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
-    const keepOpen = (event: PointerEvent) => {
+    const onPointerMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+
       const target = event.target;
-      if (!isDomElement(target)) return;
-      if (
-        target.closest(".previewModal--container") ||
-        (ref.current && ref.current.contains(target))
-      ) {
+      const source = ref.current;
+      const isInsideByTarget = isDomElement(target) && (
+        !!target.closest(".previewModal--container") ||
+        !!(source && source.contains(target))
+      );
+
+      if (isInsideByTarget || pointerIsOnSurface()) {
         clearCloseTimer();
         setIntent(true);
+        return;
       }
+
+      scheduleClose();
     };
 
-    document.addEventListener("pointermove", keepOpen, true);
-    document.addEventListener("pointerover", keepOpen, true);
-    return () => {
-      document.removeEventListener("pointermove", keepOpen, true);
-      document.removeEventListener("pointerover", keepOpen, true);
-    };
-  }, [open, clearCloseTimer, ref]);
+    document.addEventListener("pointermove", onPointerMove, true);
+    return () => document.removeEventListener("pointermove", onPointerMove, true);
+  }, [open, clearCloseTimer, pointerIsOnSurface, scheduleClose, ref]);
 
-  // Real page scrolling should never leave a fixed preview floating over a
-  // different rail. Close it immediately, without a closing translation.
+  // A real page scroll should dismiss a fixed preview immediately so it never
+  // floats over another rail. This is deliberately separate from pointer move.
   useEffect(() => {
     if (!open || typeof window === "undefined") return;
 
-    const onPageScroll = () => closeImmediately();
+    const onPageScroll = () => finishClose();
     window.addEventListener("scroll", onPageScroll, true);
     window.visualViewport?.addEventListener?.("scroll", onPageScroll);
 
@@ -250,7 +335,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       window.removeEventListener("scroll", onPageScroll, true);
       window.visualViewport?.removeEventListener?.("scroll", onPageScroll);
     };
-  }, [open, closeImmediately]);
+  }, [open, finishClose]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
@@ -271,13 +356,21 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   };
 }
 
-export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouseLeave, onClick, children, testId }: any) {
+export function ExpandOverlay({
+  position,
+  closing = false,
+  onMouseEnter,
+  onMouseLeave,
+  onClick,
+  children,
+  testId,
+}: any) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
-  // Use the opening snapshot only. Pointer movement inside the expanded card
-  // must never change its top/left coordinates.
+  // Always use the opening snapshot. Pointer movement must never change the
+  // popup's screen coordinates after it has opened.
   const currentCardRect = useCallback(
     () => position?.cardRect as DOMRect | undefined,
     [position]
@@ -292,7 +385,9 @@ export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouse
     const scale = 1 / SCALE_FACTOR;
     const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
     const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
-    const rowEnd = Number.isFinite(position?.rowEnd) ? Number(position.rowEnd) : window.innerWidth - fallback;
+    const rowEnd = Number.isFinite(position?.rowEnd)
+      ? Number(position.rowEnd)
+      : window.innerWidth - fallback;
     const edge = (position?.edge || "center") as HoverEdge;
 
     let desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
@@ -301,9 +396,17 @@ export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouse
 
     const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
     const minLeft = edge === "left" ? rowStart : VIEWPORT_GUTTER;
-    const maxRightGutter = edge === "right" ? Math.max(0, window.innerWidth - rowEnd) : VIEWPORT_GUTTER;
-    const maxLeft = Math.max(minLeft, window.innerWidth - modalRect.width - maxRightGutter);
-    const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - modalRect.height - VIEWPORT_GUTTER);
+    const maxRightGutter = edge === "right"
+      ? Math.max(0, window.innerWidth - rowEnd)
+      : VIEWPORT_GUTTER;
+    const maxLeft = Math.max(
+      minLeft,
+      window.innerWidth - modalRect.width - maxRightGutter
+    );
+    const maxTop = Math.max(
+      VIEWPORT_GUTTER,
+      window.innerHeight - modalRect.height - VIEWPORT_GUTTER
+    );
 
     const left = Math.round(Math.min(Math.max(desiredLeft, minLeft), maxLeft));
     const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
@@ -324,18 +427,19 @@ export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouse
 
   useLayoutEffect(() => {
     if (!position || !modalRef.current || typeof window === "undefined") return;
+
     setGeometry(null);
     setPhase("measure");
 
-    let frame1 = requestAnimationFrame(() => {
+    let frame = requestAnimationFrame(() => {
       const next = calculateGeometry();
       if (!next) return;
       setGeometry(next);
       setPhase("reset");
-      frame1 = requestAnimationFrame(() => setPhase("open"));
+      frame = requestAnimationFrame(() => setPhase("open"));
     });
 
-    return () => cancelAnimationFrame(frame1);
+    return () => cancelAnimationFrame(frame);
   }, [position, calculateGeometry]);
 
   useEffect(() => {
@@ -348,8 +452,11 @@ export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouse
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
   const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
   const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
-  const rowEnd = Number.isFinite(position?.rowEnd) ? Number(position.rowEnd) : window.innerWidth - fallback;
+  const rowEnd = Number.isFinite(position?.rowEnd)
+    ? Number(position.rowEnd)
+    : window.innerWidth - fallback;
   const edge = (position?.edge || "center") as HoverEdge;
+
   const fallbackLeft = edge === "left"
     ? rowStart
     : edge === "right"
@@ -361,6 +468,7 @@ export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouse
 
   const left = geometry?.left ?? fallbackLeft;
   const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
+
   let transform = "translate3d(0,0,0) scale(1)";
   let opacity = 0;
   let transition = "none";
@@ -377,11 +485,18 @@ export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouse
 
   const handleOverlayClick = (event: any) => {
     const target = event?.target;
-    if (isDomElement(target) && target.closest("button, a, [role='button'], input, select, textarea")) return;
+    if (
+      isDomElement(target) &&
+      target.closest("button, a, [role='button'], input, select, textarea")
+    ) return;
     onClick?.(event);
   };
 
-  const transformOrigin = edge === "left" ? "0% 50%" : edge === "right" ? "100% 50%" : "50% 50%";
+  const transformOrigin = edge === "left"
+    ? "0% 50%"
+    : edge === "right"
+      ? "100% 50%"
+      : "50% 50%";
 
   return createPortal(
     <div className="flix-netflix-preview-portal">
