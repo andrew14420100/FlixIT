@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="it">
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -14,15 +14,30 @@
         <link rel="dns-prefetch" href="https://cdn.streamingcommunityz.ninja" />
         <link rel="preconnect" href="https://cdn.streamingunity-premium.to" crossorigin />
         <link rel="dns-prefetch" href="https://cdn.streamingunity-premium.to" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Unbounded:wght@200..900&family=Bebas+Neue&display=swap" rel="stylesheet" />
+        <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Unbounded:wght@200..900&family=Bebas+Neue&display=swap" onload="this.onload=null;this.rel='stylesheet'" />
+        <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Unbounded:wght@200..900&family=Bebas+Neue&display=swap" rel="stylesheet" /></noscript>
         <title>FlixIT | Streaming</title>
         <script>
-            // The complete SC catalogue is ~6.8 MB and is a backend concern.
-            // Older builds downloaded + JSON-parsed it before React could paint,
-            // making every hard refresh compete with the critical Home request.
-            // Keep the legacy global contract for any old runtime consumer, but
-            // never put the full catalogue on the startup critical path.
             window.__FLIXIT_SC_CATALOG_PROMISE__ = Promise.resolve(null);
+
+            // Start the tiny first-paint Home payload while the main JS bundle is
+            // still downloading/parsing. HomePage adopts this exact promise, so
+            // there is no duplicate request once React mounts.
+            (function () {
+                var path = window.location.pathname || "/";
+                var isHome = path === "/" || path === "/browse" || path === "/browse/" ||
+                    path.indexOf("/browse/genre/") === 0 || path === "/browse/latest" || path === "/browse/trending";
+                if (!isHome || !window.fetch) return;
+                window.__FLIXIT_HOME_FAST_PROMISE__ = fetch("/api/public/home-bootstrap-fast", {
+                    headers: { Accept: "application/json" },
+                    cache: "no-store"
+                }).then(function (response) {
+                    if (!response.ok) return null;
+                    return response.json();
+                }).then(function (data) {
+                    return data && Array.isArray(data.rows) ? data : null;
+                }).catch(function () { return null; });
+            })();
         </script>
         <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
         <script defer src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
@@ -93,9 +108,6 @@
                     (e.__SV = 1));
             })(document, window.posthog || []);
 
-            // Analytics and session recording are useful, but neither belongs on
-            // the first-paint path. Load them only after the page has rendered and
-            // the browser has idle time, with a timeout fallback for busy devices.
             (function () {
                 function initPosthog() {
                     if (!window.posthog || window.__flixitPosthogStarted) return;
