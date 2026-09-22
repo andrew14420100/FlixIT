@@ -12,9 +12,11 @@ import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_URL = "/api/public/home-bootstrap";
-const HOME_CACHE_KEY = "flix-home-bootstrap-v5-sc-current";
+const HOME_CACHE_KEY = "flix-home-bootstrap-v6-fast-first-paint";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
+const FIRST_PAINT_ROWS = 8;
+const FIRST_PAINT_ITEMS_PER_ROW = 18;
 
 function readHomeCache() {
   if (typeof window === "undefined") return null;
@@ -27,12 +29,28 @@ function readHomeCache() {
   }
 }
 
+function firstPaintSnapshot(data: any) {
+  if (!data) return null;
+  return {
+    ...data,
+    rows: (data.rows || []).slice(0, FIRST_PAINT_ROWS).map((row: any) => ({
+      ...row,
+      items: (row?.items || []).slice(0, FIRST_PAINT_ITEMS_PER_ROW),
+    })),
+  };
+}
+
 function writeHomeCache(data) {
   if (typeof window === "undefined" || !data?.rows?.length) return;
   try {
+    // localStorage is synchronous. Persisting the old full 20x50 Home payload
+    // made refreshes spend noticeable main-thread time parsing JSON before React
+    // could paint anything. Keep only enough rows/cards for the first viewport;
+    // React Query replaces it with the full network snapshot in the background.
+    const fast = firstPaintSnapshot(data);
     window.localStorage.setItem(
       HOME_CACHE_KEY,
-      JSON.stringify({ savedAt: Date.now(), data })
+      JSON.stringify({ savedAt: Date.now(), data: fast })
     );
   } catch {}
 }
@@ -184,7 +202,7 @@ export function Component() {
 
   const initialCache = useMemo(() => MODULE_HOME_CACHE || readHomeCache(), []);
   const { data: bootstrap } = useQuery({
-    queryKey: ["home-bootstrap-v5-sc-current"],
+    queryKey: ["home-bootstrap-v6-fast-first-paint"],
     queryFn: async ({ signal }: any) => {
       if (!earlyHomeBootstrapConsumed && EARLY_HOME_BOOTSTRAP_PROMISE) {
         earlyHomeBootstrapConsumed = true;
@@ -223,7 +241,9 @@ export function Component() {
     () => normalizeRows(bootstrap?.rows || [], filterMediaType, continueKeys),
     [bootstrap?.rows, filterMediaType, continueKeys]
   );
-  const hasReadyHome = rows.length > 0 || continueItems.length > 0;
+  const hasHero = !!bootstrap?.hero?.contentId;
+  const hasReadyRows = rows.length > 0 || continueItems.length > 0;
+  const hasReadyHome = hasHero || hasReadyRows;
   const continueTitle = username ? `${username}, continua a guardare` : "Continua a guardare";
 
   return (
@@ -240,7 +260,7 @@ export function Component() {
         fontFamily: '\"Netflix Sans\", \"Helvetica Neue\", Helvetica, Arial, sans-serif',
       }}
     >
-      {hasReadyHome ? (
+      {hasHero ? (
         <HeroSection mediaType={currentMediaType} initialHero={bootstrap?.hero || null} />
       ) : (
         <Box
@@ -253,7 +273,7 @@ export function Component() {
         />
       )}
 
-      {hasReadyHome && (
+      {hasReadyRows && (
         <Stack
           spacing={0}
           sx={{
