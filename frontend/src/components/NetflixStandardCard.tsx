@@ -15,6 +15,7 @@ interface Props {
   onMouseLeave?: any;
   watch?: any;
   testId?: string;
+  portrait?: boolean;
 }
 
 function uniqueCandidates(values: Array<string | null | undefined>) {
@@ -39,6 +40,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
     onMouseLeave,
     watch,
     testId,
+    portrait = false,
   },
   ref
 ) {
@@ -53,9 +55,6 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   }, [candidates.join("|")]);
 
   const src = candidates[candidateIndex] || null;
-
-  // Static catalogue cards must arrive already merchandised: the title/logo is
-  // part of the artwork itself. Never compose a separate logo over a clean image.
   if (!src || !embeddedTitleTreatment) return null;
 
   const removeFromContinueWatching = (event: any) => {
@@ -67,7 +66,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   return (
     <div
       ref={ref}
-      className="netflix-standard-card-root"
+      className={`netflix-standard-card-root${portrait ? " is-portrait" : ""}`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       data-testid={testId}
@@ -87,8 +86,8 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
             <img
               src={src}
               alt=""
-              width="342"
-              height="192"
+              width={portrait ? 500 : 342}
+              height={portrait ? 750 : 192}
               loading="lazy"
               decoding="async"
               draggable={false}
