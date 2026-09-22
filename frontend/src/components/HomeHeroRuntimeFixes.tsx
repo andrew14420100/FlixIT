@@ -12,6 +12,17 @@ const FINAL_STYLE_ID = 'flixit-home-hero-runtime-final';
 
 const FINAL_HERO_CSS = String.raw`
 @media (min-width: 900px) {
+  /* Restore the Home header geometry used before the 80px experiment. Keep the
+     route stage in lockstep so nothing is clipped underneath the fixed AppBar. */
+  body:has([data-testid="home-page"] .netflix-home-billboard) [data-testid="main-header"] {
+    height: 78px !important;
+    min-height: 78px !important;
+  }
+
+  body:has([data-testid="home-page"] .netflix-home-billboard) .flixit-route-stage {
+    padding-top: 78px !important;
+  }
+
   [data-testid="home-page"] {
     position: relative !important;
     isolation: isolate !important;
@@ -50,8 +61,8 @@ const FINAL_HERO_CSS = String.raw`
     z-index: 2 !important;
   }
 
-  /* Keep the trailer full-bleed like Netflix. The old forced contain mode made
-     a 16:9 trailer look like a cut-out panel with visible side bars. */
+  /* Keep the trailer full-bleed like Netflix. The forced contain experiment
+     produced a narrow panel with visible side bars. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard .netflix-home-video-layer,
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="trailer-player"] {
     background: #000 !important;
@@ -78,8 +89,8 @@ const FINAL_HERO_CSS = String.raw`
     transform: none !important;
   }
 
-  /* The logo rendered by HeroSection comes from the normal artwork pipeline.
-     Do not replace it at runtime: for this project that is the SC title logo. */
+  /* The title logo is the logo already supplied by the normal SC artwork
+     pipeline. Runtime code must never replace it with TMDB artwork. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-logo"].netflix-home-logo {
     width: min(39vw, 680px) !important;
     max-width: min(39vw, 680px) !important;
