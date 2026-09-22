@@ -1,141 +1,55 @@
 // @ts-nocheck
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "src/components/NetflixMiniModalExact.css";
 import "src/components/NetflixMotionOverrides.css";
 
 /*
- * StreamingCommunity-style hover controller.
- *
- * Supplied SC computed style at the reference viewport:
- *   font-size: .87vw;
- *   width: 365px;
- *   transform-origin: center center;
- *   transform: translateY(0px) scale(1);
- *   transition: transform 200ms;
- *
- * 365px corresponds almost exactly to ~22em at .87vw, i.e. 19.14vw.
- * The preview therefore must NOT be 1.5x the source-card width.
+ * StreamingCommunity hover behaviour, ported from the supplied sliders bundle.
+ * Important values from SC:
+ * - hover intent delay: 300ms
+ * - preview width: source width * 1.5
+ * - initial scale: .666667
+ * - preview activation after mount: 25ms
+ * - transform transition: 200ms (default CSS easing = ease)
+ * - top: offsetY - (source height * 2 / 3)
+ * - horizontal origin: left / center / right depending on source x
+ * - opening translateY depends on viewport width
+ * - close duration: 200ms
  */
-const SC_PREVIEW_WIDTH_VW = 19.14;
-const OPEN_DELAY_MS = 135;
+const OPEN_DELAY_MS = 300;
+const READY_DELAY_MS = 25;
 const TRANSFORM_DURATION_MS = 200;
-const LEAVE_GRACE_MS = 150;
-const VIEWPORT_GUTTER = 4;
-const POINTER_PAD = 8;
-
-type HoverEdge = "left" | "center" | "right";
+const INITIAL_SCALE = 0.666667;
 
 type AnchorData = {
-  cardRect: DOMRect;
+  offsetX: number;
+  offsetY: number;
+  width: number;
+  height: number;
   modalWidth: number;
+  fadeImageOut: boolean;
   anchor: HTMLElement | null;
-  rowStart?: number;
-  rowEnd?: number;
-  edge?: HoverEdge;
 };
 
-type ActiveHover = {
-  owner: symbol;
-  cancel: () => void;
-} | null;
-
-let activeHover: ActiveHover = null;
-
-function isDomNode(value: any): value is Node {
-  return typeof Node !== "undefined" && value instanceof Node;
-}
-
-function isDomElement(value: any): value is Element {
+function isElement(value: any): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
 }
 
-function updatePointer(ref: any, event?: any) {
-  if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
-    ref.current = { x: Number(event.clientX), y: Number(event.clientY) };
-  }
+function hasPreview() {
+  return typeof document !== "undefined" && !!document.querySelector(".preview-wrap");
 }
 
-function pointInsideRect(x: number, y: number, rect?: DOMRect | null, pad = 0) {
-  if (!rect || !Number.isFinite(x) || !Number.isFinite(y)) return false;
-  return (
-    x >= rect.left - pad &&
-    x <= rect.right + pad &&
-    y >= rect.top - pad &&
-    y <= rect.bottom + pad
-  );
-}
-
-function getScPreviewWidth() {
-  if (typeof window === "undefined") return 365;
-  return Math.round(window.innerWidth * (SC_PREVIEW_WIDTH_VW / 100));
-}
-
-function findRow(element: HTMLElement | null) {
-  return element?.closest("[data-sc-row], .slider-row, .site-slider-row") as HTMLElement | null;
-}
-
-function visibleCardRects(row: HTMLElement | null, source: HTMLElement) {
-  if (!row || typeof window === "undefined") return [];
-
-  const clip = (
-    row.querySelector(".slick-list") ||
-    row.querySelector("[data-sc-track]") ||
-    row
-  ) as HTMLElement;
-
-  const clipRect = clip.getBoundingClientRect();
-  const minX = Math.max(0, clipRect.left);
-  const maxX = Math.min(window.innerWidth, clipRect.right);
-
-  const nodes = Array.from(
-    row.querySelectorAll(".netflix-standard-card-root, .netflix-ranked-card-root")
-  ) as HTMLElement[];
-
-  if (!nodes.includes(source)) nodes.push(source);
-
-  return nodes
-    .filter((node) => node.isConnected)
-    .map((node) => ({ node, rect: node.getBoundingClientRect() }))
-    .filter(({ rect }) => rect.width > 0 && rect.right > minX + 2 && rect.left < maxX - 2)
-    .sort((a, b) => a.rect.left - b.rect.left);
-}
-
-function measureEdges(element: HTMLElement, rect: DOMRect) {
-  const row = findRow(element);
-  const visible = visibleCardRects(row, element);
-  const first = visible[0];
-  const last = visible[visible.length - 1];
-  const tolerance = Math.max(4, Math.min(18, rect.width * 0.08));
-
-  const isFirst = !!first && (
-    first.node === element || Math.abs(first.rect.left - rect.left) <= tolerance
-  );
-  const isLast = !!last && (
-    last.node === element || Math.abs(last.rect.right - rect.right) <= tolerance
-  );
-
-  let edge: HoverEdge = "center";
-  if (isFirst && !isLast) edge = "left";
-  else if (isLast && !isFirst) edge = "right";
-  else if (isFirst && isLast) {
-    const center = rect.left + rect.width / 2;
-    edge = center <= window.innerWidth / 2 ? "left" : "right";
-  }
-
-  const fallbackGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
-  return {
-    edge,
-    rowStart: first?.rect.left ?? rect.left ?? fallbackGutter,
-    rowEnd: last?.rect.right ?? rect.right ?? window.innerWidth - fallbackGutter,
-  };
+function scTranslateY(viewportWidth: number) {
+  let value = (3 / 130) * viewportWidth - 69 / 13;
+  if (viewportWidth < 1400) value = (9 / 299) * viewportWidth - 2126 / 299;
+  if (viewportWidth < 1100) value = (9 / 299) * viewportWidth + 574 / 299;
+  return value;
 }
 
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
-  const ownerRef = useRef(Symbol("flix-sc-hover"));
   const openTimerRef = useRef<any>(null);
-  const closeTimerRef = useRef<any>(null);
-  const pointerRef = useRef({ x: -1, y: -1 });
+  const removeTimerRef = useRef<any>(null);
   const openRef = useRef(false);
 
   const [intent, setIntent] = useState(false);
@@ -149,232 +63,120 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     openTimerRef.current = null;
   }, []);
 
-  const clearCloseTimer = useCallback(() => {
-    if (!closeTimerRef.current) return;
-    clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = null;
+  const clearRemoveTimer = useCallback(() => {
+    if (!removeTimerRef.current) return;
+    clearTimeout(removeTimerRef.current);
+    removeTimerRef.current = null;
   }, []);
 
-  const clearTimers = useCallback(() => {
-    clearOpenTimer();
-    clearCloseTimer();
-  }, [clearOpenTimer, clearCloseTimer]);
-
-  const resetImmediately = useCallback(() => {
-    clearTimers();
+  const finishClose = useCallback(() => {
+    clearRemoveTimer();
     openRef.current = false;
-
-    if (activeHover?.owner === ownerRef.current) activeHover = null;
-
-    setIntent(false);
-    setClosing(false);
     setOpen(false);
-    setPosition(null);
-  }, [clearTimers]);
-
-  const claim = useCallback(() => {
-    if (activeHover?.owner === ownerRef.current) return;
-
-    const previous = activeHover;
-    activeHover = null;
-    previous?.cancel?.();
-
-    activeHover = {
-      owner: ownerRef.current,
-      cancel: resetImmediately,
-    };
-  }, [resetImmediately]);
-
-  const pointerIsOnOurSurface = useCallback(() => {
-    if (typeof document === "undefined") return false;
-    if (activeHover?.owner !== ownerRef.current) return false;
-
-    const { x, y } = pointerRef.current;
-    if (x < 0 || y < 0) return false;
-
-    const source = ref.current;
-    if (source?.isConnected && pointInsideRect(x, y, source.getBoundingClientRect(), POINTER_PAD)) {
-      return true;
-    }
-
-    const preview = document.querySelector(".previewModal--container") as HTMLElement | null;
-    if (preview?.isConnected && pointInsideRect(x, y, preview.getBoundingClientRect(), POINTER_PAD)) {
-      return true;
-    }
-
-    const hit = document.elementFromPoint(x, y);
-    if (!isDomElement(hit)) return false;
-    if (hit.closest(".previewModal--container")) return true;
-    if (source && source.contains(hit)) return true;
-    return false;
-  }, [ref]);
-
-  const finishAnimatedClose = useCallback(() => {
-    clearTimers();
-    openRef.current = false;
-
-    if (activeHover?.owner === ownerRef.current) activeHover = null;
-
-    setIntent(false);
     setClosing(false);
-    setOpen(false);
+    setIntent(false);
     setPosition(null);
-  }, [clearTimers]);
+  }, [clearRemoveTimer]);
 
-  const closeAnimated = useCallback(() => {
+  const closePreview = useCallback(() => {
     clearOpenTimer();
+    setIntent(false);
 
     if (!openRef.current) {
-      resetImmediately();
+      finishClose();
       return;
     }
 
-    if (closing) return;
-    setIntent(false);
     setClosing(true);
-    clearCloseTimer();
+    clearRemoveTimer();
+    removeTimerRef.current = setTimeout(() => {
+      removeTimerRef.current = null;
+      finishClose();
+    }, TRANSFORM_DURATION_MS);
+  }, [clearOpenTimer, clearRemoveTimer, finishClose]);
 
-    closeTimerRef.current = setTimeout(() => {
-      closeTimerRef.current = null;
-      finishAnimatedClose();
-    }, TRANSFORM_DURATION_MS + 16);
-  }, [closing, clearOpenTimer, clearCloseTimer, finishAnimatedClose, resetImmediately]);
-
-  const scheduleClose = useCallback(() => {
-    if (activeHover?.owner !== ownerRef.current) {
-      resetImmediately();
-      return;
-    }
-    if (!openRef.current || closeTimerRef.current) return;
-
-    closeTimerRef.current = setTimeout(() => {
-      closeTimerRef.current = null;
-      if (pointerIsOnOurSurface()) {
-        setClosing(false);
-        setIntent(true);
-        return;
-      }
-      closeAnimated();
-    }, LEAVE_GRACE_MS);
-  }, [pointerIsOnOurSurface, closeAnimated, resetImmediately]);
-
-  const openFrom = useCallback((element: HTMLElement | null, event?: any) => {
+  const onEnter = useCallback((event?: any) => {
+    const element = (event?.currentTarget || ref.current) as HTMLElement | null;
     if (!element || typeof window === "undefined") return;
 
-    updatePointer(pointerRef, event);
-    claim();
-    clearCloseTimer();
-    setClosing(false);
+    clearOpenTimer();
+    clearRemoveTimer();
     setIntent(true);
 
-    if (openTimerRef.current || openRef.current) return;
+    if (openRef.current) return;
 
     openTimerRef.current = setTimeout(() => {
       openTimerRef.current = null;
 
-      if (activeHover?.owner !== ownerRef.current || !element.isConnected) return;
+      // SC refuses to create a second preview while one is already mounted.
+      if (hasPreview() || !element.isConnected) return;
 
       const rect = element.getBoundingClientRect();
-      const { x, y } = pointerRef.current;
-      if (!pointInsideRect(x, y, rect, POINTER_PAD)) {
-        resetImmediately();
-        return;
-      }
+      let offsetY = rect.top + window.scrollY;
+      const isTop10 = element.classList.contains("netflix-ranked-card-root") ||
+        !!element.closest(".top10-row");
 
-      const measured = measureEdges(element, rect);
-      openRef.current = true;
+      // Exact extra vertical adjustment used by SC for Top 10.
+      if (isTop10) offsetY += rect.top / 16;
+
+      const width = element.clientWidth || rect.width;
+      const height = element.clientHeight || rect.height;
+
       setPosition({
-        cardRect: rect,
-        modalWidth: getScPreviewWidth(),
+        offsetX: rect.left,
+        offsetY,
+        width,
+        height,
+        modalWidth: width * 1.5,
+        fadeImageOut: isTop10,
         anchor: element,
-        ...measured,
       });
+
+      openRef.current = true;
+      setClosing(false);
       setOpen(true);
     }, OPEN_DELAY_MS);
-  }, [claim, clearCloseTimer, resetImmediately]);
-
-  const onEnter = useCallback((event?: any) => {
-    openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
-  }, [openFrom, ref]);
+  }, [clearOpenTimer, clearRemoveTimer, ref]);
 
   const onLeave = useCallback((event?: any) => {
-    updatePointer(pointerRef, event);
-
-    if (!openRef.current) {
-      resetImmediately();
-      return;
-    }
-
-    scheduleClose();
-  }, [resetImmediately, scheduleClose]);
-
-  const onOverlayEnter = useCallback((event?: any) => {
-    if (activeHover?.owner !== ownerRef.current) return;
-    updatePointer(pointerRef, event);
-    clearCloseTimer();
-    setClosing(false);
-    setIntent(true);
-  }, [clearCloseTimer]);
-
-  const onOverlayLeave = useCallback((event?: any) => {
-    if (activeHover?.owner !== ownerRef.current) return;
-    updatePointer(pointerRef, event);
-
     const related = event?.relatedTarget;
-    if (isDomNode(related) && ref.current?.contains(related)) {
-      clearCloseTimer();
-      setClosing(false);
-      setIntent(true);
-      return;
-    }
 
-    scheduleClose();
-  }, [ref, clearCloseTimer, scheduleClose]);
+    // Exact SC hand-off: moving directly from the source card into the
+    // teleported preview does not close it.
+    if (isElement(related) && related.closest(".preview-wrap")) return;
 
-  useEffect(() => {
-    if (!open || typeof document === "undefined") return;
+    clearOpenTimer();
+    closePreview();
+  }, [clearOpenTimer, closePreview]);
 
-    const onPointerMove = (event: PointerEvent) => {
-      pointerRef.current = { x: event.clientX, y: event.clientY };
+  const onOverlayEnter = useCallback(() => {
+    // SC does not restart the animation when the pointer enters the preview.
+    clearRemoveTimer();
+  }, [clearRemoveTimer]);
 
-      if (activeHover?.owner !== ownerRef.current) {
-        resetImmediately();
-        return;
-      }
-
-      if (pointerIsOnOurSurface()) {
-        clearCloseTimer();
-        setClosing(false);
-        setIntent(true);
-        return;
-      }
-
-      scheduleClose();
-    };
-
-    document.addEventListener("pointermove", onPointerMove, true);
-    return () => document.removeEventListener("pointermove", onPointerMove, true);
-  }, [open, pointerIsOnOurSurface, clearCloseTimer, scheduleClose, resetImmediately]);
+  const onOverlayLeave = useCallback(() => {
+    closePreview();
+  }, [closePreview]);
 
   useEffect(() => () => {
-    clearTimers();
-    if (activeHover?.owner === ownerRef.current) activeHover = null;
-  }, [clearTimers]);
+    clearOpenTimer();
+    clearRemoveTimer();
+  }, [clearOpenTimer, clearRemoveTimer]);
 
   return {
     open,
     intent,
     entered: open && !closing,
-    display: open,
+    display: open && !closing,
     closing,
     position,
     width: position?.modalWidth,
-    align: position?.edge || "center",
+    align: "center",
     onEnter,
     onLeave,
     onOverlayEnter,
     onOverlayLeave,
-    closePreview: closeAnimated,
+    closePreview,
   };
 }
 
@@ -387,146 +189,102 @@ export function ExpandOverlay({
   children,
   testId,
 }: any) {
-  const modalRef = useRef<HTMLDivElement | null>(null);
-  const [geometry, setGeometry] = useState<any>(null);
-  const [phase, setPhase] = useState<"measure" | "from" | "open" | "close">("measure");
-
-  const calculateGeometry = useCallback(() => {
-    const node = modalRef.current;
-    const card = position?.cardRect as DOMRect | undefined;
-    if (!node || !card || typeof window === "undefined") return null;
-
-    const modalRect = node.getBoundingClientRect();
-    const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
-    const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
-    const rowEnd = Number.isFinite(position?.rowEnd)
-      ? Number(position.rowEnd)
-      : window.innerWidth - fallback;
-    const edge = (position?.edge || "center") as HoverEdge;
-
-    let desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
-    if (edge === "left") desiredLeft = rowStart;
-    if (edge === "right") desiredLeft = rowEnd - modalRect.width;
-
-    const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
-    const minLeft = edge === "left" ? rowStart : VIEWPORT_GUTTER;
-    const rightGutter = edge === "right"
-      ? Math.max(0, window.innerWidth - rowEnd)
-      : VIEWPORT_GUTTER;
-    const maxLeft = Math.max(minLeft, window.innerWidth - modalRect.width - rightGutter);
-    const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - modalRect.height - VIEWPORT_GUTTER);
-
-    const left = Math.round(Math.min(Math.max(desiredLeft, minLeft), maxLeft));
-    const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
-
-    const startScale = Math.max(0.01, card.width / modalRect.width);
-    const sourceCenterY = card.top + card.height / 2;
-    const finalCenterY = top + modalRect.height / 2;
-    const startTranslateY = Math.round(sourceCenterY - finalCenterY);
-
-    return {
-      left,
-      top,
-      startScale,
-      startTranslateY,
-      edge,
-    };
-  }, [position]);
-
-  useLayoutEffect(() => {
-    if (!position || !modalRef.current || typeof window === "undefined") return;
-
-    setGeometry(null);
-    setPhase("measure");
-
-    let secondFrame = 0;
-    const firstFrame = requestAnimationFrame(() => {
-      const next = calculateGeometry();
-      if (!next) return;
-
-      setGeometry(next);
-      setPhase("from");
-
-      secondFrame = requestAnimationFrame(() => setPhase("open"));
-    });
-
-    return () => {
-      cancelAnimationFrame(firstFrame);
-      if (secondFrame) cancelAnimationFrame(secondFrame);
-    };
-  }, [position, calculateGeometry]);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (closing && geometry) {
-      setPhase("close");
-      return;
-    }
-    if (!closing && phase === "close") setPhase("open");
-  }, [closing, geometry, phase]);
+    setReady(false);
+    const timer = setTimeout(() => setReady(true), READY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [position]);
 
-  if (!position || typeof document === "undefined") return null;
+  // SC starts observing the pointer globally only after the 200ms opening
+  // transition. Leaving .preview-wrap then dispatches the close behaviour.
+  useEffect(() => {
+    if (!position || typeof window === "undefined") return;
 
-  const card = position.cardRect as DOMRect;
-  const modalWidth = position.modalWidth || getScPreviewWidth();
-  const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
-  const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
-  const rowEnd = Number.isFinite(position?.rowEnd)
-    ? Number(position.rowEnd)
-    : window.innerWidth - fallback;
-  const edge = (position?.edge || "center") as HoverEdge;
+    let handler: any = null;
+    const timer = setTimeout(() => {
+      handler = (event: MouseEvent) => {
+        const target = event.target;
+        if (!isElement(target) || !target.closest(".preview-wrap")) {
+          onMouseLeave?.(event);
+        }
+      };
+      window.addEventListener("mousemove", handler);
+    }, TRANSFORM_DURATION_MS);
 
-  const fallbackLeft = edge === "left"
-    ? rowStart
-    : edge === "right"
-      ? Math.max(VIEWPORT_GUTTER, rowEnd - modalWidth)
-      : Math.min(
-          Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
-          Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
-        );
+    return () => {
+      clearTimeout(timer);
+      if (handler) window.removeEventListener("mousemove", handler);
+    };
+  }, [position, onMouseLeave]);
 
-  const left = geometry?.left ?? fallbackLeft;
-  const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
+  if (!position || typeof document === "undefined" || typeof window === "undefined") return null;
 
-  const startTransform = geometry
-    ? `translateY(${geometry.startTranslateY}px) scale(${geometry.startScale})`
-    : "translateY(0px) scale(1)";
+  const viewportWidth = window.innerWidth;
+  const modalWidth = Math.round(position.width * 1.5);
+  const top = Math.round(position.offsetY - (position.height / 3) * 2);
 
-  let transform = startTransform;
-  let transition = "none";
-  let pointerEvents: any = "none";
+  let left = position.offsetX;
+  let transformOrigin = "left center";
 
-  if (phase === "from" && geometry) {
-    pointerEvents = "auto";
-  } else if (phase === "open" && geometry) {
-    transform = "translateY(0px) scale(1)";
-    transition = `transform ${TRANSFORM_DURATION_MS}ms`;
-    pointerEvents = "auto";
-  } else if (phase === "close" && geometry) {
-    transform = startTransform;
-    transition = `transform ${TRANSFORM_DURATION_MS}ms`;
-    pointerEvents = "none";
+  if (left > (viewportWidth / 100) * 70) {
+    left -= position.width / 2;
+    transformOrigin = "right center";
+  } else if (left > (viewportWidth / 100) * 5) {
+    left -= position.width / 4;
+    transformOrigin = "center center";
+  }
+
+  const startTranslateY = scTranslateY(viewportWidth);
+  const expanded = ready && !closing;
+  const transform = expanded
+    ? "translateY(0px) scale(1)"
+    : `translateY(${startTranslateY}px) scale(${INITIAL_SCALE})`;
+
+  let opacity = ready ? 1 : 0;
+  let transition = `transform ${TRANSFORM_DURATION_MS}ms`;
+  let boxShadow = "none";
+
+  if (expanded) {
+    boxShadow = "rgb(0 0 0 / 75%) 0px 3px 10px";
+  }
+
+  // SC fades the Top 10 image out during close, while normal cards only shrink.
+  if (position.fadeImageOut && closing) {
+    opacity = 0;
+    transition += `, opacity ${TRANSFORM_DURATION_MS}ms`;
   }
 
   const handleOverlayClick = (event: any) => {
     const target = event?.target;
     if (
-      isDomElement(target) &&
+      isElement(target) &&
       target.closest("button, a, [role='button'], input, select, textarea")
     ) return;
     onClick?.(event);
   };
 
   return createPortal(
-    <div className="flix-netflix-preview-portal">
+    <div
+      className="preview-wrap flix-sc-preview-portal"
+      style={{
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: "100%",
+        height: 0,
+        overflow: "visible",
+        pointerEvents: "none",
+        zIndex: 150,
+      }}
+    >
       <div
-        ref={modalRef}
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
         data-uia="modal-motion-container-MINI_MODAL"
         data-testid={testId}
-        data-phase={phase}
-        data-edge={edge}
         className="previewModal--container preview-dialog has-smaller-buttons mini-modal"
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
@@ -534,29 +292,28 @@ export function ExpandOverlay({
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
           position: "absolute",
-          width: `${modalWidth}px`,
-          top: `${Math.round(top)}px`,
-          left: `${Math.round(left)}px`,
-          transform,
-          transformOrigin: "center center",
-          transition,
-          opacity: 1,
           zIndex: 150,
           borderRadius: ".4em",
-          boxShadow: "rgba(0, 0, 0, 0.75) 0px 3px 10px",
+          top: `${top}px`,
+          left: `${Math.round(left)}px`,
+          width: `${modalWidth}px`,
+          transform,
+          transformOrigin,
+          transition,
+          opacity,
+          boxShadow,
           fontFamily: '"Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif',
           fontSize: ".87vw",
           lineHeight: "inherit",
-          color: "var(--color-text, #e8e8e8)",
           userSelect: "none",
           boxSizing: "border-box",
           borderWidth: 0,
           borderStyle: "solid",
           borderColor: "#e5e7eb",
-          pointerEvents,
+          pointerEvents: "auto",
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden",
-          willChange: phase === "open" || phase === "close" ? "transform" : "auto",
+          willChange: "transform",
         }}
       >
         {children}
