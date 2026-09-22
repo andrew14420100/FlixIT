@@ -69,33 +69,41 @@ def _install_trailer_registration_hook():
 
 
 def _install_full_sc_artwork_catalog_hook():
-    """Make the artwork policy prefer the committed full SC catalog.
+    """Make StreamingCommunity the first source for the Italian Hero title logo.
 
-    The committed archive is still the fast first pass, but some SC title pages
-    expose a transparent Italian title logo that is not present in the archive
-    row. In that case do a tiny live SC-search enrichment for the same matched
-    identity and attach only the missing logo. No TMDB artwork is introduced.
+    The committed SC artwork catalogue remains the fast first pass. When that
+    record has no logo, always perform a small live SC search for the same title
+    identity. This recovery is allowed even when the local catalogue returned no
+    visual row at all: a real SC title can expose a transparent title treatment
+    independently from the archived cover. TMDB artwork is never introduced.
     """
     try:
         import services.artwork_card_policy as policy_module
+        import services.official_artwork as artwork_module
         from services.sc_artwork_catalog import install_sc_catalog
         from services.official_artwork import OfficialArtworkResolver
 
         install_sc_catalog(policy_module)
 
-        # Bump the resolver version so previously cached "no logo" results are
-        # recomputed immediately after deploy.
-        policy_module.POLICY_VERSION = "official-artwork-v10-sc-logo-live"
+        # Invalidate every previously cached "no logo" artwork bundle. Both
+        # values are required: the resolver cache checks official_artwork's
+        # SOURCE_VERSION, while the policy response exposes POLICY_VERSION.
+        version = "official-artwork-v11-sc-logo-always-live"
+        policy_module.POLICY_VERSION = version
+        artwork_module.SOURCE_VERSION = version
 
         current_sc = policy_module._streamingcommunity
-        if not getattr(current_sc, "_flixit_live_sc_logo", False):
+        if not getattr(current_sc, "_flixit_live_sc_logo_v11", False):
             async def streamingcommunity_with_live_logo(self, identity: dict) -> dict:
-                result = await current_sc(self, identity)
-                if not isinstance(result, dict) or not result or result.get("logo_url"):
+                base = await current_sc(self, identity)
+                result = dict(base) if isinstance(base, dict) else {}
+                if result.get("logo_url"):
                     return result
 
                 best_score = 0.0
                 best_logo = None
+                best_row = None
+
                 for query in policy_module._query_variants(identity):
                     try:
                         response = await self._http().get(
@@ -120,6 +128,9 @@ def _install_full_sc_artwork_catalog_hook():
                             score = 0.0
                         if score < 0.62 or score < best_score:
                             continue
+
+                        # SC can expose the title treatment either in the nested
+                        # images/artworks array or directly on the title row.
                         logo = policy_module._image_url(
                             row,
                             "logo",
@@ -127,28 +138,47 @@ def _install_full_sc_artwork_catalog_hook():
                             "title-treatment",
                             "title_treatment",
                             "titlelogo",
+                            "logo_title",
                         )
+                        if not logo:
+                            for key in (
+                                "logo_url",
+                                "logo",
+                                "title_logo_url",
+                                "title_logo",
+                                "title_treatment_url",
+                                "title_treatment",
+                                "titleTreatment",
+                            ):
+                                logo = policy_module._asset_url(row.get(key))
+                                if logo:
+                                    break
+
                         if logo:
                             best_score = score
                             best_logo = logo
+                            best_row = row
 
                 if best_logo:
-                    result = {
-                        **result,
+                    result.update({
+                        "source": "streamingcommunity",
+                        "provider_id": result.get("provider_id") or (best_row or {}).get("id") or (best_row or {}).get("uuid") or (best_row or {}).get("slug"),
+                        "provider_name": result.get("provider_name") or (best_row or {}).get("name") or (best_row or {}).get("title"),
+                        "confidence": round(float(min(best_score, 1.0)), 4),
                         "logo_url": best_logo,
                         "logo_locale": "it",
                         "logo_source": "streamingcommunity",
-                    }
+                    })
                 return result
 
-            streamingcommunity_with_live_logo._flixit_live_sc_logo = True
+            streamingcommunity_with_live_logo._flixit_live_sc_logo_v11 = True
             streamingcommunity_with_live_logo._original = current_sc
             policy_module._streamingcommunity = streamingcommunity_with_live_logo
 
-        # OfficialArtworkResolver's generic logo ranking predates the SC policy.
-        # When SC supplies a logo, always use it before Netflix/Apple/MetaHub.
+        # Whenever the SC provider carries a logo, it must beat Netflix, Apple,
+        # MetaHub and all generic fallbacks for the FlixIT Hero.
         current_choose_logo = OfficialArtworkResolver._choose_logo
-        if not getattr(current_choose_logo, "_flixit_sc_logo_first", False):
+        if not getattr(current_choose_logo, "_flixit_sc_logo_first_v11", False):
             def choose_sc_logo_first(providers):
                 for provider in providers or []:
                     if str(provider.get("source") or "") != "streamingcommunity":
@@ -158,12 +188,11 @@ def _install_full_sc_artwork_catalog_hook():
                         return logo, "streamingcommunity", "it"
                 return current_choose_logo(providers)
 
-            choose_sc_logo_first._flixit_sc_logo_first = True
+            choose_sc_logo_first._flixit_sc_logo_first_v11 = True
             choose_sc_logo_first._original = current_choose_logo
             OfficialArtworkResolver._choose_logo = staticmethod(choose_sc_logo_first)
     except Exception:
-        # The existing artwork resolver remains fully functional if the optional
-        # catalog cannot be installed in a stripped-down/test environment.
+        # Keep the application bootable in stripped-down/test environments.
         return
 
 
