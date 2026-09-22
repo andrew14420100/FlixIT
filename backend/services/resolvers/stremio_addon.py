@@ -50,6 +50,7 @@ class StremioAddonResolver(BaseResolver):
                 media_type,
                 season,
                 episode,
+                tmdb_id=tmdb_id,
             )
         else:
             try:
