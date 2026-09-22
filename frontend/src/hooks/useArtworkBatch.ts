@@ -9,8 +9,8 @@ import {
 } from "./useAutomaticMediaAssets";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
-const BATCH_VERSION = "sc-artwork-server-batch-v2-embedded";
-const MAX_VISIBLE_CANDIDATES = 90;
+const BATCH_VERSION = "sc-artwork-server-batch-v3-roles";
+const MAX_VISIBLE_CANDIDATES = 120;
 const ARTWORK_STALE_MS = 24 * 60 * 60 * 1000;
 
 type NormalizedEntry = {
@@ -157,7 +157,26 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const isReady = (item: any, targetRole: "landscape" | "poster" = "landscape") => {
     const resolved = getResolved(item);
     if (!resolved) return false;
-    return targetRole === "poster" ? !!resolved.top10_ready : !!resolved.card_ready;
+
+    if (targetRole === "poster") {
+      return !!(
+        resolved?.poster_path ||
+        resolved?.poster ||
+        resolved?.poster_url ||
+        item?.__artwork?.poster_url ||
+        item?.poster_path ||
+        item?.poster
+      );
+    }
+
+    return !!(
+      resolved?.card_ready ||
+      resolved?.backdrop_path ||
+      resolved?.titled_backdrop_path ||
+      resolved?.backdrop_url ||
+      item?.__artwork?.backdrop_url ||
+      item?.backdrop_path
+    );
   };
 
   return {
