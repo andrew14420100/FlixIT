@@ -32,7 +32,10 @@ function clamp(value: number, min: number, max: number) {
 function syncSeasonMenuToAnchor() {
   const paper = seasonPaper();
   const anchor = seasonAnchor();
-  if (!paper || !anchor) return false;
+  if (!paper || !anchor) {
+    document.documentElement.classList.remove("flixit-season-menu-open");
+    return false;
+  }
 
   const anchorRect = anchor.getBoundingClientRect();
   const paperRect = paper.getBoundingClientRect();
@@ -48,10 +51,9 @@ function syncSeasonMenuToAnchor() {
   paper.classList.add("flixit-frozen-season-menu", "flixit-season-menu-anchored");
   paper.parentElement?.classList.add("flixit-frozen-season-menu-root");
 
-  // MUI renders Select menus in a portal and normally calculates these
-  // coordinates only when the menu opens. Set the REAL CSS coordinates, not
-  // custom variables, so the menu stays physically attached to Stagione X
-  // while the document moves underneath it.
+  // The MUI menu lives in a portal. Recompute its fixed coordinates from the
+  // trigger whenever the page/visual viewport moves, so it travels with the
+  // Stagione control instead of sticking to the screen.
   paper.style.setProperty("position", "fixed", "important");
   paper.style.setProperty("top", `${Math.round(top)}px`, "important");
   paper.style.setProperty("left", `${Math.round(left)}px`, "important");
@@ -61,7 +63,7 @@ function syncSeasonMenuToAnchor() {
   paper.style.setProperty("margin", "0", "important");
   paper.style.setProperty("transform", "none", "important");
   paper.style.setProperty("transform-origin", "center top", "important");
-
+  document.documentElement.classList.add("flixit-season-menu-open");
   return true;
 }
 
@@ -73,41 +75,51 @@ export default function SeasonMenuAnchorTracker() {
 
     let disposed = false;
     let raf = 0;
+    let burstUntil = 0;
 
-    // Track every painted frame while the dropdown exists. This also covers
-    // iPhone/Chrome momentum scroll and browser-toolbar movement, where normal
-    // scroll events can be sparse.
-    const frame = () => {
+    const paint = () => {
+      raf = 0;
       if (disposed) return;
       const open = syncSeasonMenuToAnchor();
-      document.documentElement.classList.toggle("flixit-season-menu-open", open);
-      raf = requestAnimationFrame(frame);
+      if (open && performance.now() < burstUntil) {
+        raf = requestAnimationFrame(paint);
+      }
     };
 
-    const observer = new MutationObserver(syncSeasonMenuToAnchor);
-    observer.observe(document.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ["class", "aria-expanded"],
-    });
+    const schedule = (burstMs = 0) => {
+      if (disposed) return;
+      if (burstMs > 0) burstUntil = Math.max(burstUntil, performance.now() + burstMs);
+      if (!raf) raf = requestAnimationFrame(paint);
+    };
 
-    window.addEventListener("scroll", syncSeasonMenuToAnchor, true);
-    window.addEventListener("resize", syncSeasonMenuToAnchor, { passive: true });
-    window.addEventListener("touchmove", syncSeasonMenuToAnchor, { passive: true });
-    window.visualViewport?.addEventListener("scroll", syncSeasonMenuToAnchor, { passive: true });
-    window.visualViewport?.addEventListener("resize", syncSeasonMenuToAnchor, { passive: true });
-    raf = requestAnimationFrame(frame);
+    // Child-list observation is only used to detect the portal being mounted or
+    // removed. The previous attribute observer + permanent requestAnimationFrame
+    // loop ran continuously on every TV detail page, even with the menu closed.
+    const observer = new MutationObserver((records) => {
+      if (records.some((record) => record.addedNodes.length || record.removedNodes.length)) schedule(120);
+    });
+    observer.observe(document.body, { subtree: false, childList: true });
+
+    const onScroll = () => schedule(260);
+    const onTouchMove = () => schedule(320);
+    const onResize = () => schedule(180);
+
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    window.addEventListener("resize", onResize, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: true });
+    window.visualViewport?.addEventListener("scroll", onScroll, { passive: true });
+    window.visualViewport?.addEventListener("resize", onResize, { passive: true });
+    schedule(120);
 
     return () => {
       disposed = true;
       if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
-      window.removeEventListener("scroll", syncSeasonMenuToAnchor, true);
-      window.removeEventListener("resize", syncSeasonMenuToAnchor);
-      window.removeEventListener("touchmove", syncSeasonMenuToAnchor);
-      window.visualViewport?.removeEventListener("scroll", syncSeasonMenuToAnchor);
-      window.visualViewport?.removeEventListener("resize", syncSeasonMenuToAnchor);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.visualViewport?.removeEventListener("scroll", onScroll);
+      window.visualViewport?.removeEventListener("resize", onResize);
       document.documentElement.classList.remove("flixit-season-menu-open");
     };
   }, [location.pathname]);
