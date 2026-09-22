@@ -94,8 +94,18 @@ function installPublicCatalogueRequestBudget() {
     });
   };
 
-  const isHome = () =>
-    window.location.pathname === "/" || window.location.pathname.startsWith("/browse");
+  const isHome = () => {
+    const raw = String(window.location.pathname || "/");
+    const pathname = raw.length > 1 ? raw.replace(/\/+$/, "") : raw;
+    return (
+      pathname === "/" ||
+      pathname === "/browse" ||
+      pathname === "/browse/genre/movie" ||
+      pathname === "/browse/genre/tv" ||
+      pathname === "/browse/latest" ||
+      pathname === "/browse/trending"
+    );
+  };
 
   const isSafeCataloguePath = (pathname) =>
     pathname.startsWith("/api/public/tmdb/") ||
@@ -132,7 +142,8 @@ function installPublicCatalogueRequestBudget() {
       return nativeFetch(input, init);
     }
 
-    if (isHome() && url.pathname.startsWith("/api/public/tmdb/")) {
+    const homeRequest = isHome();
+    if (homeRequest && url.pathname.startsWith("/api/public/tmdb/")) {
       const page = Number(url.searchParams.get("page") || 1);
       if (page > MAX_HOME_TMDB_PAGE) {
         return new Response(
@@ -155,7 +166,11 @@ function installPublicCatalogueRequestBudget() {
     }
 
     const signal = init?.signal || (input instanceof Request ? input.signal : undefined);
-    const promise = runBudgeted(() => nativeFetch(input, init), signal)
+    const request = () => nativeFetch(input, init);
+    // Only the Home fan-out needs a strict concurrency budget. Detail, genre and
+    // other routes may also live under /browse, but delaying their independent
+    // metadata requests made navigation feel much slower than necessary.
+    const promise = (homeRequest ? runBudgeted(request, signal) : request())
       .then((response) => {
         if (!response.ok) memo.delete(key);
         return response;
