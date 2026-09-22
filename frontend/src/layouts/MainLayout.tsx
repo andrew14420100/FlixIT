@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Outlet, useLocation, useNavigation } from "react-router-dom";
 import Box from "@mui/material/Box";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -17,15 +17,7 @@ import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
 import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenceRuntime";
 import MobileHomeSectionRecovery from "src/components/mobile/MobileHomeSectionRecovery";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
-import MobileDetailExperience from "src/components/mobile/MobileDetailExperience";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
-import DetailEpisodeEnhancer from "src/components/DetailEpisodeEnhancer";
-import DetailResumeCardPolish from "src/components/DetailResumeCardPolish";
-import DetailDescriptionExpander from "src/components/DetailDescriptionExpander";
-import ItalianEpisodeAvailabilityRuntime from "src/components/ItalianEpisodeAvailabilityRuntime";
-import DetailEpisodeVisualPolish from "src/components/detail/DetailEpisodeVisualPolish";
-import SeasonMenuAnchorTracker from "src/components/SeasonMenuAnchorTracker";
-import WatchEpisodeAdvanceTracker from "src/components/watch/WatchEpisodeAdvanceTracker";
 import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
@@ -37,11 +29,26 @@ import "src/components/detail-interactions.css";
 import "src/components/detail/detail-episode-polish.css";
 import "src/components/site-polish.css";
 
+// Detail imports pull trailer/player and episode helpers into the bundle. Keep
+// them out of Home/Cinema/Search until a detail route is actually opened.
+const MobileDetailExperience = lazy(() => import("src/components/mobile/MobileDetailExperience"));
+const DetailEpisodeEnhancer = lazy(() => import("src/components/DetailEpisodeEnhancer"));
+const DetailResumeCardPolish = lazy(() => import("src/components/DetailResumeCardPolish"));
+const DetailDescriptionExpander = lazy(() => import("src/components/DetailDescriptionExpander"));
+const ItalianEpisodeAvailabilityRuntime = lazy(() => import("src/components/ItalianEpisodeAvailabilityRuntime"));
+const DetailEpisodeVisualPolish = lazy(() => import("src/components/detail/DetailEpisodeVisualPolish"));
+const SeasonMenuAnchorTracker = lazy(() => import("src/components/SeasonMenuAnchorTracker"));
+const WatchEpisodeAdvanceTracker = lazy(() => import("src/components/watch/WatchEpisodeAdvanceTracker"));
+
 export default function MainLayout() {
   const location = useLocation();
   const navigation = useNavigation();
   const isMobile = useMediaQuery("(max-width:899px)");
-  const isMobileDetail = isMobile && /^\/(?:detail|browse)\/(?:movie|tv)\/\d+(?:\/|$)/i.test(location.pathname);
+  const isHome = location.pathname === "/" || location.pathname === "/browse";
+  const isWatch = location.pathname.startsWith(`/${MAIN_PATH.watch}`) || location.pathname.startsWith("/watch");
+  const isDetail = /^\/(?:detail|browse)\/(?:movie|tv)\/\d+(?:\/|$)/i.test(location.pathname);
+  const isTvDetail = /^\/(?:detail|browse)\/tv\/\d+(?:\/|$)/i.test(location.pathname);
+  const isMobileDetail = isMobile && isDetail;
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -50,7 +57,7 @@ export default function MainLayout() {
   useEffect(() => {
     const update = () => document.documentElement.style.setProperty("--page-w", `${document.documentElement.clientWidth}px`);
     update();
-    window.addEventListener("resize", update);
+    window.addEventListener("resize", update, { passive: true });
     return () => window.removeEventListener("resize", update);
   }, []);
 
@@ -58,20 +65,24 @@ export default function MainLayout() {
     <Box sx={{ width: "100%", minHeight: "100vh", bgcolor: "background.default", margin: 0, padding: 0, overflowX: "hidden" }}>
       <ScCdnRecovery />
       <GlobalPlayGlyphNormalizer />
-      <DetailEpisodeEnhancer />
-      <DetailResumeCardPolish />
-      <DetailDescriptionExpander />
-      <ItalianEpisodeAvailabilityRuntime />
-      <DetailEpisodeVisualPolish />
-      <SeasonMenuAnchorTracker />
-      <WatchEpisodeAdvanceTracker />
       <MainHeader />
-      <MobileSCExperience />
-      <MobileSCExactAssets />
-      <MobileHomeReferenceRuntime />
-      <MobileHomeSectionRecovery />
+      {isMobile ? <MobileSCExperience /> : null}
+      {isMobile && !isWatch ? <MobileSCExactAssets /> : null}
+      {isMobile && isHome ? <MobileHomeReferenceRuntime /> : null}
+      {isMobile && isHome ? <MobileHomeSectionRecovery /> : null}
       <MobileGlobalBottomNav />
-      <MobileDetailExperience />
+
+      <Suspense fallback={null}>
+        {isDetail ? <DetailEpisodeEnhancer /> : null}
+        {isDetail ? <DetailResumeCardPolish /> : null}
+        {isDetail ? <DetailDescriptionExpander /> : null}
+        {isDetail ? <DetailEpisodeVisualPolish /> : null}
+        {isTvDetail ? <ItalianEpisodeAvailabilityRuntime /> : null}
+        {isTvDetail ? <SeasonMenuAnchorTracker /> : null}
+        {isWatch ? <WatchEpisodeAdvanceTracker /> : null}
+        {isMobileDetail ? <MobileDetailExperience /> : null}
+      </Suspense>
+
       <AuthModal />
       <SessionGuards />
       {!isMobile && navigation.state !== "idle" && <MainLoadingScreen />}
