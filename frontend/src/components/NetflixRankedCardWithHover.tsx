@@ -190,15 +190,28 @@ export default function NetflixRankedCardWithHover({
     image.src = logoUrl;
   }, [nearViewport, logoUrl]);
 
+  // The row resolves SC artwork before mounting this card. Keep that exact
+  // poster first, but retain a separate TMDB fallback so a failed SC CDN image
+  // cannot make the whole ranked tile (including its number) disappear.
   const posterCandidates = useMemo(
     () => unique([
+      item?.__resolved_top10_poster,
       item?.__artwork?.poster_url,
       item?.mobile_sc_poster_url,
       automaticPoster,
       mappedPoster,
+      item?.__resolved_top10_fallback,
       legacyPoster,
     ].map(usableArtwork)),
-    [item?.__artwork?.poster_url, item?.mobile_sc_poster_url, automaticPoster, mappedPoster, legacyPoster]
+    [
+      item?.__resolved_top10_poster,
+      item?.__artwork?.poster_url,
+      item?.mobile_sc_poster_url,
+      automaticPoster,
+      mappedPoster,
+      item?.__resolved_top10_fallback,
+      legacyPoster,
+    ]
   );
 
   useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
@@ -258,8 +271,6 @@ export default function NetflixRankedCardWithHover({
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
-  if (!posterUrl) return null;
-
   return (
     <>
       <div
@@ -283,16 +294,22 @@ export default function NetflixRankedCardWithHover({
             />
           </div>
           <div className="netflix-ranked-card-poster-wrap">
-            <img
-              src={posterUrl}
-              alt=""
-              draggable={false}
-              loading={rank <= 4 ? "eager" : "lazy"}
-              fetchPriority={rank <= 4 ? "high" : "auto"}
-              decoding="async"
-              onError={() => setPosterIndex((index) => index + 1)}
-              className="netflix-ranked-card-poster"
-            />
+            {posterUrl ? (
+              <img
+                src={posterUrl}
+                alt=""
+                draggable={false}
+                loading={rank <= 4 ? "eager" : "lazy"}
+                fetchPriority={rank <= 4 ? "high" : "auto"}
+                decoding="async"
+                onError={() => setPosterIndex((index) => index + 1)}
+                className="netflix-ranked-card-poster"
+              />
+            ) : (
+              <div className="netflix-ranked-card-placeholder" aria-hidden="true">
+                {title}
+              </div>
+            )}
           </div>
         </a>
       </div>
