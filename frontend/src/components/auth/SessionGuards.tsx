@@ -1,12 +1,13 @@
 // @ts-nocheck
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
 import BlockIcon from "@mui/icons-material/Block";
-import ForcedPasswordModal from "./ForcedPasswordModal";
 import { fetchNotificationsShared, subscribeNotificationRefresh } from "src/hooks/useNotifications";
+
+const ForcedPasswordModal = lazy(() => import("./ForcedPasswordModal"));
 
 export default function SessionGuards() {
   const [mustReset, setMustReset] = useState(false);
@@ -30,7 +31,11 @@ export default function SessionGuards() {
 
   return (
     <>
-      {mustReset && <ForcedPasswordModal onDone={() => setMustReset(false)} />}
+      {mustReset ? (
+        <Suspense fallback={null}>
+          <ForcedPasswordModal onDone={() => setMustReset(false)} />
+        </Suspense>
+      ) : null}
       {banned !== null && (
         <Box data-testid="banned-banner" sx={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", zIndex: 1500, display: "flex", alignItems: "center", gap: 1.5, px: 2.5, py: 1.5, maxWidth: "calc(100vw - 32px)",
           borderRadius: "14px", bgcolor: "rgba(20,10,10,0.95)", border: "1px solid rgba(229,9,20,0.5)", boxShadow: "0 20px 50px rgba(0,0,0,0.6)", backdropFilter: "blur(16px)" }}>
