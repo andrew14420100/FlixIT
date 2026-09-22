@@ -86,12 +86,13 @@ export default function ScCdnRecovery() {
       img.src = candidate(name, nextAttempt);
     };
 
+    // New image/source nodes are enough: React normally creates a node with its
+    // src already set. Watching every src/srcset attribute change on a page with
+    // dozens of lazy images caused a large MutationObserver workload. If a
+    // dynamic legacy URL appears later, the capture-phase error handler below
+    // still repairs it on the first failure.
     const observer = new MutationObserver((records) => {
       for (const record of records) {
-        if (record.type === "attributes") {
-          primeElement(record.target as Element);
-          continue;
-        }
         record.addedNodes.forEach((node) => {
           if (node instanceof Element) scan(node);
         });
@@ -103,8 +104,6 @@ export default function ScCdnRecovery() {
     observer.observe(document.documentElement, {
       subtree: true,
       childList: true,
-      attributes: true,
-      attributeFilter: ["src", "srcset"],
     });
 
     return () => {
