@@ -7,6 +7,8 @@ endpoint remains responsible for rebuilding stale data.
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter
 
 FAST_ROWS = 8
@@ -52,14 +54,23 @@ def install_home_bootstrap_fast(app) -> bool:
 
     @router.get("/api/public/home-bootstrap-fast", tags=["catalog"])
     async def public_home_bootstrap_fast():
-        payload, generated = home._read_snapshot(core)
+        # PyMongo is synchronous. Even a tiny find_one can momentarily stall all
+        # async requests if Mongo has a network hiccup, so keep the most critical
+        # Home lookup in a worker thread.
+        payload, generated = await asyncio.to_thread(home._read_snapshot, core)
 
         if payload:
-            # Hero changes are tiny and must be visible immediately after an
-            # Admin update. Reuse the cached rows while refreshing only the Hero
-            # when its fingerprint changed.
             try:
-                payload = await home._refresh_cached_hero_if_needed(app, core, payload, generated)
+                current_settings = await asyncio.to_thread(home._current_hero_settings, core)
+                cached_hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
+                if home._hero_fingerprint(current_settings) != home._hero_fingerprint(cached_hero):
+                    fresh_hero = await home._load_current_hero(app)
+                    if fresh_hero:
+                        updated = dict(payload)
+                        updated["version"] = home.SNAPSHOT_VERSION
+                        updated["hero"] = fresh_hero
+                        await asyncio.to_thread(home._persist_snapshot_payload, core, updated, generated)
+                        payload = updated
             except Exception:
                 pass
 
@@ -76,9 +87,6 @@ def install_home_bootstrap_fast(app) -> bool:
 
             return _compact(payload)
 
-        # A brand-new database has no persisted snapshot yet. Do not make the
-        # first visitor wait for the 20-row catalogue build: show the Hero if it
-        # is already resolvable and warm the full snapshot in the background.
         try:
             home._schedule_refresh(app, core)
         except Exception:
