@@ -6,6 +6,7 @@ import { useHeroData } from "src/hooks/useHeroData";
 const HERO_SELECTOR = '[data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard';
 const VIDEO_SELECTOR = '[data-testid="hero-trailer"] video';
 const FIRST_CALLOUT_SELECTOR = '.netflix-home-callouts .netflix-home-callout:first-child';
+const ADMIN_HIDDEN_ATTR = 'data-admin-availability-hidden';
 
 function textNodeValue(element: Element) {
   return Array.from(element.childNodes)
@@ -25,6 +26,37 @@ function replaceCalloutText(element: Element, text: string) {
   element.appendChild(document.createTextNode(` ${clean}`));
 }
 
+function restoreAdminHiddenMetadata(hero: Element) {
+  hero.querySelectorAll(`[${ADMIN_HIDDEN_ATTR}]`).forEach((element: HTMLElement) => {
+    element.style.removeProperty("display");
+    element.removeAttribute(ADMIN_HIDDEN_ATTR);
+  });
+}
+
+function moveAvailabilityOutOfMetadata(hero: Element, label: string) {
+  restoreAdminHiddenMetadata(hero);
+  const clean = String(label || "").trim();
+  if (!clean) return;
+
+  const attributes = Array.from(
+    hero.querySelectorAll('.netflix-home-attributes .netflix-home-attribute')
+  ) as HTMLElement[];
+
+  const match = attributes.find(
+    (element) => String(element.textContent || "").trim().toLocaleLowerCase() === clean.toLocaleLowerCase()
+  );
+  if (!match) return;
+
+  match.style.setProperty("display", "none", "important");
+  match.setAttribute(ADMIN_HIDDEN_ATTR, "true");
+
+  const previous = match.previousElementSibling as HTMLElement | null;
+  if (previous?.classList.contains("netflix-home-attribute-dot")) {
+    previous.style.setProperty("display", "none", "important");
+    previous.setAttribute(ADMIN_HIDDEN_ATTR, "true");
+  }
+}
+
 /**
  * Desktop Home-only runtime guard for the billboard.
  *
@@ -33,6 +65,7 @@ function replaceCalloutText(element: Element, text: string) {
  *    HLS is still attaching, buffering or retrying.
  * 2) Mirrors the Admin Hero `seasonLabel` field into the primary lower-right
  *    availability badge (e.g. "Disponibile ora" / "Stagione 3 disponibile").
+ *    The same label is removed from the metadata row so it is not duplicated.
  */
 export default function HomeHeroRuntimeFixes() {
   const location = useLocation();
@@ -83,8 +116,14 @@ export default function HomeHeroRuntimeFixes() {
     const sync = () => {
       raf = 0;
       bindVideo();
+
+      const hero = document.querySelector(HERO_SELECTOR);
+      if (!hero) return;
+
+      moveAvailabilityOutOfMetadata(hero, availabilityLabel);
+
       if (availabilityLabel) {
-        const callout = document.querySelector(`${HERO_SELECTOR} ${FIRST_CALLOUT_SELECTOR}`);
+        const callout = hero.querySelector(FIRST_CALLOUT_SELECTOR);
         if (callout) replaceCalloutText(callout, availabilityLabel);
       }
     };
@@ -106,7 +145,11 @@ export default function HomeHeroRuntimeFixes() {
           currentVideo?.removeEventListener(event, updatePlayingClass)
         );
       }
-      document.querySelector(HERO_SELECTOR)?.classList.remove("flixit-hero-video-playing");
+      const hero = document.querySelector(HERO_SELECTOR);
+      if (hero) {
+        hero.classList.remove("flixit-hero-video-playing");
+        restoreAdminHiddenMetadata(hero);
+      }
     };
   }, [isHome, availabilityLabel]);
 
