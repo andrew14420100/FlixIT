@@ -7,6 +7,7 @@ FLIX-IT supports two Omni modes:
 2. remote: when OMNI_ADDON_URL or the legacy Admin Stremio URL is configured,
    FLIX-IT consumes the remote Stremio /stream resource.
 """
+import asyncio
 import logging
 import os
 import re
@@ -95,11 +96,7 @@ def get_config(get_setting: Optional[Callable]) -> dict:
 
     env_url = normalize_addon_url_safe(os.environ.get(OMNI_URL_ENV, ""))
     if env_url:
-        return {
-            "url": env_url,
-            "enabled": True,
-            "source": "env",
-        }
+        return {"url": env_url, "enabled": True, "source": "env"}
 
     if get_setting is not None:
         url = normalize_addon_url_safe(get_setting(URL_KEY, ""))
@@ -132,6 +129,28 @@ def _ensure_external_ids_index(db) -> None:
     _external_ids_index_ready = True
 
 
+def _find_imdb_in_db(db, media_type: str, tmdb_id: int):
+    _ensure_external_ids_index(db)
+    try:
+        return db["external_ids"].find_one(
+            {"media_type": media_type, "tmdbId": tmdb_id},
+            {"_id": 0, "imdb_id": 1},
+        )
+    except Exception:
+        return None
+
+
+def _persist_imdb_id(db, media_type: str, tmdb_id: int, imdb_id: str) -> None:
+    try:
+        db["external_ids"].update_one(
+            {"media_type": media_type, "tmdbId": tmdb_id},
+            {"$set": {"imdb_id": imdb_id}},
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
 async def fetch_imdb_id(media_type: str, tmdb_id: int, db=None) -> Optional[str]:
     """Resolve the IMDb id of a TMDB title with memory + Mongo + TMDB caching."""
     media_type = "tv" if media_type == "tv" else "movie"
@@ -142,14 +161,9 @@ async def fetch_imdb_id(media_type: str, tmdb_id: int, db=None) -> Optional[str]
         return memory_hit
 
     if db is not None:
-        _ensure_external_ids_index(db)
-        try:
-            doc = db["external_ids"].find_one(
-                {"media_type": media_type, "tmdbId": tmdb_id},
-                {"_id": 0, "imdb_id": 1},
-            )
-        except Exception:
-            doc = None
+        # PyMongo is synchronous. A cold DB lookup must not block FastAPI's
+        # event loop while other clients are loading Home/player manifests.
+        doc = await asyncio.to_thread(_find_imdb_in_db, db, media_type, tmdb_id)
         if doc and doc.get("imdb_id"):
             imdb_id = str(doc["imdb_id"])
             if len(_imdb_memory) >= _IMDB_MEMORY_MAX:
@@ -177,20 +191,14 @@ async def fetch_imdb_id(media_type: str, tmdb_id: int, db=None) -> Optional[str]
             _imdb_memory.clear()
         _imdb_memory[memory_key] = imdb_id
         if db is not None:
-            try:
-                db["external_ids"].update_one(
-                    {"media_type": media_type, "tmdbId": tmdb_id},
-                    {"$set": {"imdb_id": imdb_id}},
-                    upsert=True,
-                )
-            except Exception:
-                pass
+            # Persistence is useful for future processes but the current stream
+            # response does not need to wait for the blocking Mongo write.
+            asyncio.create_task(asyncio.to_thread(_persist_imdb_id, db, media_type, tmdb_id, imdb_id))
     return imdb_id
 
 
 # --------------------------------------------------------------------------- addon calls
 def stremio_id(imdb_id: str, media_type: str, season: Optional[int], episode: Optional[int]) -> tuple[str, str]:
-    """Return (stremio_type, stremio_id) for a remote request path."""
     if media_type == "tv":
         return "series", f"{imdb_id}:{season}:{episode}"
     return "movie", imdb_id
@@ -224,7 +232,6 @@ async def fetch_streams(
     season: Optional[int] = None,
     episode: Optional[int] = None,
 ) -> list[dict]:
-    """Call a remote Omni stream resource and return HTTP(S) streams playable by FLIX-IT."""
     addon_url = normalize_addon_url(addon_url)
     if not addon_url:
         raise StremioError("URL Omni non configurato")
@@ -249,7 +256,6 @@ async def fetch_streams(
 
 # --------------------------------------------------------------------------- parsing
 def _stream_type(url: str, filename: str = "") -> str:
-    """Recognise Omni lazy/proxy HLS URLs even when they do not end in .m3u8."""
     candidate = filename or url
     path = urlparse(candidate).path.lower()
     if path.endswith(".m3u8") or "/hls/" in path or "/resolve/" in path:
@@ -299,10 +305,6 @@ def _language_rank(stream: dict) -> int:
 
 
 def parse_streams(data: dict) -> list[dict]:
-    """
-    Keep HTTP(S) `url` streams. Torrent-only infoHash entries remain inside a
-    remote Omni/debrid service unless it converts them to an HTTP(S) URL first.
-    """
     items = data.get("streams") if isinstance(data, dict) else None
     out = []
     for s in items or []:
