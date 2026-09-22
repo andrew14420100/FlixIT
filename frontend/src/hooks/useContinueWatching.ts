@@ -89,10 +89,6 @@ function saveToLocalStorage(items: ContinueWatchingItem[]) {
   } catch {}
 }
 
-// Serialize/coalesce writes per logical title/episode. WatchPage persists every
-// 15 seconds and can also persist on hide/unmount; a slow network must not turn
-// those calls into overlapping POSTs. While one request is running we keep only
-// the newest payload, which is the only progress value that matters.
 type ProgressWriteState = { latest: any; running: Promise<any> | null };
 const progressWrites = new Map<string, ProgressWriteState>();
 
@@ -225,7 +221,24 @@ export function useContinueWatching() {
   }, [applyPayload]);
 
   useEffect(() => {
-    refresh(false);
+    // Local storage already provides an instant first frame. Remote progress is
+    // synchronization work, not a first-paint dependency, so let Hero and card
+    // images win the initial network/main-thread budget.
+    if (!getToken()) return;
+    let cancelled = false;
+    let timer = 0;
+    let idleId: any = null;
+    const run = () => { if (!cancelled) refresh(false); };
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      idleId = (window as any).requestIdleCallback(run, { timeout: 1600 });
+    } else if (typeof window !== 'undefined') {
+      timer = window.setTimeout(run, 450);
+    }
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      if (idleId != null && 'cancelIdleCallback' in window) (window as any).cancelIdleCallback(idleId);
+    };
   }, [refresh]);
 
   useEffect(() => subscribePassiveSync(() => { refresh(false); }), [refresh]);
@@ -251,10 +264,6 @@ export function useContinueWatching() {
       });
 
       if (getToken()) await enqueueProgressWrite(item);
-
-      // Local state/localStorage already contain the newest position. Invalidating
-      // the memo is enough for the next page/focus refresh. Broadcasting here used
-      // to force an immediate GET after every 15-second POST during playback.
       invalidateProgressMemo();
     },
     []
