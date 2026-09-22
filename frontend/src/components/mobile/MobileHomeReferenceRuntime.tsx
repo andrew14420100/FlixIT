@@ -4,6 +4,9 @@ import { useLocation } from "react-router-dom";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
 const MOBILE_QUERY = "(max-width:899px)";
+const HERO_CACHE_MS = 5 * 60 * 1000;
+let heroMemo: { at: number; data: any } | null = null;
+let heroPending: Promise<any> | null = null;
 
 function genreNames(payload: any) {
   const raw = payload?.detail?.genres || payload?.genres || payload?.detail?.genre_names || [];
@@ -31,8 +34,27 @@ function syncReferencePosterSize() {
   if (!Number.isFinite(rect.width) || rect.width < 48) return;
 
   const root = document.documentElement;
-  root.style.setProperty("--flixit-reference-poster-w", `${rect.width.toFixed(2)}px`);
-  root.style.setProperty("--flixit-reference-poster-h", `${(rect.width * 1.5).toFixed(2)}px`);
+  const width = `${rect.width.toFixed(2)}px`;
+  const height = `${(rect.width * 1.5).toFixed(2)}px`;
+  if (root.style.getPropertyValue("--flixit-reference-poster-w") !== width) {
+    root.style.setProperty("--flixit-reference-poster-w", width);
+    root.style.setProperty("--flixit-reference-poster-h", height);
+  }
+}
+
+async function getHeroMetadata(signal: AbortSignal) {
+  const now = Date.now();
+  if (heroMemo && now - heroMemo.at < HERO_CACHE_MS) return heroMemo.data;
+  if (heroPending) return heroPending;
+
+  heroPending = fetch("/api/public/hero", { signal, headers: { Accept: "application/json" } })
+    .then((response) => response.ok ? response.json() : null)
+    .then((data) => {
+      if (data) heroMemo = { at: Date.now(), data };
+      return data;
+    })
+    .finally(() => { heroPending = null; });
+  return heroPending;
 }
 
 export default function MobileHomeReferenceRuntime() {
@@ -44,13 +66,16 @@ export default function MobileHomeReferenceRuntime() {
     if (!isMobile || !isHome) return;
 
     let cancelled = false;
-    let heroData: any = null;
-    let observer: MutationObserver | null = null;
+    let heroData: any = heroMemo?.data || null;
     let raf = 0;
+    const controller = new AbortController();
+    const observers: MutationObserver[] = [];
+    const timers: number[] = [];
 
     const apply = () => {
-      cancelAnimationFrame(raf);
+      if (cancelled || raf) return;
       raf = requestAnimationFrame(() => {
+        raf = 0;
         syncReferencePosterSize();
 
         const hero = document.querySelector<HTMLElement>('[data-testid="hero-section"]');
@@ -97,8 +122,24 @@ export default function MobileHomeReferenceRuntime() {
       });
     };
 
-    fetch("/api/public/hero", { headers: { Accept: "application/json" }, cache: "no-store" })
-      .then((response) => response.ok ? response.json() : null)
+    const attachScopedObservers = () => {
+      const hero = document.querySelector<HTMLElement>('[data-testid="hero-section"]');
+      const rows = document.querySelector<HTMLElement>('[data-testid="home-rows"]');
+      if (hero && !hero.dataset.flixitReferenceObserved) {
+        hero.dataset.flixitReferenceObserved = "1";
+        const observer = new MutationObserver(apply);
+        observer.observe(hero, { subtree: true, childList: true });
+        observers.push(observer);
+      }
+      if (rows && !rows.dataset.flixitReferenceObserved) {
+        rows.dataset.flixitReferenceObserved = "1";
+        const observer = new MutationObserver(apply);
+        observer.observe(rows, { subtree: true, childList: true });
+        observers.push(observer);
+      }
+    };
+
+    getHeroMetadata(controller.signal)
       .then((data) => {
         if (cancelled) return;
         heroData = data;
@@ -106,15 +147,27 @@ export default function MobileHomeReferenceRuntime() {
       })
       .catch(() => {});
 
-    observer = new MutationObserver(apply);
-    observer.observe(document.body, { subtree: true, childList: true });
+    // Home mounts asynchronously. A few bounded probes are cheaper than a
+    // document-wide MutationObserver reacting to every card/image insertion.
+    [0, 120, 320, 750, 1500].forEach((delay) => {
+      timers.push(window.setTimeout(() => {
+        if (cancelled) return;
+        attachScopedObservers();
+        apply();
+      }, delay));
+    });
+
     window.addEventListener("resize", apply, { passive: true });
-    apply();
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
-      observer?.disconnect();
+      controller.abort();
+      if (raf) cancelAnimationFrame(raf);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      observers.forEach((observer) => observer.disconnect());
+      document.querySelectorAll<HTMLElement>('[data-flixit-reference-observed="1"]').forEach((node) => {
+        delete node.dataset.flixitReferenceObserved;
+      });
       window.removeEventListener("resize", apply);
       document.documentElement.style.removeProperty("--flixit-reference-poster-w");
       document.documentElement.style.removeProperty("--flixit-reference-poster-h");
