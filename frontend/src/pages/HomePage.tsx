@@ -34,9 +34,16 @@ function writeHomeCache(data) {
       HOME_CACHE_KEY,
       JSON.stringify({ savedAt: Date.now(), data })
     );
-  } catch {
-    // localStorage is an optimization only.
-  }
+  } catch {}
+}
+
+function warmImage(url: any, priority: "high" | "auto" = "auto") {
+  const src = String(url || "").trim();
+  if (!src || typeof Image === "undefined") return;
+  const image = new Image();
+  image.decoding = "async";
+  image.fetchPriority = priority;
+  image.src = src;
 }
 
 function itemKey(item) {
@@ -75,6 +82,35 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
       };
     })
     .filter((row) => row.items.length > 0);
+}
+
+async function fetchHomeBootstrap(signal?: AbortSignal) {
+  const globalScope = typeof window !== "undefined" ? (window as any) : null;
+  if (globalScope?.__flixitHomeBootstrapPromise) {
+    return globalScope.__flixitHomeBootstrapPromise;
+  }
+
+  const request = fetch(HOME_BOOTSTRAP_URL, {
+    signal,
+    headers: { Accept: "application/json" },
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
+    const data = await response.json();
+    if (!Array.isArray(data?.rows)) throw new Error("Home bootstrap non valido");
+    return data;
+  });
+
+  if (globalScope) {
+    globalScope.__flixitHomeBootstrapPromise = request.finally(() => {
+      window.setTimeout(() => {
+        if (globalScope.__flixitHomeBootstrapPromise === request) {
+          globalScope.__flixitHomeBootstrapPromise = null;
+        }
+      }, 1500);
+    });
+    return globalScope.__flixitHomeBootstrapPromise;
+  }
+  return request;
 }
 
 export async function loader() {
@@ -134,16 +170,7 @@ export function Component() {
   const initialCache = useMemo(() => readHomeCache(), []);
   const { data: bootstrap } = useQuery({
     queryKey: ["home-bootstrap-v4-fuller"],
-    queryFn: async ({ signal }: any) => {
-      const response = await fetch(HOME_BOOTSTRAP_URL, {
-        signal,
-        headers: { Accept: "application/json" },
-      });
-      if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
-      const data = await response.json();
-      if (!Array.isArray(data?.rows)) throw new Error("Home bootstrap non valido");
-      return data;
-    },
+    queryFn: ({ signal }: any) => fetchHomeBootstrap(signal),
     initialData: initialCache?.data,
     initialDataUpdatedAt: initialCache?.savedAt || 0,
     staleTime: HOME_STALE_MS,
@@ -157,6 +184,24 @@ export function Component() {
   useEffect(() => {
     if (bootstrap?.rows?.length) writeHomeCache(bootstrap);
   }, [bootstrap]);
+
+  const heroLogoUrl =
+    bootstrap?.hero?.assets?.logo_path ||
+    bootstrap?.hero?.assets?.fallback_logo_path ||
+    null;
+  const heroBackdropUrl =
+    bootstrap?.hero?.customBackdrop ||
+    bootstrap?.hero?.assets?.hero_backdrop_path ||
+    bootstrap?.hero?.assets?.backdrop_path ||
+    null;
+
+  // Warm critical Hero imagery as soon as the bootstrap object exists. The Hero
+  // component mounts with the same URLs, so these requests are reused from the
+  // browser cache instead of starting after the first paint.
+  useEffect(() => {
+    warmImage(heroLogoUrl, "high");
+    warmImage(heroBackdropUrl, "high");
+  }, [heroLogoUrl, heroBackdropUrl]);
 
   if (typeof window !== "undefined" && bootstrap?.hero?.contentId) {
     window.__flixitHomeHero = bootstrap.hero;
