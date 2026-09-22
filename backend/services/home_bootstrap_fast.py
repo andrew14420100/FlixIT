@@ -1,14 +1,11 @@
-"""Compact first-paint view over the persistent Home snapshot.
+"""Compact first-paint Home endpoint.
 
-The canonical Home builder still owns ordering, deduplication and artwork. This
-module only trims the already-built payload before JSON serialization so the
-browser can paint the Hero and first rows without downloading the entire Home.
+This endpoint never rebuilds the full catalogue in the user's request. It reads
+the persistent snapshot directly, trims it before FastAPI serializes the payload,
+and schedules any expensive refresh in the background. The canonical full Home
+endpoint remains responsible for rebuilding stale data.
 """
 from __future__ import annotations
-
-import inspect
-import json
-from typing import Any
 
 from fastapi import APIRouter
 
@@ -16,42 +13,14 @@ FAST_ROWS = 8
 FAST_ITEMS_PER_ROW = 18
 
 
-def _route_endpoint(app, path: str):
-    for route in reversed(getattr(app, "routes", [])):
-        if getattr(route, "path", None) != path:
-            continue
-        methods = set(getattr(route, "methods", set()) or set())
-        if not methods or "GET" in methods:
-            return getattr(route, "endpoint", None)
-    return None
-
-
-def _unwrap(value: Any) -> dict:
-    if isinstance(value, dict):
-        return value
-    body = getattr(value, "body", None)
-    try:
-        if isinstance(body, bytes):
-            parsed = json.loads(body.decode("utf-8"))
-            return parsed if isinstance(parsed, dict) else {}
-        if isinstance(body, str):
-            parsed = json.loads(body)
-            return parsed if isinstance(parsed, dict) else {}
-    except Exception:
-        pass
-    return {}
-
-
 def _compact(payload: dict) -> dict:
-    rows = []
     source_rows = payload.get("rows") if isinstance(payload.get("rows"), list) else []
+    rows = []
     for row in source_rows[:FAST_ROWS]:
         if not isinstance(row, dict):
             continue
-        rows.append({
-            **row,
-            "items": (row.get("items") if isinstance(row.get("items"), list) else [])[:FAST_ITEMS_PER_ROW],
-        })
+        items = row.get("items") if isinstance(row.get("items"), list) else []
+        rows.append({**row, "items": items[:FAST_ITEMS_PER_ROW]})
 
     return {
         **payload,
@@ -62,31 +31,65 @@ def _compact(payload: dict) -> dict:
     }
 
 
+def _empty(hero=None) -> dict:
+    return {
+        "compact": True,
+        "hero": hero,
+        "rows": [],
+        "row_count": 0,
+        "total_row_count": 0,
+    }
+
+
 def install_home_bootstrap_fast(app) -> bool:
     if getattr(app.state, "flixit_home_bootstrap_fast_registered", False):
         return True
+
+    import server_core as core
+    from services import home_bootstrap as home
 
     router = APIRouter()
 
     @router.get("/api/public/home-bootstrap-fast", tags=["catalog"])
     async def public_home_bootstrap_fast():
-        endpoint = _route_endpoint(app, "/api/public/home-bootstrap")
-        if not callable(endpoint):
-            return {"compact": True, "hero": None, "rows": [], "row_count": 0, "total_row_count": 0}
+        payload, generated = home._read_snapshot(core)
+
+        if payload:
+            # Hero changes are tiny and must be visible immediately after an
+            # Admin update. Reuse the cached rows while refreshing only the Hero
+            # when its fingerprint changed.
+            try:
+                payload = await home._refresh_cached_hero_if_needed(app, core, payload, generated)
+            except Exception:
+                pass
+
+            try:
+                age = home._now() - generated if generated else None
+                if (
+                    payload.get("version") != home.SNAPSHOT_VERSION
+                    or age is None
+                    or age >= home.FRESH_FOR
+                ):
+                    home._schedule_refresh(app, core)
+            except Exception:
+                pass
+
+            return _compact(payload)
+
+        # A brand-new database has no persisted snapshot yet. Do not make the
+        # first visitor wait for the 20-row catalogue build: show the Hero if it
+        # is already resolvable and warm the full snapshot in the background.
         try:
-            value = endpoint()
-            if inspect.isawaitable(value):
-                value = await value
-            payload = _unwrap(value)
-            return _compact(payload) if payload else {
-                "compact": True,
-                "hero": None,
-                "rows": [],
-                "row_count": 0,
-                "total_row_count": 0,
-            }
+            home._schedule_refresh(app, core)
         except Exception:
-            return {"compact": True, "hero": None, "rows": [], "row_count": 0, "total_row_count": 0}
+            pass
+
+        hero = None
+        try:
+            hero = await home._load_current_hero(app)
+        except Exception:
+            pass
+        return _empty(hero)
 
     app.include_router(router)
     app.state.flixit_home_bootstrap_fast_registered = True
