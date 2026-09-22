@@ -1,9 +1,9 @@
-/* StreamingCommunity-oriented Home geometry and motion overrides. */
+/* SC Home geometry, with the proven pre-regression mobile layout restored. */
 :root {
   --flix-home-gutter: 4%;
   --flix-mobile-gutter: 16px;
   --flix-card-gap: 7.64px;
-  --flix-row-title: clamp(18px, 1.28vw, 23px);
+  --flix-row-title: clamp(18px, 1.25vw, 23px);
 }
 
 /* ---------- Hover portal ---------- */
@@ -34,7 +34,6 @@
   -webkit-backface-visibility: hidden;
 }
 
-/* Never flash the temporary text title while the real Hero logo is resolving. */
 [data-testid="hero-title"] {
   visibility: hidden !important;
   opacity: 0 !important;
@@ -56,7 +55,7 @@
 /* ---------- Hero ---------- */
 .billboard {
   position: relative !important;
-  height: clamp(570px, 46vw, 790px) !important;
+  height: clamp(560px, 42vw, 760px) !important;
   min-height: 0 !important;
   overflow: hidden !important;
   background: #141414 !important;
@@ -73,31 +72,18 @@
   object-position: center 18% !important;
 }
 
-/* HeroSection already owns the real SC-like gradients. Keep only a thin blend
-   at the bottom instead of stacking a second heavy black fade on top. */
+/* HeroSection already contains the top, side and bottom gradients. Previous
+   iterations stacked a second pseudo-gradient and made the picture too dark. */
 .billboard::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 18%;
-  z-index: 7;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    rgba(20,20,20,0) 0%,
-    rgba(20,20,20,.16) 32%,
-    rgba(20,20,20,.58) 70%,
-    #141414 100%
-  );
+  content: none !important;
+  display: none !important;
 }
 
 .billboard .info-wrap {
   left: var(--flix-home-gutter) !important;
-  width: min(40vw, 650px) !important;
+  width: min(38vw, 620px) !important;
   top: 0 !important;
-  bottom: 13.5% !important;
+  bottom: 11.5% !important;
 }
 
 [data-testid="hero-content"] {
@@ -107,36 +93,36 @@
 [data-testid="hero-logo"] {
   width: auto !important;
   height: auto !important;
-  max-width: min(31vw, 525px) !important;
-  max-height: 145px !important;
+  max-width: min(29vw, 480px) !important;
+  max-height: 125px !important;
   object-fit: contain !important;
   object-position: left bottom !important;
 }
 
 [data-testid="hero-season-label"] {
-  font-size: clamp(15px, 1vw, 18px) !important;
+  font-size: clamp(15px, .96vw, 18px) !important;
   line-height: 1.25 !important;
 }
 
 [data-testid="hero-overview"] {
-  max-width: min(36vw, 590px) !important;
-  margin-top: 14px !important;
-  font-size: clamp(14px, 1.02vw, 18px) !important;
-  line-height: 1.35 !important;
+  max-width: min(36vw, 580px) !important;
+  margin-top: 13px !important;
+  font-size: clamp(14px, 1vw, 18px) !important;
+  line-height: 1.36 !important;
 }
 
 .billboard .info-buttons {
-  margin-top: 20px !important;
-  gap: 10px !important;
+  margin-top: 18px !important;
+  gap: 9px !important;
 }
 
 [data-testid="hero-play-button"],
 [data-testid="hero-info-button"] {
-  min-height: 44px !important;
-  padding: 8px 22px !important;
+  min-height: 43px !important;
+  padding: 8px 21px !important;
   margin-right: 0 !important;
   border-radius: 4px !important;
-  font-size: clamp(13px, .86vw, 16px) !important;
+  font-size: clamp(13px, .84vw, 16px) !important;
 }
 
 [data-testid="hero-play-button"] span,
@@ -144,25 +130,12 @@
   font-size: 1.12em !important;
 }
 
-/* The first catalogue row enters the Hero fade, but not so far that the Hero
-   controls/logo collide with its title. */
+/* Restore the overlap from the last layout the user confirmed as correct. */
 .sliders {
   position: relative;
-  margin-top: clamp(-78px, -5.2vw, -52px) !important;
-  padding-top: 0 !important;
+  margin-top: -10vh !important;
+  padding-top: 12px !important;
   background: transparent !important;
-}
-
-.sliders::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 120px;
-  pointer-events: none;
-  z-index: -1;
-  background: linear-gradient(to bottom, rgba(20,20,20,0), #141414 88%);
 }
 
 /* ---------- Catalogue rows ---------- */
@@ -181,8 +154,8 @@
 
 #continua.slider-row,
 .slider-row.compact-row {
-  margin-top: 0 !important;
-  margin-bottom: 24px !important;
+  margin-top: 10px !important;
+  margin-bottom: 20px !important;
 }
 
 .slider-row .row-header,
@@ -210,6 +183,7 @@
   padding-left: var(--flix-home-gutter) !important;
 }
 
+/* Header starts on the same x coordinate as the visible first card. */
 .top10-row .row-header {
   padding-left: var(--flix-home-gutter) !important;
 }
@@ -279,8 +253,7 @@
   will-change: transform;
 }
 
-/* Source cards themselves never translate vertically. The fixed portal is the
-   only layer that expands, so scrolling cannot drag the hover down the page. */
+/* Do not move the source card. The fixed portal alone performs the expansion. */
 .netflix-standard-card-root:hover,
 .netflix-ranked-card-root:hover {
   transform: none !important;
@@ -291,17 +264,18 @@
   pointer-events: none;
 }
 
-/* ---------- Mobile / touch: SC portrait-poster layout ---------- */
+/* ---------- Mobile / touch ---------- */
 @media (max-width: 899px) {
   :root {
     --flix-home-gutter: var(--flix-mobile-gutter);
     --flix-row-title: 16px;
   }
 
+  /* Proven pre-regression phone Hero geometry. */
   .billboard {
-    height: min(67svh, 650px) !important;
-    min-height: 500px !important;
-    max-height: 650px !important;
+    height: 66vh !important;
+    min-height: 460px !important;
+    max-height: 680px !important;
     font-size: clamp(11px, 3vw, 14px) !important;
   }
 
@@ -309,23 +283,12 @@
     object-position: center top !important;
   }
 
-  .billboard::after {
-    height: 24% !important;
-    background: linear-gradient(
-      to bottom,
-      rgba(20,20,20,0) 0%,
-      rgba(20,20,20,.22) 38%,
-      rgba(20,20,20,.72) 76%,
-      #141414 100%
-    ) !important;
-  }
-
   .billboard .info-wrap {
     left: 7% !important;
     right: 7% !important;
     width: 86% !important;
     top: auto !important;
-    bottom: 10.5% !important;
+    bottom: 9% !important;
   }
 
   [data-testid="hero-content"] {
@@ -343,8 +306,8 @@
   [data-testid="hero-logo"] {
     width: auto !important;
     height: auto !important;
-    max-width: 72vw !important;
-    max-height: 108px !important;
+    max-width: 70vw !important;
+    max-height: 105px !important;
     margin: 0 auto !important;
     object-position: center bottom !important;
     transform-origin: center bottom !important;
@@ -379,23 +342,19 @@
   }
 
   .sliders {
-    margin-top: -30px !important;
-    padding-top: 0 !important;
-  }
-
-  .sliders::before {
-    height: 68px !important;
+    margin-top: -6vh !important;
+    padding-top: 10px !important;
   }
 
   .slider-row {
     margin-top: 20px !important;
-    margin-bottom: 24px !important;
+    margin-bottom: 22px !important;
   }
 
   #continua.slider-row,
   .slider-row.compact-row {
-    margin-top: 0 !important;
-    margin-bottom: 20px !important;
+    margin-top: 8px !important;
+    margin-bottom: 16px !important;
   }
 
   .slider-row .row-header,
@@ -410,7 +369,7 @@
     padding-left: 16px !important;
   }
 
-  /* Only explicitly portrait cards switch geometry. Desktop never inherits it. */
+  /* Mobile SC cards are portrait posters. Desktop cards remain landscape. */
   .netflix-standard-card-root.is-portrait {
     aspect-ratio: 2 / 3 !important;
     height: auto !important;
@@ -441,7 +400,6 @@
     min-height: 0 !important;
   }
 
-  /* No desktop mini modal or carousel handles on touch. */
   .flix-netflix-preview-portal,
   [data-navigation-handle] {
     display: none !important;
@@ -452,20 +410,6 @@
   :root {
     --flix-mobile-gutter: 14px;
     --flix-row-title: 15.5px;
-  }
-
-  .billboard {
-    min-height: 480px !important;
-    height: 64svh !important;
-  }
-
-  [data-testid="hero-logo"] {
-    max-width: 74vw !important;
-    max-height: 100px !important;
-  }
-
-  .sliders {
-    margin-top: -26px !important;
   }
 
   .slider-row .row-header,
