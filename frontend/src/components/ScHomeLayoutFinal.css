@@ -1,0 +1,439 @@
+/*
+ * Final Home geometry pass.
+ * Keep this file loaded after the legacy/mobile polish sheets: it deliberately
+ * resolves old overrides into one stable SC-style Home layout.
+ */
+
+[data-testid="home-page"] {
+  --sc-home-gutter: 4%;
+  --sc-card-pad: 3.82005px;
+  --sc-row-title: clamp(18px, 1.25vw, 23px);
+  --sc-row-axis-fallback: calc(var(--sc-home-gutter) + var(--sc-card-pad));
+  background: #141414 !important;
+}
+
+/* Hero -> first rail overlap. The page background remains transparent here so
+   the Hero bottom fade and the first row visually belong to the same surface. */
+[data-testid="home-page"] [data-testid="home-rows"] {
+  position: relative !important;
+  z-index: 20 !important;
+  margin-top: -10vh !important;
+  padding-top: 12px !important;
+  background: transparent !important;
+  overflow: visible !important;
+}
+
+[data-testid="home-page"] .slider-row {
+  position: relative !important;
+  isolation: isolate;
+  contain: none !important;
+  width: 100% !important;
+  height: auto !important;
+  margin: 26px 0 28px !important;
+  overflow: visible !important;
+}
+
+[data-testid="home-page"] #continua.slider-row,
+[data-testid="home-page"] .slider-row.compact-row {
+  margin-top: 10px !important;
+  margin-bottom: 20px !important;
+}
+
+/* The components measure the first rendered card and write --flix-row-axis.
+   Use that exact measurement for the heading instead of an approximate gutter. */
+[data-testid="home-page"] .slider-row .row-header {
+  min-height: 25px !important;
+  margin: 0 0 7px !important;
+  padding-left: var(--flix-row-axis, var(--sc-row-axis-fallback)) !important;
+  padding-right: var(--sc-home-gutter) !important;
+  display: flex !important;
+  align-items: center !important;
+  box-sizing: border-box !important;
+}
+
+[data-testid="home-page"] .top10-row .row-header {
+  padding-left: var(--flix-row-axis, var(--sc-home-gutter)) !important;
+}
+
+[data-testid="home-page"] .slider-row .row-header .label,
+[data-testid="home-page"] .top10-row .row-header .label {
+  margin: 0 !important;
+  color: #e8e8e8 !important;
+  font-family: "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+  font-size: var(--sc-row-title) !important;
+  font-weight: 700 !important;
+  line-height: 1.12 !important;
+  letter-spacing: -.014em !important;
+}
+
+[data-testid="home-page"] .slider-row .show-peek {
+  padding-left: var(--sc-home-gutter) !important;
+  box-sizing: border-box !important;
+}
+
+[data-testid="home-page"] .slider-row .slider-item {
+  padding-left: var(--sc-card-pad) !important;
+  padding-right: var(--sc-card-pad) !important;
+}
+
+[data-testid="home-page"] .top10-row .slider {
+  padding-left: var(--sc-home-gutter) !important;
+  padding-right: var(--sc-home-gutter) !important;
+  box-sizing: border-box !important;
+}
+
+/*
+ * TOP 10 visibility fix.
+ * NetflixMotionOverrides historically changed the ranked link from absolute to
+ * relative. The ranked root is padding-ratio based on desktop, so that made the
+ * link's percentage height collapse to zero while the root still received hover.
+ * Keep the link pinned to the root and make the poster plane explicit.
+ */
+[data-testid="home-page"] .top10-row .netflix-ranked-card-root {
+  position: relative !important;
+  overflow: visible !important;
+}
+
+[data-testid="home-page"] .top10-row .netflix-ranked-card-link {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  overflow: hidden !important;
+  z-index: 3 !important;
+}
+
+[data-testid="home-page"] .top10-row .netflix-ranked-card-poster-wrap {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  background: #1a1a1a !important;
+}
+
+[data-testid="home-page"] .top10-row .netflix-ranked-card-poster {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* The source tile never scales/translates. Only the fixed preview portal grows.
+   This prevents the rail from appearing to move when the pointer travels up/down. */
+[data-testid="home-page"] .slick-slide,
+[data-testid="home-page"] .slider-item,
+[data-testid="home-page"] .netflix-standard-card-root,
+[data-testid="home-page"] .netflix-ranked-card-root,
+[data-testid="home-page"] .netflix-standard-card-root:hover,
+[data-testid="home-page"] .netflix-ranked-card-root:hover {
+  translate: none !important;
+  scale: 1 !important;
+}
+
+[data-testid="home-page"] .netflix-standard-card-root,
+[data-testid="home-page"] .netflix-ranked-card-root,
+[data-testid="home-page"] .netflix-standard-card-root:hover,
+[data-testid="home-page"] .netflix-ranked-card-root:hover {
+  transform: none !important;
+}
+
+[data-testid="home-page"] .slider-row:hover {
+  z-index: 100 !important;
+}
+
+/* The first visible card is edge-anchored by useHoverExpand: its left edge stays
+   on the row axis, therefore the enlarged preview grows inward (to the right). */
+[data-testid="home-page"] .flix-netflix-preview-portal > .previewModal--container {
+  backface-visibility: hidden !important;
+  -webkit-backface-visibility: hidden !important;
+  will-change: transform, opacity !important;
+}
+
+@media (max-width: 899px) {
+  [data-testid="home-page"] {
+    --sc-home-gutter: 10px;
+    --sc-card-pad: 2px;
+    --sc-row-title: clamp(15.5px, 4.15vw, 17px);
+    --sc-row-axis-fallback: calc(var(--sc-home-gutter) + var(--sc-card-pad));
+    background: #050505 !important;
+  }
+
+  /* SC-style mobile Hero: full-bleed artwork, long bottom fade and controls kept
+     above the first rail so the rail can protrude into the fade without overlap. */
+  html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-section"] {
+    position: relative !important;
+    width: 100vw !important;
+    height: clamp(470px, 68svh, 650px) !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    background: #050505 !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] [data-testid="hero-backdrop"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: none !important;
+    object-fit: cover !important;
+    object-position: center 8% !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-section"]::after {
+    content: "" !important;
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: -1px !important;
+    height: clamp(190px, 30svh, 285px) !important;
+    z-index: 4 !important;
+    pointer-events: none !important;
+    background: linear-gradient(
+      to bottom,
+      rgba(5,5,5,0) 0%,
+      rgba(5,5,5,.08) 16%,
+      rgba(5,5,5,.28) 38%,
+      rgba(5,5,5,.64) 67%,
+      rgba(5,5,5,.92) 87%,
+      #050505 100%
+    ) !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] .info-wrap {
+    left: 10px !important;
+    right: 10px !important;
+    top: auto !important;
+    bottom: 78px !important;
+    width: calc(100% - 20px) !important;
+    z-index: 6 !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] [data-testid="hero-content"] {
+    width: 100% !important;
+    margin: 0 !important;
+    align-items: center !important;
+    text-align: center !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] .title {
+    width: 100% !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: flex-end !important;
+    transform: none !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-logo"] {
+    width: auto !important;
+    height: auto !important;
+    max-width: 58vw !important;
+    max-height: 92px !important;
+    margin: 0 auto !important;
+    object-fit: contain !important;
+    object-position: center bottom !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-season-label"],
+  html.flixit-home-reference .mobile-home-season-runtime {
+    margin-top: 8px !important;
+    font-size: clamp(14px, 3.8vw, 17px) !important;
+    line-height: 1.15 !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] .genres {
+    width: min(92vw, 390px) !important;
+    margin: 7px auto 0 !important;
+    font-size: clamp(11px, 3vw, 13px) !important;
+    line-height: 1.25 !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] .info-buttons {
+    width: min(92vw, 390px) !important;
+    height: 46px !important;
+    margin: 12px auto 0 !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+
+  html.flixit-home-reference [data-testid="hero-play-button"],
+  html.flixit-home-reference [data-testid="hero-info-button"] {
+    height: 46px !important;
+    min-height: 46px !important;
+    padding: 0 12px !important;
+    border-radius: 4px !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+  }
+
+  /* The first section sits inside the Hero fade, as on SC. */
+  html.flixit-home-reference [data-testid="home-page"] [data-testid="home-rows"] {
+    margin-top: -54px !important;
+    padding-top: 0 !important;
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px)) !important;
+    background: transparent !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .slider-row,
+  html.flixit-home-reference [data-testid="home-page"] .slider-row.compact-row {
+    margin-top: 0 !important;
+    margin-bottom: 24px !important;
+    contain: none !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .slider-row + .slider-row {
+    margin-top: 2px !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .slider-row .row-header,
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .row-header {
+    min-height: 20px !important;
+    margin: 0 0 8px !important;
+    padding-left: var(--flix-row-axis, var(--sc-row-axis-fallback)) !important;
+    padding-right: 10px !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .row-header {
+    padding-left: var(--flix-row-axis, var(--sc-home-gutter)) !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .slider-row .row-header .label,
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .row-header .label {
+    font-size: var(--sc-row-title) !important;
+    line-height: 1.12 !important;
+    font-weight: 700 !important;
+    letter-spacing: -.012em !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .slider-row .slider,
+  html.flixit-home-reference [data-testid="home-page"] .slider-row .show-peek {
+    padding-left: var(--sc-home-gutter) !important;
+    padding-right: 0 !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .slider-row .slider-item {
+    padding-left: var(--sc-card-pad) !important;
+    padding-right: var(--sc-card-pad) !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .netflix-standard-card-root.is-portrait,
+  html.flixit-home-reference [data-testid="home-page"] .netflix-standard-card-root.is-portrait .netflix-standard-card-link,
+  html.flixit-home-reference [data-testid="home-page"] .netflix-standard-card-root.is-portrait .netflix-standard-card-frame,
+  html.flixit-home-reference [data-testid="home-page"] .netflix-standard-card-root.is-portrait .netflix-standard-card-image-wrap {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 2 / 3 !important;
+    border-radius: 4px !important;
+    overflow: hidden !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .netflix-standard-card-root.is-portrait .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+  }
+
+  /* Mobile Top 10: reserve a real lane for the rank and keep the poster at the
+     same 2:3 footprint measured from normal Home cards. */
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .slider,
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .show-peek {
+    padding-left: 10px !important;
+    padding-right: 0 !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .slick-list,
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .slick-track,
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .slick-slide,
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .slick-slide > div {
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .slick-slide {
+    width: calc(var(--flixit-reference-poster-w, min(38vw, 170px)) + 54px) !important;
+    max-width: 224px !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .netflix-ranked-card-root {
+    position: relative !important;
+    width: calc(var(--flixit-reference-poster-w, min(38vw, 170px)) + 54px) !important;
+    height: var(--flixit-reference-poster-h, calc(min(38vw, 170px) * 1.5)) !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    aspect-ratio: auto !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .netflix-ranked-card-link {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: visible !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .netflix-ranked-card-poster-wrap {
+    position: absolute !important;
+    left: 38px !important;
+    right: auto !important;
+    top: 0 !important;
+    bottom: auto !important;
+    width: var(--flixit-reference-poster-w, min(38vw, 170px)) !important;
+    height: var(--flixit-reference-poster-h, calc(min(38vw, 170px) * 1.5)) !important;
+    aspect-ratio: 2 / 3 !important;
+    border-radius: 4px !important;
+    overflow: hidden !important;
+    z-index: 2 !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .netflix-ranked-card-rank {
+    position: absolute !important;
+    left: 0 !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: 0 !important;
+    width: 66px !important;
+    height: 51% !important;
+    display: block !important;
+    overflow: visible !important;
+    z-index: 3 !important;
+    pointer-events: none !important;
+  }
+
+  html.flixit-home-reference [data-testid="home-page"] .top10-row .netflix-ranked-card-rank-svg {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    opacity: 1 !important;
+    overflow: visible !important;
+  }
+
+  /* Hover previews do not belong to touch Home. */
+  html.flixit-home-reference [data-testid="home-page"] .flix-netflix-preview-portal {
+    display: none !important;
+  }
+}
+
+@media (max-width: 430px) {
+  [data-testid="home-page"] {
+    --sc-home-gutter: 9px;
+    --sc-row-title: 15.5px;
+  }
+
+  html.flixit-home-reference [data-testid="hero-section"] .info-wrap {
+    left: 9px !important;
+    right: 9px !important;
+    width: calc(100% - 18px) !important;
+  }
+}
