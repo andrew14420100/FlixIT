@@ -4,12 +4,12 @@ import { Outlet, useLocation } from "react-router-dom";
 import Box from "@mui/material/Box";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
-import VideoPortalContainer from "src/components/VideoPortalContainer";
+import LazyVideoPortalContainer from "src/components/LazyVideoPortalContainer";
 import PortalProvider from "src/providers/PortalProvider";
 import DetailModalProvider from "src/providers/DetailModalProvider";
 import { MAIN_PATH } from "src/constant";
 import { Footer, MainHeader } from "src/components/layouts";
-import AuthModal from "src/components/auth/AuthModal";
+import LazyAuthModalMount from "src/components/auth/LazyAuthModalMount";
 import SessionGuards from "src/components/auth/SessionGuards";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
@@ -116,7 +116,7 @@ export default function MainLayout() {
         {isMobileDetail ? <MobileDetailExperience /> : null}
       </Suspense>
 
-      <AuthModal />
+      <LazyAuthModalMount />
       <SessionGuards />
       <DetailModalProvider>
         <PortalProvider>
@@ -125,7 +125,7 @@ export default function MainLayout() {
               <Outlet />
             </Box>
           ) : null}
-          <VideoPortalContainer />
+          <LazyVideoPortalContainer />
         </PortalProvider>
       </DetailModalProvider>
       {!isWatch && !isMobileDetail ? <Footer /> : null}
