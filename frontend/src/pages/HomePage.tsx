@@ -8,10 +8,11 @@ import Stack from "@mui/material/Stack";
 import HeroSection from "src/components/HeroSection";
 import HomepageSlider from "src/components/HomepageSlider";
 import Top10Slider from "src/components/Top10Slider";
+import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_URL = "/api/public/home-bootstrap";
-const HOME_CACHE_KEY = "flix-home-bootstrap-v3-sc-structure";
+const HOME_CACHE_KEY = "flix-home-bootstrap-v4-fuller";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
 
@@ -45,8 +46,8 @@ function itemKey(item) {
   return `${type}:${id}`;
 }
 
-function normalizeRows(rows = [], filterMediaType) {
-  const claimed = new Set();
+function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
+  const claimed = new Set(initialClaimed);
   return (rows || [])
     .map((row, rowIndex) => {
       const type = row?.section_type || "";
@@ -64,7 +65,7 @@ function normalizeRows(rows = [], filterMediaType) {
         return true;
       });
 
-      const limit = type === "top10" ? 10 : 30;
+      const limit = type === "top10" ? 10 : 50;
       const visible = items.slice(0, limit);
       visible.forEach((item) => claimed.add(itemKey(item)));
       return {
@@ -84,10 +85,55 @@ export function Component() {
   const { mediaType: filterMediaType } = useParams();
   const currentMediaType =
     filterMediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
+  const {
+    items: progressItems,
+    username,
+    removeItem,
+  } = useContinueWatching();
+
+  const continueItems = useMemo(() => {
+    return (progressItems || [])
+      .filter((item) => {
+        const duration = Number(item?.duration || 0);
+        const progress = Number(item?.progress || 0);
+        if (duration > 0 && progress / duration >= 0.95) return false;
+        if (filterMediaType === "movie" || filterMediaType === "tv") {
+          return item?.media_type === filterMediaType;
+        }
+        return true;
+      })
+      .map((item) => ({
+        tmdbId: item.tmdb_id,
+        id: item.tmdb_id,
+        type: item.media_type,
+        media_type: item.media_type,
+        title: item.title,
+        name: item.title,
+        backdrop_path: item.backdrop_path,
+        poster_path: item.poster_path,
+        genre_ids: item.genre_ids || [],
+        watch: {
+          progress: item.progress,
+          duration: item.duration,
+          percent:
+            item.duration > 0
+              ? Math.min(100, Math.max(0, (item.progress / item.duration) * 100))
+              : 0,
+          season: item.season,
+          episode: item.episode,
+          onRemove: () => removeItem(item.tmdb_id),
+        },
+      }));
+  }, [progressItems, filterMediaType, removeItem]);
+
+  const continueKeys = useMemo(
+    () => new Set(continueItems.map(itemKey).filter(Boolean)),
+    [continueItems]
+  );
 
   const initialCache = useMemo(() => readHomeCache(), []);
   const { data: bootstrap } = useQuery({
-    queryKey: ["home-bootstrap-v3-sc-structure"],
+    queryKey: ["home-bootstrap-v4-fuller"],
     queryFn: async ({ signal }: any) => {
       const response = await fetch(HOME_BOOTSTRAP_URL, {
         signal,
@@ -117,10 +163,13 @@ export function Component() {
   }
 
   const rows = useMemo(
-    () => normalizeRows(bootstrap?.rows || [], filterMediaType),
-    [bootstrap?.rows, filterMediaType]
+    () => normalizeRows(bootstrap?.rows || [], filterMediaType, continueKeys),
+    [bootstrap?.rows, filterMediaType, continueKeys]
   );
-  const hasReadyHome = rows.length > 0;
+  const hasReadyHome = rows.length > 0 || continueItems.length > 0;
+  const continueTitle = username
+    ? `${username}, continua a guardare:`
+    : "Continua a guardare:";
 
   return (
     <Box
@@ -166,6 +215,15 @@ export function Component() {
           className="sliders"
           data-testid="home-rows"
         >
+          {continueItems.length > 0 ? (
+            <HomepageSlider
+              rowId="continua"
+              title={continueTitle}
+              items={continueItems}
+              compactSpacing
+            />
+          ) : null}
+
           {rows.map((row) =>
             row.section_type === "top10" ? (
               <Top10Slider key={row.key} title={row.name} items={row.items} />
