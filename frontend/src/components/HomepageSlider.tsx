@@ -91,12 +91,12 @@ export default function HomepageSlider({
   const up900 = useMediaQuery("(min-width:900px)");
   const up600 = useMediaQuery("(min-width:600px)");
 
-  // Restore the touch geometry from the last mobile version the user confirmed
-  // as correct: ~2.6 portrait posters in view. Desktop keeps landscape density.
+  // Mobile keeps the confirmed ~2.6 portrait posters. On wide desktop the
+  // SC reference shows six full 16:9 cards plus a narrow seventh-card peek.
   const tiles = up1400 ? 6 : up1100 ? 5 : up900 ? 4 : up600 ? 3 : 2;
   const visibleTiles = isMobile
     ? 2.6
-    : up1400 ? 6.38 : up1100 ? 5.35 : up900 ? 4.25 : 3;
+    : up1400 ? 6.31 : up1100 ? 5.35 : up900 ? 4.25 : 3;
   const scrollTiles = isMobile ? 1 : tiles;
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
@@ -282,7 +282,7 @@ export default function HomepageSlider({
       <Box className="slider" sx={{ position: "relative", zIndex: 3, width: "100%", overflow: "visible" }}>
         <Box className="show-peek" sx={{ width: "100%", pr: 0, boxSizing: "border-box", overflow: "visible" }}>
           {waitingForFirstCards ? (
-            <Box sx={{ display: "flex", gap: { xs: "4px", md: "7.64px" }, overflow: "hidden", width: "100%" }}>
+            <Box sx={{ display: "flex", gap: { xs: "4px", md: "7px" }, overflow: "hidden", width: "100%" }}>
               {Array.from({ length: Math.ceil(visibleTiles) + 1 }).map((_, index) => (
                 <Box
                   key={index}
@@ -318,7 +318,7 @@ export default function HomepageSlider({
                         className="slider-item"
                         key={itemKey(item) || `item-${index}`}
                         sx={{
-                          px: { xs: "2px", md: "3.82005px" },
+                          px: { xs: "2px", md: "3.5px" },
                           boxSizing: "border-box",
                           position: "relative",
                         }}
