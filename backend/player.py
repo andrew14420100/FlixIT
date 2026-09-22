@@ -7,6 +7,7 @@ isolated in services/netflix_artwork.py and is disabled by default.
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
@@ -33,6 +34,8 @@ logger = logging.getLogger("player")
 router = APIRouter(prefix="/api/player", tags=["player"])
 VIDEO_EXTS = (".m3u8", ".mp4", ".m4v", ".webm", ".ogv", ".mov")
 MIN_SITE_RATING_VOTES = 3
+TMDB_CARD_CACHE_TTL = 15 * 60
+TMDB_CARD_CACHE_MAX = 500
 
 _db = None
 _get_setting = None
@@ -40,6 +43,8 @@ _set_setting = None
 registry = ResolverRegistry()
 artwork_resolver: Optional[ArtworkResolver] = None
 _artwork_security = HTTPBearer()
+_tmdb_client: Optional[httpx.AsyncClient] = None
+_tmdb_card_cache: dict[tuple[str, int], tuple[float, dict]] = {}
 
 __all__ = [
     "router", "registry", "init_player", "resolve_stream",
@@ -62,7 +67,6 @@ def init_player(db, get_setting=None, set_setting=None):
         db,
         get_setting,
         set_setting,
-        # server.py already uses this same environment key for TMDB.
         tmdb_api_key=os.environ.get("TMDB_API_KEY", ""),
     )
     try:
@@ -70,12 +74,25 @@ def init_player(db, get_setting=None, set_setting=None):
             [("tmdbId", 1), ("media_type", 1), ("season", 1), ("episode", 1)], unique=True
         )
         db["stream_cache"].create_index([("key", 1)], unique=True)
+        db["content_views"].create_index([("views", -1)])
+        db["contents"].create_index([("available", 1), ("createdAt", -1)])
     except Exception as e:
         logger.warning(f"stream index init failed: {e}")
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _tmdb_http() -> httpx.AsyncClient:
+    global _tmdb_client
+    if _tmdb_client is None or _tmdb_client.is_closed:
+        _tmdb_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=4.0),
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=24, max_keepalive_connections=12, keepalive_expiry=60.0),
+        )
+    return _tmdb_client
 
 
 def _artwork() -> ArtworkResolver:
@@ -93,7 +110,6 @@ def _media_type(value: str) -> str:
 def _require_artwork_admin(
     credentials: HTTPAuthorizationCredentials = Depends(_artwork_security),
 ):
-    """Use the same JWT/user-role contract as server.py without a circular import."""
     if _db is None:
         raise HTTPException(status_code=503, detail="Backend non inizializzato")
     secret = os.environ.get("JWT_SECRET", "netflix-admin-super-secret-key-2024")
@@ -207,7 +223,6 @@ class ArtworkOverrideUpdate(BaseModel):
 @router.get("/artwork/config")
 async def public_artwork_config():
     cfg = _artwork().config()
-    # Never expose cookie state/source to the public client.
     return {"enabled": cfg["enabled"], "region": cfg["region"]}
 
 
@@ -282,7 +297,7 @@ async def admin_manual_match_artwork(
     _admin=Depends(_require_artwork_admin),
 ):
     try:
-        doc = await _artwork().manual_match(_media_type(media_type), tmdb_id, data.netflix_id)
+        await _artwork().manual_match(_media_type(media_type), tmdb_id, data.netflix_id)
         return await _artwork().resolve(
             media_type, tmdb_id, preview=True, context="home", force_match=False
         )
@@ -351,8 +366,6 @@ async def public_artwork(
     viewport: str = "desktop",
     profile_id: str = "guest",
 ):
-    # Public requests never force a refresh: first load can resolve and cache, then
-    # subsequent cards reuse Mongo. Feature-disabled requests are constant-time.
     return await _artwork().resolve(
         _media_type(media_type),
         tmdb_id,
@@ -366,28 +379,13 @@ async def public_artwork(
 # ---------------------------------------------------------------------------
 # Site-vote Top 10
 # ---------------------------------------------------------------------------
-def _rating_candidates(limit: int = 30) -> list:
-    """Rank titles from FLIX-IT user votes.
-
-    A title needs at least MIN_SITE_RATING_VOTES independent rating records to
-    qualify for the rating-led part of Top 10. Missing positions are filled from
-    real FLIX-IT viewing activity and finally from available catalogue entries.
-    """
-    if _db is None:
-        return []
-
+def _rating_candidates_python(limit: int = 30) -> list:
     ratings = list(
         _db["user_ratings"].find(
             {}, {"_id": 0, "media_id": 1, "media_type": 1, "rating": 1}
         )
     )
-    numeric = [
-        float(r.get("rating") or 0)
-        for r in ratings
-        if 1 <= float(r.get("rating") or 0) <= 5
-    ]
-    global_mean = sum(numeric) / len(numeric) if numeric else 3.5
-
+    numeric = []
     grouped = {}
     for row in ratings:
         try:
@@ -397,12 +395,18 @@ def _rating_candidates(limit: int = 30) -> list:
             continue
         if rating < 1 or rating > 5:
             continue
+        numeric.append(rating)
         media_type = "tv" if row.get("media_type") == "tv" else "movie"
         key = (media_type, media_id)
         bucket = grouped.setdefault(key, {"sum": 0.0, "votes": 0})
         bucket["sum"] += rating
         bucket["votes"] += 1
 
+    global_mean = sum(numeric) / len(numeric) if numeric else 3.5
+    return _rank_rating_groups(grouped, global_mean, limit)
+
+
+def _rank_rating_groups(grouped: dict, global_mean: float, limit: int) -> list:
     ranked = []
     prior_votes = 3.0
     for (media_type, media_id), data in grouped.items():
@@ -414,23 +418,65 @@ def _rating_candidates(limit: int = 30) -> list:
             (votes / (votes + prior_votes)) * average
             + (prior_votes / (votes + prior_votes)) * global_mean
         )
-        ranked.append(
-            {
-                "tmdbId": media_id,
-                "id": media_id,
-                "type": media_type,
-                "media_type": media_type,
-                "site_rating": round(average, 2),
-                "site_votes": votes,
-                "site_score": round(score, 4),
-                "ranking_source": "ratings",
-            }
-        )
+        ranked.append({
+            "tmdbId": media_id,
+            "id": media_id,
+            "type": media_type,
+            "media_type": media_type,
+            "site_rating": round(average, 2),
+            "site_votes": votes,
+            "site_score": round(score, 4),
+            "ranking_source": "ratings",
+        })
 
     ranked.sort(
         key=lambda x: (x["site_score"], x["site_votes"], x["site_rating"]),
         reverse=True,
     )
+    return ranked[:limit]
+
+
+def _rating_candidates(limit: int = 30) -> list:
+    """Rank titles from FLIX-IT votes without loading the whole ratings table into Python."""
+    if _db is None:
+        return []
+
+    try:
+        pipeline = [
+            {"$set": {
+                "_rating_num": {"$convert": {"input": "$rating", "to": "double", "onError": None, "onNull": None}},
+                "_media_id_num": {"$convert": {"input": "$media_id", "to": "long", "onError": None, "onNull": None}},
+                "_media_type_norm": {"$cond": [{"$eq": ["$media_type", "tv"]}, "tv", "movie"]},
+            }},
+            {"$match": {"_rating_num": {"$gte": 1, "$lte": 5}, "_media_id_num": {"$ne": None}}},
+            {"$facet": {
+                "global": [
+                    {"$group": {"_id": None, "sum": {"$sum": "$_rating_num"}, "votes": {"$sum": 1}}},
+                ],
+                "titles": [
+                    {"$group": {
+                        "_id": {"media_type": "$_media_type_norm", "media_id": "$_media_id_num"},
+                        "sum": {"$sum": "$_rating_num"},
+                        "votes": {"$sum": 1},
+                    }},
+                    {"$match": {"votes": {"$gte": MIN_SITE_RATING_VOTES}}},
+                ],
+            }},
+        ]
+        result = next(iter(_db["user_ratings"].aggregate(pipeline, allowDiskUse=False)), {})
+        global_row = (result.get("global") or [{}])[0]
+        global_votes = int(global_row.get("votes") or 0)
+        global_mean = float(global_row.get("sum") or 0) / global_votes if global_votes else 3.5
+        grouped = {}
+        for row in result.get("titles") or []:
+            ident = row.get("_id") or {}
+            grouped[(str(ident.get("media_type") or "movie"), int(ident.get("media_id")))] = {
+                "sum": float(row.get("sum") or 0),
+                "votes": int(row.get("votes") or 0),
+            }
+        ranked = _rank_rating_groups(grouped, global_mean, limit)
+    except Exception:
+        ranked = _rating_candidates_python(limit)
 
     seen = {(x["type"], x["tmdbId"]) for x in ranked}
     if len(ranked) < limit:
@@ -449,19 +495,17 @@ def _rating_candidates(limit: int = 30) -> list:
             if key in seen:
                 continue
             seen.add(key)
-            ranked.append(
-                {
-                    "tmdbId": media_id,
-                    "id": media_id,
-                    "type": media_type,
-                    "media_type": media_type,
-                    "site_rating": 0,
-                    "site_votes": 0,
-                    "site_score": 0,
-                    "site_views": int(view.get("views") or 0),
-                    "ranking_source": "views",
-                }
-            )
+            ranked.append({
+                "tmdbId": media_id,
+                "id": media_id,
+                "type": media_type,
+                "media_type": media_type,
+                "site_rating": 0,
+                "site_votes": 0,
+                "site_score": 0,
+                "site_views": int(view.get("views") or 0),
+                "ranking_source": "views",
+            })
             if len(ranked) >= limit:
                 break
 
@@ -474,7 +518,13 @@ async def _tmdb_card(candidate: dict) -> Optional[dict]:
         return None
 
     media_type = candidate["type"]
-    tmdb_id = candidate["tmdbId"]
+    tmdb_id = int(candidate["tmdbId"])
+    cache_key = (media_type, tmdb_id)
+    cached = _tmdb_card_cache.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] < TMDB_CARD_CACHE_TTL:
+        return {**candidate, **cached[1]}
+
     params = {"language": "it-IT"}
     headers = {}
     if key.startswith("eyJ"):
@@ -483,12 +533,11 @@ async def _tmdb_card(candidate: dict) -> Optional[dict]:
         params["api_key"] = key
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.get(
-                f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}",
-                params=params,
-                headers=headers,
-            )
+        response = await _tmdb_http().get(
+            f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}",
+            params=params,
+            headers=headers,
+        )
         if response.status_code != 200:
             return None
         data = response.json()
@@ -501,8 +550,7 @@ async def _tmdb_card(candidate: dict) -> Optional[dict]:
         )
         return None
 
-    return {
-        **candidate,
+    card = {
         **data,
         "id": tmdb_id,
         "tmdbId": tmdb_id,
@@ -510,10 +558,13 @@ async def _tmdb_card(candidate: dict) -> Optional[dict]:
         "media_type": media_type,
         "title": data.get("title") or data.get("name") or "",
         "name": data.get("name") or data.get("title") or "",
-        "genre_ids": [
-            genre.get("id") for genre in data.get("genres", []) if genre.get("id")
-        ],
+        "genre_ids": [genre.get("id") for genre in data.get("genres", []) if genre.get("id")],
     }
+    if len(_tmdb_card_cache) >= TMDB_CARD_CACHE_MAX:
+        oldest = min(_tmdb_card_cache.items(), key=lambda item: item[1][0])[0]
+        _tmdb_card_cache.pop(oldest, None)
+    _tmdb_card_cache[cache_key] = (now, card)
+    return {**candidate, **card}
 
 
 @router.get("/top10-ratings")
@@ -550,31 +601,25 @@ async def top10_ratings():
             if (media_type, media_id) in seen:
                 continue
             seen.add((media_type, media_id))
-            filler_candidates.append(
-                {
-                    "tmdbId": media_id,
-                    "id": media_id,
-                    "type": media_type,
-                    "media_type": media_type,
-                    "site_rating": 0,
-                    "site_votes": 0,
-                    "site_score": 0,
-                    "ranking_source": "catalogue",
-                }
-            )
+            filler_candidates.append({
+                "tmdbId": media_id,
+                "id": media_id,
+                "type": media_type,
+                "media_type": media_type,
+                "site_rating": 0,
+                "site_votes": 0,
+                "site_score": 0,
+                "ranking_source": "catalogue",
+            })
             if len(filler_candidates) >= 10 - len(items):
                 break
         if filler_candidates:
-            filler_cards = await asyncio.gather(
-                *[_tmdb_card(item) for item in filler_candidates]
-            )
-            items.extend(
-                [
-                    item
-                    for item in filler_cards
-                    if item and (item.get("backdrop_path") or item.get("poster_path"))
-                ]
-            )
+            filler_cards = await asyncio.gather(*[_tmdb_card(item) for item in filler_candidates])
+            items.extend([
+                item
+                for item in filler_cards
+                if item and (item.get("backdrop_path") or item.get("poster_path"))
+            ])
 
     return {
         "items": items[:10],
