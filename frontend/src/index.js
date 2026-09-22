@@ -17,19 +17,6 @@ import palette from "./theme/palette";
 import router from "./routes";
 import MainLoadingScreen from "./components/MainLoadingScreen";
 
-// Availability is now annotated by the backend and enhanced only on TV detail
-// routes. The previous global episode interceptor blocked every season response
-// while it opened one player request per episode, so it is intentionally gone.
-
-/**
- * Keep Home catalogue traffic inside a strict budget. Several independent Home
- * sections can mount together and each one may request multiple TMDB pages. If
- * all of those requests start at once they compete with navigation, account and
- * player traffic and make the whole UI feel frozen.
- *
- * This wrapper only touches cache-safe public catalogue GETs. Player, trailer,
- * artwork POSTs, account/auth, progress and detail actions always bypass it.
- */
 function installPublicCatalogueRequestBudget() {
   if (typeof window === "undefined" || window.__flixitCatalogueBudgetInstalled) return;
   window.__flixitCatalogueBudgetInstalled = true;
@@ -125,9 +112,6 @@ function installPublicCatalogueRequestBudget() {
 
   const cacheKeyFor = (url) => {
     const normalized = new URL(url.toString());
-    // This parameter only tells React Query when a new Rome-day starts. It is
-    // not consumed by the backend, so keeping it in the in-memory key prevented
-    // otherwise identical Home/Smart-section requests from coalescing.
     normalized.searchParams.delete("_flix_window");
     normalized.searchParams.sort();
     return normalized.toString();
@@ -188,9 +172,17 @@ function installPublicCatalogueRequestBudget() {
 
 installPublicCatalogueRequestBudget();
 
-queueMicrotask(() => {
-  store.dispatch(extendedApi.endpoints.getConfiguration.initiate(undefined));
-});
+// Configuration is useful to later pages but not needed for the first Home
+// frame. The old queueMicrotask competed with Home/Hero for a connection and CPU
+// immediately after refresh. Warm it after the browser has had a chance to paint.
+const warmConfiguration = () => {
+  try { store.dispatch(extendedApi.endpoints.getConfiguration.initiate(undefined)); } catch {}
+};
+if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+  window.requestIdleCallback(warmConfiguration, { timeout: 2200 });
+} else if (typeof window !== "undefined") {
+  window.setTimeout(warmConfiguration, 1200);
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -209,12 +201,12 @@ const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <Provider store={store}>
     <QueryClientProvider client={queryClient}>
-        <ThemeProvider theme={createTheme({ palette })}>
-          <RouterProvider
-            router={router}
-            fallbackElement={<MainLoadingScreen />}
-          />
-        </ThemeProvider>
+      <ThemeProvider theme={createTheme({ palette })}>
+        <RouterProvider
+          router={router}
+          fallbackElement={<MainLoadingScreen />}
+        />
+      </ThemeProvider>
     </QueryClientProvider>
   </Provider>
 );
