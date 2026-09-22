@@ -4,17 +4,17 @@ import TrailerPlayer from "./TrailerPlayer";
 import TrailerAudioButton from "./TrailerAudioButton";
 
 const LOGO_VISIBLE_MS = 5000;
-const COVER_FADE_MS = 420;
-const VIDEO_FADE_MS = 420;
-const LOGO_ENTER_MS = 320;
-const LOGO_FADE_MS = 300;
-const EASE = "cubic-bezier(.21,0,.07,1)";
+const COVER_FADE_MS = 680;
+const VIDEO_FADE_MS = 680;
+const LOGO_ENTER_MS = 460;
+const LOGO_FADE_MS = 360;
+const EASE = "cubic-bezier(.22,.61,.36,1)";
 
 /**
- * Netflix/SC-style hover preview.
- * The exact SC card cover stays visible while the trailer is waiting/buffering.
- * Only the real `playing` event triggers the cover -> video crossfade and logo
- * entrance, so there is never a black flash between the static card and trailer.
+ * SC/Netflix-style hover preview.
+ * The SC cover is the stable surface while the trailer waits/buffers. Only the
+ * actual `playing` event starts the deliberately visible crossfade into video
+ * and the title-logo entrance. Titles without a trailer simply keep the cover.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -143,12 +143,13 @@ export default function HoverTrailerOverlay({
             objectFit: "cover",
             objectPosition: "center",
             opacity: playing ? 0 : 1,
-            transform: playing ? "scale(1.015)" : "scale(1)",
-            transition: `opacity ${COVER_FADE_MS}ms ${EASE}, transform ${COVER_FADE_MS}ms ${EASE}`,
+            transform: playing ? "scale(1.035)" : "scale(1)",
+            filter: playing ? "brightness(.9) blur(1px)" : "brightness(1) blur(0px)",
+            transition: `opacity ${COVER_FADE_MS}ms ${EASE}, transform ${COVER_FADE_MS}ms ${EASE}, filter ${COVER_FADE_MS}ms ${EASE}`,
             zIndex: 9,
             pointerEvents: "none",
             backfaceVisibility: "hidden",
-            willChange: "opacity, transform",
+            willChange: "opacity, transform, filter",
           }}
         />
       ) : null}
@@ -160,11 +161,11 @@ export default function HoverTrailerOverlay({
             position: "absolute",
             inset: 0,
             opacity: playing ? 1 : 0,
-            transition: `opacity ${VIDEO_FADE_MS}ms ${EASE}`,
+            transform: playing ? "scale(1)" : "scale(1.018)",
+            transition: `opacity ${VIDEO_FADE_MS}ms ${EASE}, transform ${VIDEO_FADE_MS}ms ${EASE}`,
             zIndex: 8,
             pointerEvents: "none",
-            transform: "translateZ(0)",
-            willChange: "opacity",
+            willChange: "opacity, transform",
           }}
         >
           <TrailerPlayer
@@ -196,7 +197,7 @@ export default function HoverTrailerOverlay({
             opacity: showLogo ? 1 : 0,
             transform: showLogo
               ? "translate3d(0,0,0) scale(1)"
-              : "translate3d(0,8px,0) scale(.985)",
+              : "translate3d(0,14px,0) scale(.965)",
             transition: `opacity ${showLogo ? LOGO_ENTER_MS : LOGO_FADE_MS}ms ${EASE}, transform ${LOGO_ENTER_MS}ms ${EASE}`,
             pointerEvents: "none",
             willChange: "opacity, transform",
