@@ -11,7 +11,6 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import CheckIcon from "@mui/icons-material/Check";
-import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 
@@ -33,7 +32,9 @@ import VideoItemWithHover from "src/components/VideoItemWithHover";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
 const HERO_TRAILER_DELAY = 4000;
+const TRAILER_LOOKUP_DELAY = 900;
 const STREAM_PROFILE_TTL = 2 * 60 * 60 * 1000;
+const WATCH_STREAM_CACHE_PREFIX = "watch_stream_cache:";
 
 export async function loader() {
   return null;
@@ -118,8 +119,27 @@ function qualityFromPayload(payload: any) {
   return qualityLabelFromHeight(height);
 }
 
+function cacheResolvedStream(typeSlug: string, id: number, season: number, episode: number, payload: any) {
+  if (!payload?.success || !payload?.stream) return;
+  try {
+    const logicalSeason = typeSlug === "tv" ? season || 1 : 0;
+    const logicalEpisode = typeSlug === "tv" ? episode || 1 : 0;
+    sessionStorage.setItem(
+      `${WATCH_STREAM_CACHE_PREFIX}${typeSlug}:${id}:${logicalSeason}:${logicalEpisode}`,
+      JSON.stringify({
+        stream: payload.stream,
+        type: payload.type || "hls",
+        source: payload.source,
+        savedAt: Date.now(),
+      })
+    );
+  } catch {}
+}
+
 async function inspectPlaybackProfile(typeSlug: string, id: number, season?: number, episode?: number) {
-  const suffix = typeSlug === "tv" ? `:${season || 1}:${episode || 1}` : ":0:0";
+  const logicalSeason = typeSlug === "tv" ? Number(season || 1) : 0;
+  const logicalEpisode = typeSlug === "tv" ? Number(episode || 1) : 0;
+  const suffix = typeSlug === "tv" ? `:${logicalSeason}:${logicalEpisode}` : ":0:0";
   const cacheKey = `flixit-detail-stream-profile:${typeSlug}:${id}${suffix}`;
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null");
@@ -127,36 +147,23 @@ async function inspectPlaybackProfile(typeSlug: string, id: number, season?: num
   } catch {}
 
   const path = typeSlug === "tv"
-    ? `${API_URL}/api/player/tv/${id}/${season || 1}/${episode || 1}`
+    ? `${API_URL}/api/player/tv/${id}/${logicalSeason}/${logicalEpisode}`
     : `${API_URL}/api/player/movie/${id}`;
 
   try {
     const response = await fetch(path, { cache: "no-store", headers: { Accept: "application/json" } });
     if (!response.ok) return {};
     const payload = await response.json();
-    let quality = qualityFromPayload(payload);
-    let audio = payload?.dolby_atmos === true ? "Dolby Atmos" : null;
-    const streamUrl = typeof payload?.stream === "string" ? payload.stream : payload?.stream?.url;
+    cacheResolvedStream(typeSlug, id, logicalSeason, logicalEpisode, payload);
 
-    if (streamUrl && /\.m3u8(?:$|[?#])/i.test(streamUrl)) {
-      try {
-        const manifestResponse = await fetch(streamUrl, {
-          cache: "force-cache",
-          headers: { Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*" },
-        });
-        if (manifestResponse.ok) {
-          const manifest = await manifestResponse.text();
-          const heights = Array.from(manifest.matchAll(/RESOLUTION=\d+x(\d+)/gi))
-            .map((match) => Number(match[1] || 0))
-            .filter(Boolean);
-          if (heights.length) quality = qualityLabelFromHeight(Math.max(...heights)) || quality;
-          if (/\batmos\b|\bjoc\b/i.test(manifest)) audio = "Dolby Atmos";
-          else if (!audio && /ec-3|eac3/i.test(manifest)) audio = "Dolby Digital+";
-        }
-      } catch {}
-    }
-
-    const value = { quality, audio, success: !!payload?.success };
+    // Do not fetch the HLS manifest merely to decorate Detail with a quality
+    // label. That request used to compete with the actual player and sometimes
+    // doubled startup traffic. The player reports the real active resolution.
+    const value = {
+      quality: qualityFromPayload(payload),
+      audio: payload?.dolby_atmos === true ? "Dolby Atmos" : null,
+      success: !!payload?.success,
+    };
     try { sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), value })); } catch {}
     return value;
   } catch {
@@ -185,12 +192,13 @@ export function Component() {
   const [getSeasonDetails] = useLazyGetTVSeasonDetailsQuery();
   const [getGenrePage] = useLazyGetVideosByMediaTypeAndGenreIdQuery();
 
+  const [trailerLookupEnabled, setTrailerLookupEnabled] = useState(false);
   const automaticAssets = useAutomaticMediaAssets(
     { ...(detail || {}), id: mediaId, type: typeSlug },
     type,
     !!mediaId
   );
-  const resolvedTrailer = useResolvedTrailer(type, mediaId, !!mediaId);
+  const resolvedTrailer = useResolvedTrailer(type, mediaId, trailerLookupEnabled && !!mediaId);
   const { items: continueWatchingItems } = useContinueWatching();
 
   const [selectedSeason, setSelectedSeason] = useState(1);
@@ -223,6 +231,7 @@ export function Component() {
   }, [getVideoDetail, mediaId, type]);
 
   useEffect(() => {
+    setTrailerLookupEnabled(false);
     setShowTrailer(false);
     setTrailerPlaying(false);
     setMuted(true);
@@ -234,29 +243,16 @@ export function Component() {
   }, [mediaId, typeSlug]);
 
   useEffect(() => {
+    if (!mediaId) return;
+    const timer = window.setTimeout(() => setTrailerLookupEnabled(true), TRAILER_LOOKUP_DELAY);
+    return () => window.clearTimeout(timer);
+  }, [mediaId, typeSlug]);
+
+  useEffect(() => {
     if (!resolvedTrailer.url) return;
     const timer = window.setTimeout(() => setShowTrailer(true), HERO_TRAILER_DELAY);
     return () => window.clearTimeout(timer);
   }, [resolvedTrailer.url, mediaId]);
-
-  useEffect(() => {
-    if (!mediaId) return;
-    let cancelled = false;
-    const run = async () => {
-      const season = isTV ? Number(progressItem?.season || selectedSeason || 1) : undefined;
-      const episode = isTV ? Number(progressItem?.episode || 1) : undefined;
-      const value = await inspectPlaybackProfile(typeSlug, mediaId, season, episode);
-      if (!cancelled) setStreamProfile(value || {});
-    };
-    const idle = (window as any).requestIdleCallback
-      ? (window as any).requestIdleCallback(run, { timeout: 1800 })
-      : window.setTimeout(run, 1200);
-    return () => {
-      cancelled = true;
-      if ((window as any).cancelIdleCallback && typeof idle === "number") (window as any).cancelIdleCallback(idle);
-      else window.clearTimeout(idle);
-    };
-  }, [mediaId, typeSlug, isTV, progressItem?.season, progressItem?.episode]);
 
   useEffect(() => {
     if (!mediaId) return;
@@ -327,22 +323,38 @@ export function Component() {
     const primaryGenre = Number(detail.genres[0]?.id || 0);
     if (!primaryGenre) return;
     let cancelled = false;
-    Promise.all([
-      getGenrePage({ mediaType: type, genreId: primaryGenre, page: 1 }).unwrap().catch(() => null),
-      getGenrePage({ mediaType: type, genreId: primaryGenre, page: 2 }).unwrap().catch(() => null),
-    ]).then((pages) => {
-      if (cancelled) return;
-      const merged = pages.flatMap((page: any) => page?.results || []);
-      const seen = new Set<number>();
-      const filtered = merged.filter((item: any) => {
-        const itemId = Number(item?.id || item?.tmdbId || 0);
-        if (!itemId || itemId === mediaId || seen.has(itemId)) return false;
-        seen.add(itemId);
-        return Array.isArray(item?.genre_ids) ? item.genre_ids.includes(primaryGenre) : true;
-      }).slice(0, 30);
-      setRelatedPool(filtered);
-    });
-    return () => { cancelled = true; };
+    let timer = 0;
+    let idleId: any = null;
+
+    const loadRelated = () => {
+      Promise.all([
+        getGenrePage({ mediaType: type, genreId: primaryGenre, page: 1 }).unwrap().catch(() => null),
+        getGenrePage({ mediaType: type, genreId: primaryGenre, page: 2 }).unwrap().catch(() => null),
+      ]).then((pages) => {
+        if (cancelled) return;
+        const merged = pages.flatMap((page: any) => page?.results || []);
+        const seen = new Set<number>();
+        const filtered = merged.filter((item: any) => {
+          const itemId = Number(item?.id || item?.tmdbId || 0);
+          if (!itemId || itemId === mediaId || seen.has(itemId)) return false;
+          seen.add(itemId);
+          return Array.isArray(item?.genre_ids) ? item.genre_ids.includes(primaryGenre) : true;
+        }).slice(0, 30);
+        setRelatedPool(filtered);
+      });
+    };
+
+    if ("requestIdleCallback" in window) {
+      idleId = (window as any).requestIdleCallback(loadRelated, { timeout: 2600 });
+    } else {
+      timer = window.setTimeout(loadRelated, 1200);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      if (idleId != null && "cancelIdleCallback" in window) (window as any).cancelIdleCallback(idleId);
+    };
   }, [detail?.genres, getGenrePage, mediaId, type]);
 
   const relatedItems = useAvailableItems(relatedPool, typeSlug);
@@ -366,11 +378,23 @@ export function Component() {
   const qualityBadge = streamProfile?.quality || null;
   const audioBadge = streamProfile?.audio || null;
 
+  const warmPlayback = useCallback((season?: number, episode?: number) => {
+    if (!mediaId) return;
+    const targetSeason = isTV ? Number(season || progressItem?.season || selectedSeason || 1) : undefined;
+    const targetEpisode = isTV ? Number(episode || progressItem?.episode || 1) : undefined;
+    inspectPlaybackProfile(typeSlug, mediaId, targetSeason, targetEpisode)
+      .then((value) => value && setStreamProfile(value))
+      .catch(() => {});
+  }, [isTV, mediaId, progressItem?.episode, progressItem?.season, selectedSeason, typeSlug]);
+
   const goPlay = useCallback((season?: number, episode?: number) => {
-    const suffix = isTV ? `?s=${season || progressItem?.season || selectedSeason || 1}&e=${episode || progressItem?.episode || 1}` : "";
+    const targetSeason = isTV ? Number(season || progressItem?.season || selectedSeason || 1) : undefined;
+    const targetEpisode = isTV ? Number(episode || progressItem?.episode || 1) : undefined;
+    warmPlayback(targetSeason, targetEpisode);
+    const suffix = isTV ? `?s=${targetSeason}&e=${targetEpisode}` : "";
     window.scrollTo(0, 0);
     navigate(`/${MAIN_PATH.watch}/${typeSlug}/${mediaId}${suffix}`);
-  }, [isTV, navigate, mediaId, progressItem?.episode, progressItem?.season, selectedSeason, typeSlug]);
+  }, [isTV, navigate, mediaId, progressItem?.episode, progressItem?.season, selectedSeason, typeSlug, warmPlayback]);
 
   const handleToggleList = useCallback(async () => {
     const userId = getUserId();
@@ -429,7 +453,7 @@ export function Component() {
     <Box data-testid="detail-page-redesign" sx={{ bgcolor: "#090909", color: "#fff", minHeight: "100vh", overflowX: "hidden" }}>
       <Box sx={{ position: "relative", height: "clamp(610px, 47vw, 760px)", overflow: "hidden" }}>
         {backdropUrl ? (
-          <Box component="img" src={backdropUrl} alt="" sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 24%" }} />
+          <Box component="img" src={backdropUrl} alt="" decoding="async" fetchPriority="high" sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 24%" }} />
         ) : null}
 
         {showTrailer && resolvedTrailer.url ? (
@@ -453,7 +477,7 @@ export function Component() {
 
         <Box sx={{ position: "absolute", left: "4vw", bottom: 96, zIndex: 5, width: "min(590px, 44vw)" }}>
           {logoUrl ? (
-            <Box component="img" src={logoUrl} alt={title} sx={{ display: "block", width: "auto", maxWidth: "520px", maxHeight: 190, objectFit: "contain", objectPosition: "left center", mb: 2.2 }} />
+            <Box component="img" src={logoUrl} alt={title} decoding="async" sx={{ display: "block", width: "auto", maxWidth: "520px", maxHeight: 190, objectFit: "contain", objectPosition: "left center", mb: 2.2 }} />
           ) : null}
 
           <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1.6} sx={{ alignItems: "center", mb: 2, color: "rgba(255,255,255,.78)", fontSize: 16 }}>
@@ -473,6 +497,9 @@ export function Component() {
             <Button
               data-testid="detail-play"
               onClick={() => goPlay()}
+              onMouseEnter={() => warmPlayback()}
+              onFocus={() => warmPlayback()}
+              onTouchStart={() => warmPlayback()}
               startIcon={<PlayArrowIcon sx={{ fontSize: 32 }} />}
               sx={{ bgcolor: "#fff", color: "#000", px: 3.2, py: 1.25, fontSize: 18, fontWeight: 800, borderRadius: 1, textTransform: "none", "&:hover": { bgcolor: "rgba(255,255,255,.82)" } }}
             >
@@ -509,7 +536,7 @@ export function Component() {
         {progressItem ? (
           <Box sx={{ border: "1px solid rgba(255,255,255,.15)", bgcolor: "rgba(18,20,23,.94)", borderRadius: 2, p: 2, mb: 3.5, display: "grid", gridTemplateColumns: "280px 1fr auto", alignItems: "center", gap: 2.5, boxShadow: "0 22px 60px rgba(0,0,0,.36)" }}>
             <Box sx={{ height: 124, borderRadius: 1.5, overflow: "hidden", position: "relative", bgcolor: "#111" }}>
-              {posterUrl ? <Box component="img" src={posterUrl} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
+              {posterUrl ? <Box component="img" src={posterUrl} alt="" loading="lazy" decoding="async" sx={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
               <Box sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", bgcolor: "rgba(0,0,0,.18)" }}>
                 <Box sx={{ width: 48, height: 48, borderRadius: "50%", border: "2px solid #fff", display: "grid", placeItems: "center", bgcolor: "rgba(0,0,0,.4)" }}><PlayArrowIcon /></Box>
               </Box>
@@ -525,7 +552,13 @@ export function Component() {
               </Box>
               <Typography sx={{ fontSize: 14, color: "rgba(255,255,255,.68)" }}>{secondsText(remainingSeconds)} rimanenti</Typography>
             </Box>
-            <Button onClick={() => goPlay(progressItem.season, progressItem.episode)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "#e50914", color: "#fff", px: 2.6, py: 1.2, fontSize: 16, fontWeight: 800, textTransform: "none", borderRadius: 1, "&:hover": { bgcolor: "#f6121d" } }}>
+            <Button
+              onClick={() => goPlay(progressItem.season, progressItem.episode)}
+              onMouseEnter={() => warmPlayback(progressItem.season, progressItem.episode)}
+              onFocus={() => warmPlayback(progressItem.season, progressItem.episode)}
+              startIcon={<PlayArrowIcon />}
+              sx={{ bgcolor: "#e50914", color: "#fff", px: 2.6, py: 1.2, fontSize: 16, fontWeight: 800, textTransform: "none", borderRadius: 1, "&:hover": { bgcolor: "#f6121d" } }}
+            >
               {isTV ? "Riprendi episodio" : "Riprendi"}
             </Button>
           </Box>
@@ -601,7 +634,7 @@ export function Component() {
                     >
                       <Typography sx={{ textAlign: "center", fontSize: 19, fontWeight: 800 }}>{number}</Typography>
                       <Box sx={{ height: 92, overflow: "hidden", bgcolor: "#111" }}>
-                        <Box component="img" src={image} alt="" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        <Box component="img" src={image} alt="" loading="lazy" decoding="async" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       </Box>
                       <Box sx={{ px: 2 }}>
                         {isNext ? <Typography sx={{ color: "#ff3340", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".06em", mb: .25 }}>Prossimo episodio</Typography> : null}
@@ -619,11 +652,11 @@ export function Component() {
                         {status.kind === "complete" ? (
                           <Box sx={{ px: 1.4, py: .75, borderRadius: 999, bgcolor: "rgba(20,107,61,.42)", color: "#baf6d0", fontSize: 13, fontWeight: 800 }}>Completato</Box>
                         ) : status.kind === "progress" ? (
-                          <Button onClick={() => goPlay(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(229,9,20,.35)", color: "#fff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(229,9,20,.65)" } }}>Riprendi</Button>
+                          <Button onClick={() => goPlay(selectedSeason, number)} onMouseEnter={() => warmPlayback(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(229,9,20,.35)", color: "#fff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(229,9,20,.65)" } }}>Riprendi</Button>
                         ) : status.kind === "next" ? (
-                          <Button onClick={() => goPlay(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(18,86,148,.52)", color: "#dbeeff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(18,86,148,.8)" } }}>Prossimo episodio</Button>
+                          <Button onClick={() => goPlay(selectedSeason, number)} onMouseEnter={() => warmPlayback(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(18,86,148,.52)", color: "#dbeeff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(18,86,148,.8)" } }}>Prossimo episodio</Button>
                         ) : (
-                          <Button onClick={() => goPlay(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ color: "#fff", textTransform: "none", fontWeight: 800, border: "1px solid rgba(255,255,255,.35)", borderRadius: 999, px: 1.7, "&:hover": { bgcolor: "rgba(255,255,255,.1)" } }}>Riproduci</Button>
+                          <Button onClick={() => goPlay(selectedSeason, number)} onMouseEnter={() => warmPlayback(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ color: "#fff", textTransform: "none", fontWeight: 800, border: "1px solid rgba(255,255,255,.35)", borderRadius: 999, px: 1.7, "&:hover": { bgcolor: "rgba(255,255,255,.1)" } }}>Riproduci</Button>
                         )}
                       </Box>
                     </Box>
