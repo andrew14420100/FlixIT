@@ -167,9 +167,6 @@ function installPublicCatalogueRequestBudget() {
 
     const signal = init?.signal || (input instanceof Request ? input.signal : undefined);
     const request = () => nativeFetch(input, init);
-    // Only the Home fan-out needs a strict concurrency budget. Detail, genre and
-    // other routes may also live under /browse, but delaying their independent
-    // metadata requests made navigation feel much slower than necessary.
     const promise = (homeRequest ? runBudgeted(request, signal) : request())
       .then((response) => {
         if (!response.ok) memo.delete(key);
@@ -186,7 +183,79 @@ function installPublicCatalogueRequestBudget() {
   };
 }
 
+function installPlayerResolutionCoalescing() {
+  if (typeof window === "undefined" || window.__flixitPlayerRequestCacheInstalled) return;
+  window.__flixitPlayerRequestCacheInstalled = true;
+
+  const nativeFetch = window.fetch.bind(window);
+  const memo = new Map();
+  const PLAYER_TTL_MS = 2 * 60 * 1000;
+  const MAX_ENTRIES = 40;
+
+  const isPlayerResolution = (pathname) =>
+    /^\/api\/player\/(?:movie\/\d+|tv\/\d+\/\d+\/\d+)$/.test(pathname);
+
+  window.fetch = async (input, init = undefined) => {
+    let url;
+    try {
+      const raw = typeof input === "string" || input instanceof URL ? String(input) : input?.url;
+      url = new URL(raw, window.location.origin);
+    } catch {
+      return nativeFetch(input, init);
+    }
+
+    const method = String(init?.method || (input instanceof Request ? input.method : "GET") || "GET").toUpperCase();
+    if (method !== "GET" || url.origin !== window.location.origin || !isPlayerResolution(url.pathname)) {
+      return nativeFetch(input, init);
+    }
+
+    const key = url.pathname;
+    const now = Date.now();
+    const hit = memo.get(key);
+    if (hit && hit.expiresAt > now) {
+      try {
+        const response = await hit.promise;
+        return response.clone();
+      } catch {
+        memo.delete(key);
+      }
+    }
+
+    // Deliberately do not share the caller's AbortSignal with the underlying
+    // resolver. Hero/Detail may unmount immediately after navigation to Watch;
+    // allowing that unmount to abort the shared request would force Watch to
+    // resolve the same title from scratch again.
+    let sharedInit = init;
+    if (init?.signal) {
+      const { signal: _ignored, ...rest } = init;
+      sharedInit = rest;
+    }
+
+    const promise = nativeFetch(input, sharedInit)
+      .then((response) => {
+        if (!response.ok) memo.delete(key);
+        return response;
+      })
+      .catch((error) => {
+        memo.delete(key);
+        throw error;
+      });
+
+    memo.set(key, { expiresAt: now + PLAYER_TTL_MS, promise });
+    if (memo.size > MAX_ENTRIES) {
+      [...memo.entries()]
+        .sort((a, b) => a[1].expiresAt - b[1].expiresAt)
+        .slice(0, memo.size - MAX_ENTRIES)
+        .forEach(([oldKey]) => memo.delete(oldKey));
+    }
+
+    const response = await promise;
+    return response.clone();
+  };
+}
+
 installPublicCatalogueRequestBudget();
+installPlayerResolutionCoalescing();
 
 const warmConfiguration = () => {
   try { store.dispatch(extendedApi.endpoints.getConfiguration.initiate(undefined)); } catch {}
