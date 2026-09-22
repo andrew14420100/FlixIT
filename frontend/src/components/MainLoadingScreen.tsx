@@ -1,25 +1,20 @@
-// @ts-nocheck
-import CircularProgress from "@mui/material/CircularProgress";
-
 function MainLoadingScreen() {
+  // Route chunks are prefetched aggressively; while React waits for the last few
+  // bytes, keep the exact app background instead of flashing a spinner overlay.
+  // This makes cached/fast navigations visually continuous and removes an
+  // unnecessary animation from the main thread during startup.
   return (
     <div
+      aria-hidden="true"
+      data-testid="route-loading-surface"
       style={{
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
         position: "fixed",
-        backgroundColor: "#141414",
-        opacity: 0.75,
-        zIndex: 2,
+        inset: 0,
+        background: "#141414",
+        pointerEvents: "none",
+        zIndex: 0,
       }}
-    >
-      <CircularProgress sx={{ color: "white" }} />
-    </div>
+    />
   );
 }
 
