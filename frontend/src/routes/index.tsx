@@ -8,7 +8,28 @@ import ComingSoonPage, { PLACEHOLDER_SECTIONS } from "src/pages/ComingSoonPage";
 
 const adminChunk = () => import("src/admin/lazyRoutes");
 const adminPage = (name) => () => adminChunk().then((m) => ({ Component: m[name] }));
-const homePage = () => import("src/pages/HomePage");
+
+function isHomeRoute(pathname = "") {
+  const raw = String(pathname || "/");
+  const path = raw.length > 1 ? raw.replace(/\/+$/, "") : raw;
+  return (
+    path === "/" ||
+    path === `/${MAIN_PATH.browse}` ||
+    path === `/${MAIN_PATH.browse}/genre/movie` ||
+    path === `/${MAIN_PATH.browse}/genre/tv` ||
+    path === `/${MAIN_PATH.browse}/latest` ||
+    path === `/${MAIN_PATH.browse}/trending`
+  );
+}
+
+// Start downloading the Home route chunk as soon as the router module executes
+// instead of waiting for React Router's lazy match. It remains a separate chunk,
+// so parsing the main shell does not get heavier.
+const initialHomeChunk =
+  typeof window !== "undefined" && isHomeRoute(window.location.pathname)
+    ? import("src/pages/HomePage")
+    : null;
+const homePage = () => initialHomeChunk || import("src/pages/HomePage");
 
 function ErrorPage() {
   return (
@@ -26,8 +47,6 @@ const router = createBrowserRouter([
     element: <MainLayout />,
     errorElement: <ErrorPage />,
     children: [
-      // Avoid a client-side / -> /browse redirect on hard refresh. Both URLs
-      // render the same lazy Home chunk and share the same bootstrap/cache.
       { index: true, lazy: homePage },
       { path: MAIN_PATH.browse, lazy: homePage },
       { path: `${MAIN_PATH.browse}/genre/movie`, lazy: homePage },
@@ -79,5 +98,20 @@ const router = createBrowserRouter([
   },
   { path: "*", element: <ErrorPage /> },
 ]);
+
+// Once Home has had a chance to paint, warm the two chunks users most commonly
+// open next. This does not block first paint and makes card -> Detail -> Player
+// navigation feel much closer to an already-loaded native app.
+if (typeof window !== "undefined" && isHomeRoute(window.location.pathname)) {
+  const warmLikelyNextRoutes = () => {
+    import("src/pages/DetailPage").catch(() => {});
+    import("src/pages/WatchPage").catch(() => {});
+  };
+  if ("requestIdleCallback" in window) {
+    (window as any).requestIdleCallback(warmLikelyNextRoutes, { timeout: 3500 });
+  } else {
+    window.setTimeout(warmLikelyNextRoutes, 2000);
+  }
+}
 
 export default router;
