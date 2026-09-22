@@ -109,10 +109,9 @@ function measureEdges(element: HTMLElement, rect: DOMRect) {
 /**
  * SC-style hover expansion shared by all public rails.
  *
- * The source card and the portal preview are treated as one continuous hover
- * surface. Closing is decided from the real pointer coordinates rather than
- * relying on :hover/mouseleave alone. This prevents the portal appearing over
- * the source card from immediately cancelling its own hover.
+ * The source card and fixed portal preview are one continuous hover surface.
+ * Geometry is captured only once. Scrolling the document must never move or
+ * dismiss an already-open preview; only real pointer exit closes it.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -252,19 +251,16 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       };
     }
 
-    const related = event?.relatedTarget;
-    if (isDomElement(related) && related.closest(".previewModal--container")) {
-      clearCloseTimer();
-      return;
-    }
-
     if (!open) {
       setIntent(false);
       return;
     }
 
-    scheduleClose();
-  }, [clearOpenTimer, clearCloseTimer, open, scheduleClose]);
+    // Once the portal is open, source-card mouseleave is not authoritative:
+    // the fixed popup often overlays the source and makes the browser emit a
+    // synthetic leave. Global pointer tracking below owns closing instead.
+    clearCloseTimer();
+  }, [clearOpenTimer, clearCloseTimer, open]);
 
   const onOverlayEnter = useCallback((event?: any) => {
     if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
@@ -294,8 +290,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     scheduleClose();
   }, [clearCloseTimer, scheduleClose, ref]);
 
-  // One global pointer tracker owns persistence while the preview is open.
-  // Moving inside either the source tile or the portal always cancels closing.
+  // The real pointer position is the single source of truth for persistence.
+  // Scrolling alone does not close or reposition the fixed preview.
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
@@ -321,21 +317,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     document.addEventListener("pointermove", onPointerMove, true);
     return () => document.removeEventListener("pointermove", onPointerMove, true);
   }, [open, clearCloseTimer, pointerIsOnSurface, scheduleClose, ref]);
-
-  // A real page scroll should dismiss a fixed preview immediately so it never
-  // floats over another rail. This is deliberately separate from pointer move.
-  useEffect(() => {
-    if (!open || typeof window === "undefined") return;
-
-    const onPageScroll = () => finishClose();
-    window.addEventListener("scroll", onPageScroll, true);
-    window.visualViewport?.addEventListener?.("scroll", onPageScroll);
-
-    return () => {
-      window.removeEventListener("scroll", onPageScroll, true);
-      window.visualViewport?.removeEventListener?.("scroll", onPageScroll);
-    };
-  }, [open, finishClose]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
@@ -369,8 +350,8 @@ export function ExpandOverlay({
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
-  // Always use the opening snapshot. Pointer movement must never change the
-  // popup's screen coordinates after it has opened.
+  // Always use the opening snapshot. Pointer movement and page scrolling must
+  // never change the popup's screen coordinates after it has opened.
   const currentCardRect = useCallback(
     () => position?.cardRect as DOMRect | undefined,
     [position]
