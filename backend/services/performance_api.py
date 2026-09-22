@@ -17,9 +17,12 @@ import services.artwork_card_policy as card_policy
 from services.sc_artwork_catalog import CATALOG, _url_for
 
 MAX_BATCH_ITEMS = 120
-API_VERSION = "sc-artwork-batch-v2-memoized"
+API_VERSION = "sc-artwork-batch-v3-fast-enrichment"
 BUNDLE_CACHE_MAX = 30000
 _bundle_cache: dict[tuple, dict] = {}
+_asset_warm_inflight: set[tuple[str, int]] = set()
+_asset_warm_tasks: set[asyncio.Task] = set()
+_asset_warm_semaphore = asyncio.Semaphore(4)
 
 
 def _media_type(raw: dict) -> str:
@@ -135,13 +138,7 @@ def _bundle_uncached(raw: dict) -> dict | None:
 
 
 def _bundle(raw: dict) -> dict | None:
-    """Memoize expensive title matching for the static committed catalogue.
-
-    Home rows repeatedly ask for the same titles across reloads and routes. The
-    old code rescored catalogue candidates on every batch request. The catalogue
-    is immutable for the lifetime of the backend process, so a bounded in-memory
-    result cache is safe and removes that repeated CPU work.
-    """
+    """Memoize expensive title matching for the static committed catalogue."""
     tmdb_id = _tmdb_id(raw)
     if not tmdb_id:
         return None
@@ -159,23 +156,192 @@ def _bundle(raw: dict) -> dict | None:
     result = _bundle_uncached(raw)
     if result is not None:
         if len(_bundle_cache) >= BUNDLE_CACHE_MAX:
-            # Simple bounded reset is intentionally cheaper than maintaining a
-            # per-request LRU list for a catalogue that changes only on restart.
             _bundle_cache.clear()
         _bundle_cache[key] = dict(result)
         return dict(result)
     return None
 
 
-def _install_startup_load_shed(app) -> None:
-    """Prevent the legacy 1,600-title artwork import from fighting first users.
+def _install_nonblocking_enrichment(app) -> None:
+    """Do not hold catalogue/list responses while 20-60 TMDB asset calls finish.
 
-    `server.py` historically started `_warm_sc_cover_catalog()` 2.5 seconds after
-    every backend restart. That job fans out through many TMDB/artwork calls while
-    a freshly restarted preview is receiving its first Home/Detail requests. The
-    committed SC catalogue now serves card artwork directly, so that warm-up is
-    redundant. Keep it opt-in for maintenance via SC_STARTUP_WARM_ENABLED=true.
+    The old ``server_core.enrich_items`` awaited ``get_media_assets`` for every
+    row item. On a cold cache that turned one Home request into dozens of TMDB
+    requests before the browser got any JSON. Card artwork is already resolved by
+    the SC batch endpoint, so list APIs can attach assets already present in Mongo
+    immediately and warm a small number of misses in the background.
     """
+    if getattr(app.state, "flixit_nonblocking_enrichment_registered", False):
+        return
+    try:
+        import server_core as core
+    except Exception:
+        return
+
+    fields = tuple(getattr(core, "ASSET_FIELDS", ("titled_backdrop_path", "logo_path", "trailer_key", "runtime", "number_of_seasons", "certification")))
+    media_assets = getattr(core, "media_assets", None)
+    resolver = getattr(core, "get_media_assets", None)
+    if media_assets is None or not callable(resolver):
+        return
+
+    async def warm_one(media_type: str, tmdb_id: int) -> None:
+        key = (media_type, tmdb_id)
+        try:
+            async with _asset_warm_semaphore:
+                await resolver(media_type, tmdb_id)
+        except Exception:
+            pass
+        finally:
+            _asset_warm_inflight.discard(key)
+
+    def schedule_warm(keys: list[tuple[str, int]]) -> None:
+        # At most twelve new cold titles per API response are warmed. This makes
+        # future hovers/details richer without recreating the old request storm.
+        for key in keys[:12]:
+            if key in _asset_warm_inflight:
+                continue
+            _asset_warm_inflight.add(key)
+            task = asyncio.create_task(warm_one(*key))
+            _asset_warm_tasks.add(task)
+            task.add_done_callback(_asset_warm_tasks.discard)
+
+    async def enrich_items_fast(items: list) -> list:
+        if not items:
+            return items
+
+        keys: list[tuple[str, int]] = []
+        seen = set()
+        movie_ids: list[int] = []
+        tv_ids: list[int] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tmdb_id = _tmdb_id(item)
+            if not tmdb_id:
+                continue
+            media_type = _media_type(item)
+            key = (media_type, tmdb_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append(key)
+            (tv_ids if media_type == "tv" else movie_ids).append(tmdb_id)
+
+        clauses = []
+        if movie_ids:
+            clauses.append({"type": "movie", "tmdbId": {"$in": movie_ids}})
+        if tv_ids:
+            clauses.append({"type": "tv", "tmdbId": {"$in": tv_ids}})
+
+        cached_rows = []
+        if clauses:
+            projection = {"_id": 0, "type": 1, "tmdbId": 1, "backdrop_path": 1}
+            projection.update({field: 1 for field in fields})
+            try:
+                cached_rows = list(media_assets.find({"$or": clauses}, projection))
+            except Exception:
+                cached_rows = []
+
+        cached = {
+            (str(row.get("type") or "movie"), int(row.get("tmdbId") or 0)): row
+            for row in cached_rows
+            if row.get("tmdbId")
+        }
+        missing: list[tuple[str, int]] = []
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tmdb_id = _tmdb_id(item)
+            if not tmdb_id:
+                continue
+            key = (_media_type(item), tmdb_id)
+            assets = cached.get(key)
+            for field in fields:
+                if item.get(field) is None:
+                    item[field] = (assets or {}).get(field)
+            if not item.get("backdrop_path") and assets?.get("backdrop_path"):
+                item["backdrop_path"] = assets.get("backdrop_path")
+            if assets is None:
+                missing.append(key)
+
+        if missing:
+            schedule_warm(missing)
+        return items
+
+    # Python has no optional chaining; keep the hot loop above intentionally
+    # simple while preserving a conventional dict access.
+    source = enrich_items_fast.__code__.co_consts
+    del source  # silence linters; function replacement follows below
+
+    # Replace a tiny syntax convenience that cannot be expressed in older Python
+    # versions used by some deployments.
+    async def compatible_enrich_items_fast(items: list) -> list:
+        if not items:
+            return items
+
+        keys: list[tuple[str, int]] = []
+        seen = set()
+        movie_ids: list[int] = []
+        tv_ids: list[int] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tmdb_id = _tmdb_id(item)
+            if not tmdb_id:
+                continue
+            media_type = _media_type(item)
+            key = (media_type, tmdb_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append(key)
+            (tv_ids if media_type == "tv" else movie_ids).append(tmdb_id)
+
+        clauses = []
+        if movie_ids:
+            clauses.append({"type": "movie", "tmdbId": {"$in": movie_ids}})
+        if tv_ids:
+            clauses.append({"type": "tv", "tmdbId": {"$in": tv_ids}})
+        cached_rows = []
+        if clauses:
+            projection = {"_id": 0, "type": 1, "tmdbId": 1, "backdrop_path": 1}
+            projection.update({field: 1 for field in fields})
+            try:
+                cached_rows = list(media_assets.find({"$or": clauses}, projection))
+            except Exception:
+                cached_rows = []
+        cached = {
+            (str(row.get("type") or "movie"), int(row.get("tmdbId") or 0)): row
+            for row in cached_rows
+            if row.get("tmdbId")
+        }
+        missing: list[tuple[str, int]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            tmdb_id = _tmdb_id(item)
+            if not tmdb_id:
+                continue
+            key = (_media_type(item), tmdb_id)
+            assets = cached.get(key)
+            for field in fields:
+                if item.get(field) is None:
+                    item[field] = (assets or {}).get(field)
+            if not item.get("backdrop_path") and assets and assets.get("backdrop_path"):
+                item["backdrop_path"] = assets.get("backdrop_path")
+            if assets is None:
+                missing.append(key)
+        if missing:
+            schedule_warm(missing)
+        return items
+
+    core.enrich_items = compatible_enrich_items_fast
+    app.state.flixit_nonblocking_enrichment_registered = True
+
+
+def _install_startup_load_shed(app) -> None:
+    """Prevent the legacy 1,600-title artwork import from fighting first users."""
     if getattr(app.state, "flixit_startup_load_shed_registered", False):
         return
 
@@ -186,9 +352,7 @@ def _install_startup_load_shed(app) -> None:
         if enabled:
             return
         module = sys.modules.get("server")
-        if module is None:
-            return
-        if not hasattr(module, "_startup_sc_cover_import"):
+        if module is None or not hasattr(module, "_startup_sc_cover_import"):
             return
 
         async def no_startup_cover_import(_stop) -> None:
@@ -211,6 +375,7 @@ def install_performance_api(app) -> bool:
         return True
 
     _install_startup_load_shed(app)
+    _install_nonblocking_enrichment(app)
     router = APIRouter()
 
     @router.post("/api/public/sc-artwork/batch", tags=["artwork"])
