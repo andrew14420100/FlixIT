@@ -1,4 +1,10 @@
-/* Final motion/interaction overrides for Netflix/SC-style rows. */
+/* SC/Netflix catalogue geometry and motion overrides. */
+:root {
+  --flix-home-gutter: 4%;
+  --flix-mobile-gutter: 16px;
+  --flix-card-gap: 7.64px;
+}
+
 .flix-netflix-preview-portal {
   position: fixed !important;
   inset: 0 !important;
@@ -26,29 +32,14 @@
   -webkit-backface-visibility: hidden;
 }
 
-/* Do not ever paint the temporary text title while the real Hero logo is being
-   hydrated. The Home bootstrap preloads the logo before this element mounts. */
+/* Never paint the temporary text title while the actual Hero logo is loading. */
 [data-testid="hero-title"] {
   visibility: hidden !important;
   opacity: 0 !important;
 }
 
-/* Stable desktop Hero geometry. */
-.billboard {
-  height: clamp(540px, 43vw, 740px) !important;
-  min-height: 0 !important;
-  overflow: hidden !important;
-}
-
-.billboard > img,
-.billboard > .hero-video-container,
-.billboard > div {
-  height: 100% !important;
-  max-height: 100% !important;
-}
-
 @keyframes flixHeroLogoReady {
-  from { opacity: .72; transform: translate3d(0,3px,0) scale(.985); }
+  from { opacity: .65; transform: translate3d(0,4px,0) scale(.982); }
   to { opacity: 1; transform: translate3d(0,0,0) scale(1); }
 }
 
@@ -60,32 +51,158 @@
   will-change: opacity, transform;
 }
 
-/* SC-like overlap between Hero fade and the first catalogue row. */
+/* ---------- Hero / first-row composition ---------- */
+.billboard {
+  height: clamp(560px, 47vw, 760px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  background: #0f0f0f !important;
+}
+
+.billboard > img,
+.billboard > .hero-video-container {
+  height: 100% !important;
+  max-height: 100% !important;
+}
+
+[data-testid="hero-backdrop"] {
+  object-fit: cover !important;
+  object-position: center 20% !important;
+}
+
+/* Extra SC-style bottom fade. It deliberately overlaps the catalogue behind it. */
+.billboard::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 34%;
+  z-index: 7;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(20,20,20,0) 0%,
+    rgba(20,20,20,.08) 17%,
+    rgba(20,20,20,.30) 36%,
+    rgba(20,20,20,.68) 62%,
+    rgba(20,20,20,.94) 82%,
+    #141414 100%
+  );
+}
+
+.billboard .info-wrap {
+  left: var(--flix-home-gutter) !important;
+  width: min(42vw, 680px) !important;
+  bottom: 14% !important;
+  top: 0 !important;
+}
+
+[data-testid="hero-content"] {
+  margin: 0 !important;
+}
+
+[data-testid="hero-logo"] {
+  width: auto !important;
+  height: auto !important;
+  max-width: min(33vw, 560px) !important;
+  max-height: 155px !important;
+}
+
+[data-testid="hero-overview"] {
+  max-width: min(38vw, 620px) !important;
+  margin-top: 1.05em !important;
+  font-size: clamp(15px, 1.12vw, 19px) !important;
+  line-height: 1.34 !important;
+}
+
+.billboard .info-buttons {
+  margin-top: 1.55em !important;
+  gap: 10px !important;
+}
+
+[data-testid="hero-play-button"],
+[data-testid="hero-info-button"] {
+  min-height: 46px !important;
+  padding: 9px 24px !important;
+  margin-right: 0 !important;
+  border-radius: 4px !important;
+  font-size: clamp(13px, .9vw, 16px) !important;
+}
+
+[data-testid="hero-play-button"] span,
+[data-testid="hero-info-button"] span {
+  font-size: 1.15em !important;
+}
+
+/* Rows begin inside the Hero fade, like SC instead of below a dead band. */
 .sliders {
-  margin-top: -8.5vh !important;
-  padding-top: 10px !important;
+  margin-top: -10.5vh !important;
+  padding-top: 0 !important;
+  background: transparent !important;
 }
 
-#continua.slider-row {
-  margin-top: 8px !important;
-  margin-bottom: 18px !important;
+.sliders::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 175px;
+  pointer-events: none;
+  z-index: -1;
+  background: linear-gradient(to bottom, rgba(20,20,20,0), #141414 82%);
 }
 
-.billboard:has([data-testid="hero-audio-toggle"]) [data-testid="hero-logo"] {
-  transform: scale(1.08);
-  transform-origin: left bottom;
-  transition: transform 420ms cubic-bezier(.21,0,.07,1), opacity 180ms ease;
-}
-
-/* The whole card surface must remain a hit target. Layout containment on rows
-   can make overflowed stacking contexts steal the upper portion of a card. */
+/* ---------- Catalogue rows ---------- */
 .slider-row {
   isolation: isolate;
   contain: none !important;
+  height: auto !important;
+  margin-top: 30px !important;
+  margin-bottom: 30px !important;
+  overflow: visible !important;
 }
 
 .slider-row:hover {
   z-index: 100 !important;
+}
+
+#continua.slider-row,
+.slider-row.compact-row {
+  margin-top: 4px !important;
+  margin-bottom: 24px !important;
+}
+
+.slider-row .row-header {
+  /* first image begins at 4% + half the 7.64px card gap */
+  padding-left: calc(var(--flix-home-gutter) + 3.82px) !important;
+  padding-right: var(--flix-home-gutter) !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  margin-bottom: 8px !important;
+  min-height: 28px !important;
+}
+
+.slider-row .row-header .label {
+  font-size: clamp(20px, 1.45vw, 26px) !important;
+  line-height: 1.12 !important;
+  font-weight: 700 !important;
+  letter-spacing: -.018em !important;
+}
+
+.slider-row .show-peek {
+  padding-left: var(--flix-home-gutter) !important;
+}
+
+/* Top 10 has no per-slide side padding: align title with its actual first tile. */
+.top10-row .row-header {
+  padding-left: var(--flix-home-gutter) !important;
+}
+
+.top10-row .slider {
+  padding-left: var(--flix-home-gutter) !important;
+  padding-right: var(--flix-home-gutter) !important;
 }
 
 .slider-row .slider,
@@ -118,9 +235,21 @@
 .netflix-ranked-card-poster,
 .previewModal--boxart {
   visibility: visible !important;
+  opacity: 1;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
   transform: translateZ(0);
+}
+
+.netflix-ranked-card-poster-wrap {
+  background: #1a1a1a !important;
+}
+
+.netflix-ranked-card-poster {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  object-fit: cover !important;
 }
 
 .slider-row .slick-track,
@@ -136,9 +265,10 @@
   will-change: transform;
 }
 
+/* No vertical movement of the source card itself. Only the portal expands. */
 .netflix-standard-card-root:hover,
 .netflix-ranked-card-root:hover {
-  transform: translateZ(0);
+  transform: none !important;
 }
 
 .slider-row[data-sliding="true"] .netflix-standard-card-root,
@@ -146,60 +276,45 @@
   pointer-events: none;
 }
 
-/* Desktop Hero alignment/buttons: content stays low in the image and the first
-   row starts inside the bottom fade instead of leaving a large dead band. */
-@media (min-width: 800px) {
-  .billboard .info-wrap {
-    left: 4% !important;
-    bottom: 12% !important;
-    top: 0 !important;
+/* ---------- Mobile: SC poster layout ---------- */
+@media (max-width: 899px) {
+  :root {
+    --flix-home-gutter: var(--flix-mobile-gutter);
   }
 
-  [data-testid="hero-logo"] {
-    max-width: min(34vw, 560px) !important;
-    max-height: 150px !important;
-  }
-
-  [data-testid="hero-play-button"],
-  [data-testid="hero-info-button"] {
-    min-height: 44px !important;
-  }
-}
-
-/* Mobile is deliberately independent from desktop mini-modal rules. This keeps
-   the previously clean SC-style composition: immersive landscape Hero, centered
-   logo + primary action, strong bottom fade, then poster rows. */
-@media (max-width: 799px) {
   .billboard {
-    height: 64svh !important;
-    min-height: 500px !important;
-    max-height: 680px !important;
-    overflow: hidden !important;
-    font-size: clamp(11px, 3.05vw, 14px) !important;
-  }
-
-  .billboard > img,
-  .billboard > .hero-video-container,
-  .billboard > div {
-    height: 100% !important;
-    max-height: 100% !important;
+    height: 61svh !important;
+    min-height: 470px !important;
+    max-height: 650px !important;
+    font-size: clamp(11px, 3vw, 14px) !important;
   }
 
   [data-testid="hero-backdrop"] {
     object-position: center top !important;
   }
 
+  .billboard::after {
+    height: 52% !important;
+    background: linear-gradient(
+      to bottom,
+      rgba(20,20,20,0) 0%,
+      rgba(20,20,20,.10) 22%,
+      rgba(20,20,20,.42) 48%,
+      rgba(20,20,20,.82) 72%,
+      #141414 100%
+    ) !important;
+  }
+
   .billboard .info-wrap {
-    left: 4.5% !important;
-    right: auto !important;
-    width: 91% !important;
+    left: 8% !important;
+    right: 8% !important;
+    width: 84% !important;
     top: auto !important;
-    bottom: 7.5% !important;
+    bottom: 10% !important;
   }
 
   [data-testid="hero-content"] {
     width: 100% !important;
-    margin: 0 !important;
   }
 
   .billboard .title {
@@ -213,8 +328,8 @@
   [data-testid="hero-logo"] {
     width: auto !important;
     height: auto !important;
-    max-width: 72vw !important;
-    max-height: 13svh !important;
+    max-width: 68vw !important;
+    max-height: 12svh !important;
     margin: 0 auto !important;
     object-position: center bottom !important;
     transform-origin: center bottom !important;
@@ -228,63 +343,97 @@
 
   .billboard .info-buttons {
     justify-content: center !important;
-    margin-top: 16px !important;
+    margin-top: 14px !important;
     width: 100% !important;
   }
 
   [data-testid="hero-play-button"] {
-    min-height: 40px !important;
-    margin: 0 !important;
-    padding: 9px 22px !important;
+    min-height: 39px !important;
+    padding: 8px 21px !important;
     border-radius: 4px !important;
     font-size: 13px !important;
   }
 
   [data-testid="hero-play-button"] .play-icon {
-    font-size: 17px !important;
+    font-size: 16px !important;
   }
 
   [data-testid="hero-controls"] {
-    right: 14px !important;
-    bottom: 15% !important;
-  }
-
-  .billboard:has([data-testid="hero-audio-toggle"]) [data-testid="hero-logo"] {
-    transform: scale(1.03);
+    right: 12px !important;
+    bottom: 17% !important;
   }
 
   .sliders {
-    margin-top: -5vh !important;
-    padding-top: 4px !important;
+    margin-top: -4.6vh !important;
+    padding-top: 0 !important;
+  }
+
+  .sliders::before {
+    height: 90px;
   }
 
   .slider-row {
-    margin-top: 24px !important;
+    margin-top: 22px !important;
     margin-bottom: 24px !important;
   }
 
-  #continua.slider-row {
-    margin-top: 6px !important;
-    margin-bottom: 18px !important;
+  #continua.slider-row,
+  .slider-row.compact-row {
+    margin-top: 2px !important;
+    margin-bottom: 20px !important;
   }
 
-  .slider-row .row-header {
-    padding-left: 16px !important;
+  .slider-row .row-header,
+  .top10-row .row-header {
+    padding-left: 18px !important;
     padding-right: 16px !important;
     margin-bottom: 7px !important;
-    min-height: 24px !important;
+    min-height: 22px !important;
   }
 
   .slider-row .row-header .label {
-    font-size: 18px !important;
-    line-height: 1.15 !important;
+    font-size: 17px !important;
+    line-height: 1.12 !important;
+    letter-spacing: -.012em !important;
   }
 
   .slider-row .show-peek {
     padding-left: 16px !important;
   }
 
-  /* Hover previews do not belong to the touch layout. */
+  /* Normal SC mobile rows are portrait posters, not desktop landscape covers. */
+  .slider-row:not(.top10-row) .netflix-standard-card-root {
+    aspect-ratio: 2 / 3 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    border-radius: 5px !important;
+  }
+
+  .slider-row:not(.top10-row) .netflix-standard-card-link,
+  .slider-row:not(.top10-row) .netflix-standard-card-frame,
+  .slider-row:not(.top10-row) .netflix-standard-card-image-wrap,
+  .slider-row:not(.top10-row) .netflix-standard-card-image {
+    width: 100% !important;
+    height: 100% !important;
+    border-radius: 5px !important;
+  }
+
+  .slider-row:not(.top10-row) .netflix-standard-card-image {
+    object-fit: cover !important;
+    object-position: center !important;
+  }
+
+  /* Keep Top 10 number + poster geometry intact on touch. */
+  .top10-row .slider {
+    padding-left: 16px !important;
+    padding-right: 0 !important;
+  }
+
+  .top10-row .netflix-ranked-card-root {
+    min-height: 0 !important;
+  }
+
+  /* Desktop mini-modal never participates in touch layout. */
   .flix-netflix-preview-portal {
     display: none !important;
   }
@@ -292,17 +441,21 @@
 
 @media (max-width: 430px) {
   .billboard {
-    min-height: 480px !important;
-    height: 62svh !important;
+    min-height: 455px !important;
+    height: 59svh !important;
   }
 
   [data-testid="hero-logo"] {
-    max-width: 76vw !important;
-    max-height: 12svh !important;
+    max-width: 72vw !important;
+    max-height: 11.5svh !important;
   }
 
   .sliders {
-    margin-top: -4.5vh !important;
+    margin-top: -4vh !important;
+  }
+
+  .slider-row .row-header .label {
+    font-size: 16.5px !important;
   }
 }
 
