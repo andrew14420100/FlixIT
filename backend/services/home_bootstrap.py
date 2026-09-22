@@ -1,7 +1,8 @@
-"""Persistent, cache-first Home snapshot for FlixIT.
+"""SC-style, persistent, cache-first Home snapshot for FlixIT.
 
-Rows stay cache-first, while Hero editorial changes are detected independently so
-an admin update is visible immediately without rebuilding the whole Home.
+The Home is assembled once on the backend in a fixed StreamingCommunity-like
+order. Rows are globally deduplicated before they reach React and only artwork-
+ready cards are published, so lower rows never collapse into blank placeholders.
 """
 from __future__ import annotations
 
@@ -14,11 +15,37 @@ from typing import Any
 from fastapi import APIRouter
 
 SNAPSHOT_KEY = "public-home-v1"
-SNAPSHOT_VERSION = "instant-home-v2-hero-live"
+SNAPSHOT_VERSION = "instant-home-v3-sc-structure"
 FRESH_FOR = timedelta(minutes=10)
 MAX_STALE_AGE = timedelta(days=3)
-MAX_ROWS = 18
 MAX_ITEMS_PER_ROW = 30
+MAX_CANDIDATES_PER_ROW = 54
+GENRE_PAGES = 3
+
+# Current SC Home core order, followed by the thematic rows historically used
+# by SC. Admin-created duplicate rows are intentionally not mixed into Home.
+CANONICAL_SECTIONS = [
+    {"key": "recent", "name": "Aggiunti di recente", "section_type": "latest", "media_type": "mixed", "limit": 30, "min_items": 8},
+    {"key": "tv-updated", "name": "Serie TV Aggiornate", "section_type": "new_seasons", "media_type": "tv", "limit": 30, "min_items": 6},
+    {"key": "top10", "name": "Top 10 titoli di oggi", "section_type": "top10", "media_type": "mixed", "limit": 10, "min_items": 5},
+    {"key": "upcoming", "name": "In arrivo", "section_type": "upcoming", "media_type": "movie", "limit": 30, "min_items": 6},
+    {"key": "comedy", "name": "Commedia", "section_type": "genre", "media_type": "mixed", "genre_id": 35, "limit": 30, "min_items": 8},
+    {"key": "horror", "name": "Horror", "section_type": "genre", "media_type": "mixed", "genre_id": 27, "limit": 30, "min_items": 8},
+    {"key": "action-adventure", "name": "Action & Adventure", "section_type": "genre", "media_type": "mixed", "genre_id": 28, "limit": 30, "min_items": 8},
+    {"key": "fantasy", "name": "Fantasy", "section_type": "genre", "media_type": "mixed", "genre_id": 14, "limit": 30, "min_items": 8},
+    {"key": "mystery", "name": "Mistero", "section_type": "genre", "media_type": "mixed", "genre_id": 9648, "limit": 30, "min_items": 8},
+    {"key": "drama", "name": "Dramma", "section_type": "genre", "media_type": "mixed", "genre_id": 18, "limit": 30, "min_items": 8},
+    {"key": "science-fiction", "name": "Fantascienza", "section_type": "genre", "media_type": "mixed", "genre_id": 878, "limit": 30, "min_items": 8},
+    {"key": "thriller", "name": "Thriller", "section_type": "genre", "media_type": "mixed", "genre_id": 53, "limit": 30, "min_items": 8},
+    {"key": "family", "name": "Famiglia", "section_type": "genre", "media_type": "mixed", "genre_id": 10751, "limit": 30, "min_items": 8},
+    {"key": "animation", "name": "Animazione", "section_type": "genre", "media_type": "mixed", "genre_id": 16, "limit": 30, "min_items": 8},
+    {"key": "history", "name": "Storia", "section_type": "genre", "media_type": "mixed", "genre_id": 36, "limit": 30, "min_items": 8},
+    {"key": "crime", "name": "Crime", "section_type": "genre", "media_type": "mixed", "genre_id": 80, "limit": 30, "min_items": 8},
+    {"key": "documentary", "name": "Documentario", "section_type": "genre", "media_type": "mixed", "genre_id": 99, "limit": 30, "min_items": 8},
+    {"key": "romance", "name": "Romance", "section_type": "genre", "media_type": "mixed", "genre_id": 10749, "limit": 30, "min_items": 8},
+    {"key": "war", "name": "Guerra", "section_type": "genre", "media_type": "mixed", "genre_id": 10752, "limit": 30, "min_items": 8},
+    {"key": "music", "name": "Musica", "section_type": "genre", "media_type": "mixed", "genre_id": 10402, "limit": 30, "min_items": 8},
+]
 
 _build_lock = asyncio.Lock()
 _refresh_tasks: set[asyncio.Task] = set()
@@ -38,38 +65,6 @@ def _as_utc(value: Any) -> datetime | None:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except Exception:
         return None
-
-
-def _section_type(section: dict) -> str:
-    return str(section.get("section_type") or section.get("apiString") or "").strip()
-
-
-def _media_type(section: dict) -> str:
-    value = str(section.get("media_type") or section.get("mediaType") or "mixed").lower()
-    return value if value in {"movie", "tv", "mixed"} else "mixed"
-
-
-def _signature(section: dict) -> str:
-    return "|".join(
-        [
-            _section_type(section),
-            _media_type(section),
-            str(section.get("genre_id") or ""),
-            str(section.get("origin_country") or ""),
-        ]
-    )
-
-
-def _normalise_section(section: dict, index: int) -> dict:
-    return {
-        "key": str(section.get("key") or section.get("id") or f"home-{index}-{_signature(section)}"),
-        "name": str(section.get("name") or "").strip() or "Scopri",
-        "section_type": _section_type(section),
-        "media_type": _media_type(section),
-        "genre_id": section.get("genre_id"),
-        "origin_country": section.get("origin_country"),
-        "order": int(section.get("order") or index),
-    }
 
 
 def _route_endpoint(app, path: str):
@@ -134,7 +129,7 @@ def _item_key(item: dict) -> str:
     return f"{media}:{tmdb_id}"
 
 
-def _unique_items(items: list[dict]) -> list[dict]:
+def _unique_items(items: list[dict], limit: int = MAX_CANDIDATES_PER_ROW) -> list[dict]:
     seen: set[str] = set()
     out: list[dict] = []
     for raw in items:
@@ -143,95 +138,42 @@ def _unique_items(items: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         out.append(dict(raw))
-        if len(out) >= MAX_ITEMS_PER_ROW:
+        if len(out) >= limit:
             break
     return out
 
 
-async def _load_section(app, section: dict) -> dict:
-    section_type = _section_type(section)
-    media_type = _media_type(section)
-    media_slug = "tv" if media_type == "tv" else "movie" if media_type == "movie" else "mixed"
+async def _genre_payload(app, section: dict) -> dict:
+    calls = [
+        _call_public(
+            app,
+            "/api/public/tmdb/genre/{genre_id}/{media_type}",
+            genre_id=int(section["genre_id"]),
+            media_type="mixed",
+            page=page,
+            origin_country=section.get("origin_country"),
+        )
+        for page in range(1, GENRE_PAGES + 1)
+    ]
+    pages = await asyncio.gather(*calls)
+    return {"items": [item for payload in pages for item in _payload_items(payload)]}
 
-    if section_type == "trending":
-        payload = await _call_public(app, "/api/public/homepage/trending")
-    elif section_type == "latest":
+
+async def _load_section(app, section: dict) -> dict:
+    section_type = str(section.get("section_type") or "")
+    if section_type == "latest":
         payload = await _call_public(app, "/api/public/homepage/latest")
+    elif section_type == "new_seasons":
+        payload = await _call_public(app, "/api/public/new-releases/{media}", media="tv")
     elif section_type == "top10":
         payload = await _call_public(app, "/api/public/flixit-top10", hours=48)
     elif section_type == "upcoming":
         payload = await _call_public(app, "/api/public/tmdb/upcoming", page=1)
-    elif section_type == "new_releases":
-        payload = await _call_public(app, "/api/public/new-releases/{media}", media="movie")
-    elif section_type == "new_seasons":
-        payload = await _call_public(app, "/api/public/new-releases/{media}", media="tv")
-    elif section_type == "now_playing":
-        payload = await _call_public(app, "/api/public/tmdb/now_playing", page=1)
-    elif section_type == "airing_today":
-        payload = await _call_public(app, "/api/public/tmdb/airing_today", page=1)
-    elif section_type == "on_the_air":
-        payload = await _call_public(app, "/api/public/tmdb/on_the_air", page=1)
-    elif section_type == "popular":
-        payload = await _call_public(
-            app,
-            "/api/public/tmdb/popular/{media_type}",
-            media_type="tv" if media_slug == "tv" else "movie",
-            page=1,
-            verify_vixsrc=False,
-        )
-    elif section_type == "top_rated":
-        payload = await _call_public(
-            app,
-            "/api/public/tmdb/top_rated/{media_type}",
-            media_type="tv" if media_slug == "tv" else "movie",
-            page=1,
-            verify_vixsrc=False,
-        )
     elif section_type == "genre" and section.get("genre_id"):
-        payload = await _call_public(
-            app,
-            "/api/public/tmdb/genre/{genre_id}/{media_type}",
-            genre_id=int(section["genre_id"]),
-            media_type=media_slug,
-            page=1,
-            origin_country=section.get("origin_country"),
-        )
+        payload = await _genre_payload(app, section)
     else:
         payload = {}
-
     return {**section, "items": _unique_items(_payload_items(payload))}
-
-
-def _ordered_sections(core) -> list[dict]:
-    try:
-        admin = list(core.sections.find({"active": True}, {"_id": 0}).sort("order", 1))
-    except Exception:
-        admin = []
-    templates = [dict(row) for row in getattr(core, "AVAILABLE_SECTIONS", []) if isinstance(row, dict)]
-
-    preferred_types = ("top10", "trending", "latest")
-    source = []
-    for wanted in preferred_types:
-        source.extend([row for row in admin if _section_type(row) == wanted])
-        if not any(_section_type(row) == wanted for row in source):
-            source.extend([row for row in templates if _section_type(row) == wanted][:1])
-    source.extend(admin)
-    source.extend(templates)
-
-    seen: set[str] = set()
-    out: list[dict] = []
-    for index, raw in enumerate(source):
-        section = _normalise_section(raw, index)
-        if not section["section_type"]:
-            continue
-        sig = _signature(section)
-        if sig in seen:
-            continue
-        seen.add(sig)
-        out.append(section)
-        if len(out) >= MAX_ROWS:
-            break
-    return out
 
 
 async def _attach_artwork(rows: list[dict]) -> None:
@@ -251,6 +193,75 @@ async def _attach_artwork(rows: list[dict]) -> None:
                     item["__artwork"] = artwork
     except Exception:
         return
+
+
+def _artwork_ready(item: dict, *, top10: bool = False) -> bool:
+    artwork = item.get("__artwork") if isinstance(item.get("__artwork"), dict) else {}
+    if not artwork.get("active"):
+        return False
+    if top10:
+        return bool(artwork.get("top10_ready") and artwork.get("poster_url"))
+    return bool(artwork.get("card_ready") and artwork.get("backdrop_url"))
+
+
+def _select_row_items(row: dict, blocked: set[str], limit: int) -> list[dict]:
+    top10 = row.get("section_type") == "top10"
+    selected: list[dict] = []
+    local_seen: set[str] = set()
+    for item in row.get("items") or []:
+        key = _item_key(item)
+        if not key or key in local_seen or key in blocked:
+            continue
+        if not _artwork_ready(item, top10=top10):
+            continue
+        local_seen.add(key)
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _finalize_rows(rows: list[dict]) -> list[dict]:
+    """Reserve SC core rows first, then globally dedupe every visible card."""
+    by_key = {str(row.get("key")): row for row in rows}
+
+    # Reserve Top 10 and In arrivo so their identities cannot be consumed by an
+    # earlier row. This keeps those signature SC rows full without duplicates.
+    reserved_rows: dict[str, list[dict]] = {}
+    reserved_keys: set[str] = set()
+    for key in ("top10", "upcoming"):
+        row = by_key.get(key)
+        if not row:
+            continue
+        selected = _select_row_items(row, reserved_keys, int(row.get("limit") or MAX_ITEMS_PER_ROW))
+        if len(selected) >= int(row.get("min_items") or 1):
+            reserved_rows[key] = selected
+            reserved_keys.update(_item_key(item) for item in selected)
+
+    claimed: set[str] = set(reserved_keys)
+    final: list[dict] = []
+    for row in rows:
+        key = str(row.get("key") or "")
+        if key in reserved_rows:
+            selected = reserved_rows[key]
+        else:
+            selected = _select_row_items(row, claimed, int(row.get("limit") or MAX_ITEMS_PER_ROW))
+
+        minimum = int(row.get("min_items") or 1)
+        if len(selected) < minimum:
+            continue
+
+        claimed.update(_item_key(item) for item in selected)
+        clean = {
+            "key": key,
+            "name": row.get("name"),
+            "section_type": row.get("section_type"),
+            "media_type": row.get("media_type", "mixed"),
+            "genre_id": row.get("genre_id"),
+            "items": selected,
+        }
+        final.append(clean)
+    return final
 
 
 def _hero_fingerprint(hero: dict | None) -> tuple[str, ...]:
@@ -299,11 +310,7 @@ async def _hydrate_hero_artwork(hero: dict | None) -> dict | None:
         artwork = _bundle(identity)
         if isinstance(artwork, dict) and artwork.get("active"):
             existing = result.get("assets") if isinstance(result.get("assets"), dict) else {}
-            hero_backdrop = (
-                artwork.get("hero_backdrop_url")
-                or artwork.get("detail_backdrop_url")
-                or artwork.get("backdrop_url")
-            )
+            hero_backdrop = artwork.get("hero_backdrop_url") or artwork.get("detail_backdrop_url") or artwork.get("backdrop_url")
             result["assets"] = {
                 **existing,
                 "logo_path": artwork.get("logo_url") or existing.get("logo_path"),
@@ -329,12 +336,7 @@ def _persist_snapshot_payload(core, payload: dict, generated: datetime | None) -
     try:
         core.db["home_snapshots"].update_one(
             {"key": SNAPSHOT_KEY},
-            {
-                "$set": {
-                    "payload": payload,
-                    "generated_at": generated or _now(),
-                }
-            },
+            {"$set": {"payload": payload, "generated_at": generated or _now()}},
             upsert=True,
         )
     except Exception:
@@ -346,11 +348,9 @@ async def _refresh_cached_hero_if_needed(app, core, payload: dict, generated: da
     cached_hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
     if _hero_fingerprint(current_settings) == _hero_fingerprint(cached_hero):
         return payload
-
     fresh_hero = await _load_current_hero(app)
     if not fresh_hero:
         return payload
-
     updated = dict(payload)
     updated["version"] = SNAPSHOT_VERSION
     updated["hero"] = fresh_hero
@@ -360,20 +360,20 @@ async def _refresh_cached_hero_if_needed(app, core, payload: dict, generated: da
 
 async def _build_snapshot(app, core) -> dict:
     async with _build_lock:
-        sections = _ordered_sections(core)
         semaphore = asyncio.Semaphore(4)
 
-        async def one(section: dict) -> dict:
+        async def load(section: dict) -> dict:
             async with semaphore:
-                return await _load_section(app, section)
+                return await _load_section(app, dict(section))
 
-        rows = await asyncio.gather(*(one(section) for section in sections))
-        rows = [row for row in rows if row.get("items")]
+        rows = await asyncio.gather(*(load(section) for section in CANONICAL_SECTIONS))
         await _attach_artwork(rows)
+        rows = _finalize_rows(rows)
         hero = await _load_current_hero(app)
         generated = _now()
         payload = {
             "version": SNAPSHOT_VERSION,
+            "structure": "sc-canonical",
             "generated_at": generated.isoformat(),
             "hero": hero or None,
             "rows": rows,
@@ -432,6 +432,15 @@ def install_home_bootstrap(app) -> bool:
     async def public_home_bootstrap():
         payload, generated = _read_snapshot(core)
         now = _now()
+
+        # A structure version change must never serve the previous row layout.
+        if payload and payload.get("version") != SNAPSHOT_VERSION:
+            old_payload = payload
+            try:
+                return await _build_snapshot(app, core)
+            except Exception:
+                payload = old_payload
+
         if payload and generated:
             payload = await _refresh_cached_hero_if_needed(app, core, payload, generated)
             age = now - generated
@@ -440,6 +449,7 @@ def install_home_bootstrap(app) -> bool:
             if age < MAX_STALE_AGE:
                 _schedule_refresh(app, core)
                 return payload
+
         try:
             return await _build_snapshot(app, core)
         except Exception:
@@ -447,6 +457,7 @@ def install_home_bootstrap(app) -> bool:
                 return payload
             return {
                 "version": SNAPSHOT_VERSION,
+                "structure": "sc-canonical",
                 "generated_at": now.isoformat(),
                 "hero": None,
                 "rows": [],
@@ -456,7 +467,12 @@ def install_home_bootstrap(app) -> bool:
     async def warm_after_startup() -> None:
         await asyncio.sleep(0.5)
         payload, generated = _read_snapshot(core)
-        if not payload or not generated or _now() - generated >= FRESH_FOR:
+        if (
+            not payload
+            or payload.get("version") != SNAPSHOT_VERSION
+            or not generated
+            or _now() - generated >= FRESH_FOR
+        ):
             _schedule_refresh(app, core)
 
     @app.on_event("startup")
@@ -468,4 +484,4 @@ def install_home_bootstrap(app) -> bool:
     return True
 
 
-__all__ = ["install_home_bootstrap", "SNAPSHOT_VERSION"]
+__all__ = ["install_home_bootstrap", "SNAPSHOT_VERSION", "CANONICAL_SECTIONS"]
