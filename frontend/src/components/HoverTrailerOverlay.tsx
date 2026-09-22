@@ -4,22 +4,28 @@ import TrailerPlayer from "./TrailerPlayer";
 import TrailerAudioButton from "./TrailerAudioButton";
 
 const LOGO_VISIBLE_MS = 5000;
+const COVER_FADE_MS = 420;
+const VIDEO_FADE_MS = 420;
+const LOGO_ENTER_MS = 320;
 const LOGO_FADE_MS = 300;
+const EASE = "cubic-bezier(.21,0,.07,1)";
 
 /**
- * Netflix-style hover trailer.
- * Playback is allowed only after the caller-provided hover delay. The logo is
- * revealed on the same `playing` event as the video, so it never appears early
- * and never lags behind the first trailer frame.
+ * Netflix/SC-style hover preview.
+ * The exact SC card cover stays visible while the trailer is waiting/buffering.
+ * Only the real `playing` event triggers the cover -> video crossfade and logo
+ * entrance, so there is never a black flash between the static card and trailer.
  */
 export default function HoverTrailerOverlay({
   url,
   logoUrl,
+  coverUrl,
   delay = 0,
   onOpen,
 }: {
   url?: string;
   logoUrl?: string | null;
+  coverUrl?: string | null;
   delay?: number;
   onOpen?: (event?: any) => void;
 }) {
@@ -59,7 +65,6 @@ export default function HoverTrailerOverlay({
     setPlaying(true);
     setLogoVisible(true);
     if (logoTimerStartedRef.current) return;
-
     logoTimerStartedRef.current = true;
     logoTimerRef.current = window.setTimeout(() => {
       setLogoVisible(false);
@@ -80,7 +85,7 @@ export default function HoverTrailerOverlay({
     setLogoVisible(true);
   };
 
-  if (!url || failed) return null;
+  if ((!url && !coverUrl) || failed) return null;
 
   const showLogo = playing && logoVisible;
 
@@ -117,19 +122,62 @@ export default function HoverTrailerOverlay({
         opacity: 1,
         pointerEvents: "auto",
         cursor: onOpen ? "pointer" : "default",
+        transform: "translateZ(0)",
+        backfaceVisibility: "hidden",
+        willChange: "transform",
       }}
     >
-      {ready ? (
-        <TrailerPlayer
-          videoKey={url}
-          muted={muted}
-          playing
-          loop={false}
-          zoom={1.02}
-          onPlaying={handlePlaying}
-          onEnded={handleEnded}
-          onError={handleError}
+      {coverUrl ? (
+        <img
+          src={coverUrl}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          loading="eager"
+          decoding="async"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            objectPosition: "center",
+            opacity: playing ? 0 : 1,
+            transform: playing ? "scale(1.015)" : "scale(1)",
+            transition: `opacity ${COVER_FADE_MS}ms ${EASE}, transform ${COVER_FADE_MS}ms ${EASE}`,
+            zIndex: 9,
+            pointerEvents: "none",
+            backfaceVisibility: "hidden",
+            willChange: "opacity, transform",
+          }}
         />
+      ) : null}
+
+      {ready && url ? (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: playing ? 1 : 0,
+            transition: `opacity ${VIDEO_FADE_MS}ms ${EASE}`,
+            zIndex: 8,
+            pointerEvents: "none",
+            transform: "translateZ(0)",
+            willChange: "opacity",
+          }}
+        >
+          <TrailerPlayer
+            videoKey={url}
+            muted={muted}
+            playing
+            loop={false}
+            zoom={1.02}
+            onPlaying={handlePlaying}
+            onEnded={handleEnded}
+            onError={handleError}
+          />
+        </div>
       ) : null}
 
       {logoUrl ? (
@@ -148,15 +196,17 @@ export default function HoverTrailerOverlay({
             opacity: showLogo ? 1 : 0,
             transform: showLogo
               ? "translate3d(0,0,0) scale(1)"
-              : "translate3d(0,5px,0) scale(.99)",
-            transition: `opacity ${logoVisible ? 0 : LOGO_FADE_MS}ms ease, transform 120ms cubic-bezier(.21,0,.07,1)`,
+              : "translate3d(0,8px,0) scale(.985)",
+            transition: `opacity ${showLogo ? LOGO_ENTER_MS : LOGO_FADE_MS}ms ${EASE}, transform ${LOGO_ENTER_MS}ms ${EASE}`,
             pointerEvents: "none",
+            willChange: "opacity, transform",
           }}
         >
           <img
             src={logoUrl}
             alt=""
             draggable={false}
+            loading="eager"
             decoding="async"
             style={{
               display: "block",

@@ -34,9 +34,27 @@ function writeHomeCache(data) {
       HOME_CACHE_KEY,
       JSON.stringify({ savedAt: Date.now(), data })
     );
-  } catch {
-    // localStorage is an optimization only.
-  }
+  } catch {}
+}
+
+function warmImage(url: any, priority: "high" | "auto" = "auto") {
+  const src = String(url || "").trim();
+  if (!src || typeof Image === "undefined") return;
+  const image = new Image();
+  image.decoding = "async";
+  image.fetchPriority = priority;
+  image.src = src;
+}
+
+function warmCriticalHero(hero: any) {
+  if (!hero) return;
+  warmImage(hero?.assets?.logo_path || hero?.assets?.fallback_logo_path, "high");
+  warmImage(
+    hero?.customBackdrop ||
+      hero?.assets?.hero_backdrop_path ||
+      hero?.assets?.backdrop_path,
+    "high"
+  );
 }
 
 function itemKey(item) {
@@ -76,6 +94,49 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
     })
     .filter((row) => row.items.length > 0);
 }
+
+let sharedHomeBootstrapPromise: Promise<any> | null = null;
+function fetchHomeBootstrap(_signal?: AbortSignal) {
+  if (sharedHomeBootstrapPromise) return sharedHomeBootstrapPromise;
+
+  const request = fetch(HOME_BOOTSTRAP_URL, {
+    headers: { Accept: "application/json" },
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
+    const data = await response.json();
+    if (!Array.isArray(data?.rows)) throw new Error("Home bootstrap non valido");
+    warmCriticalHero(data?.hero);
+    return data;
+  });
+
+  let shared: Promise<any>;
+  shared = request
+    .catch((error) => {
+      if (sharedHomeBootstrapPromise === shared) {
+        sharedHomeBootstrapPromise = null;
+      }
+      throw error;
+    })
+    .finally(() => {
+      window.setTimeout(() => {
+        if (sharedHomeBootstrapPromise === shared) {
+          sharedHomeBootstrapPromise = null;
+        }
+      }, 1500);
+    });
+
+  sharedHomeBootstrapPromise = shared;
+  return shared;
+}
+
+const MODULE_HOME_CACHE = typeof window !== "undefined" ? readHomeCache() : null;
+if (MODULE_HOME_CACHE?.data?.hero) warmCriticalHero(MODULE_HOME_CACHE.data.hero);
+
+const EARLY_HOME_BOOTSTRAP_PROMISE =
+  typeof window !== "undefined"
+    ? fetchHomeBootstrap().catch(() => null)
+    : null;
+let earlyHomeBootstrapConsumed = false;
 
 export async function loader() {
   return null;
@@ -131,18 +192,16 @@ export function Component() {
     [continueItems]
   );
 
-  const initialCache = useMemo(() => readHomeCache(), []);
+  const initialCache = useMemo(() => MODULE_HOME_CACHE || readHomeCache(), []);
   const { data: bootstrap } = useQuery({
     queryKey: ["home-bootstrap-v4-fuller"],
     queryFn: async ({ signal }: any) => {
-      const response = await fetch(HOME_BOOTSTRAP_URL, {
-        signal,
-        headers: { Accept: "application/json" },
-      });
-      if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
-      const data = await response.json();
-      if (!Array.isArray(data?.rows)) throw new Error("Home bootstrap non valido");
-      return data;
+      if (!earlyHomeBootstrapConsumed && EARLY_HOME_BOOTSTRAP_PROMISE) {
+        earlyHomeBootstrapConsumed = true;
+        const early = await EARLY_HOME_BOOTSTRAP_PROMISE;
+        if (early?.rows) return early;
+      }
+      return fetchHomeBootstrap(signal);
     },
     initialData: initialCache?.data,
     initialDataUpdatedAt: initialCache?.savedAt || 0,
@@ -157,6 +216,21 @@ export function Component() {
   useEffect(() => {
     if (bootstrap?.rows?.length) writeHomeCache(bootstrap);
   }, [bootstrap]);
+
+  const heroLogoUrl =
+    bootstrap?.hero?.assets?.logo_path ||
+    bootstrap?.hero?.assets?.fallback_logo_path ||
+    null;
+  const heroBackdropUrl =
+    bootstrap?.hero?.customBackdrop ||
+    bootstrap?.hero?.assets?.hero_backdrop_path ||
+    bootstrap?.hero?.assets?.backdrop_path ||
+    null;
+
+  useEffect(() => {
+    warmImage(heroLogoUrl, "high");
+    warmImage(heroBackdropUrl, "high");
+  }, [heroLogoUrl, heroBackdropUrl]);
 
   if (typeof window !== "undefined" && bootstrap?.hero?.contentId) {
     window.__flixitHomeHero = bootstrap.hero;

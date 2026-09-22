@@ -95,7 +95,7 @@ export default function NetflixRankedCardWithHover({
           observer.disconnect();
         }
       },
-      { rootMargin: "220px 360px" }
+      { rootMargin: "260px 420px" }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -171,6 +171,7 @@ export default function NetflixRankedCardWithHover({
     automaticBackdrop,
     mappedBackdrop
   );
+  const hoverCoverUrl = automaticBackdrop || mappedBackdrop || legacyBackdrop || hoverBackdrop;
   const scLogoUrl = firstNonTmdbArtwork(
     automaticAssets?.logo_path,
     item?.netflix_logo_url,
@@ -178,6 +179,14 @@ export default function NetflixRankedCardWithHover({
     item?.logo
   );
   const logoUrl = scLogoUrl || firstLogo(deferredAssets?.logo_path, deferredAssets?.fallback_logo_path);
+
+  useEffect(() => {
+    if (!nearViewport || !logoUrl || typeof Image === "undefined") return;
+    const image = new Image();
+    image.decoding = "async";
+    image.fetchPriority = "high";
+    image.src = logoUrl;
+  }, [nearViewport, logoUrl]);
 
   const posterCandidates = useMemo(
     () => unique([
@@ -344,7 +353,13 @@ export default function NetflixRankedCardWithHover({
             onDetail={goDetail}
             watch={watch}
           />
-          <HoverTrailerOverlay url={trailerUrl} logoUrl={logoUrl} delay={trailerDelay} onOpen={goDetail} />
+          <HoverTrailerOverlay
+            url={trailerUrl}
+            logoUrl={logoUrl}
+            coverUrl={hoverCoverUrl}
+            delay={trailerDelay}
+            onOpen={goDetail}
+          />
         </ExpandOverlay>
       ) : null}
     </>
