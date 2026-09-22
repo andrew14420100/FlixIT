@@ -12,7 +12,7 @@ import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_URL = "/api/public/home-bootstrap";
-const HOME_CACHE_KEY = "flix-home-bootstrap-v4-fuller";
+const HOME_CACHE_KEY = "flix-home-bootstrap-v5-sc-current";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
 
@@ -184,7 +184,7 @@ export function Component() {
 
   const initialCache = useMemo(() => MODULE_HOME_CACHE || readHomeCache(), []);
   const { data: bootstrap } = useQuery({
-    queryKey: ["home-bootstrap-v4-fuller"],
+    queryKey: ["home-bootstrap-v5-sc-current"],
     queryFn: async ({ signal }: any) => {
       if (!earlyHomeBootstrapConsumed && EARLY_HOME_BOOTSTRAP_PROMISE) {
         earlyHomeBootstrapConsumed = true;
@@ -224,7 +224,7 @@ export function Component() {
     [bootstrap?.rows, filterMediaType, continueKeys]
   );
   const hasReadyHome = rows.length > 0 || continueItems.length > 0;
-  const continueTitle = username ? `${username}, continua a guardare:` : "Continua a guardare:";
+  const continueTitle = username ? `${username}, continua a guardare` : "Continua a guardare";
 
   return (
     <Box
