@@ -15,19 +15,19 @@ from typing import Any
 from fastapi import APIRouter
 
 SNAPSHOT_KEY = "public-home-v1"
-SNAPSHOT_VERSION = "instant-home-v4-fuller"
+SNAPSHOT_VERSION = "instant-home-v5-sc-current"
 FRESH_FOR = timedelta(minutes=10)
 MAX_STALE_AGE = timedelta(days=3)
 MAX_ITEMS_PER_ROW = 50
-MAX_CANDIDATES_PER_ROW = 120
+MAX_CANDIDATES_PER_ROW = 160
 GENRE_PAGES = 5
 
-# Current SC Home core order, followed by the thematic rows historically used
-# by SC. Admin-created duplicate rows are intentionally not mixed into Home.
+# Current SC Home core order. Continue Watching is user-specific and is
+# inserted by HomePage immediately before these public rows.
 CANONICAL_SECTIONS = [
+    {"key": "trending", "name": "I titoli del momento", "section_type": "trending", "media_type": "mixed", "limit": 40, "min_items": 8},
     {"key": "recent", "name": "Aggiunti di recente", "section_type": "latest", "media_type": "mixed", "limit": 50, "min_items": 8},
-    {"key": "tv-updated", "name": "Serie TV Aggiornate", "section_type": "new_seasons", "media_type": "tv", "limit": 50, "min_items": 6},
-    {"key": "top10", "name": "Top 10 titoli di oggi", "section_type": "top10", "media_type": "mixed", "limit": 10, "min_items": 5},
+    {"key": "top10", "name": "Top 10 titoli oggi", "section_type": "top10", "media_type": "mixed", "limit": 10, "min_items": 5},
     {"key": "upcoming", "name": "In arrivo", "section_type": "upcoming", "media_type": "movie", "limit": 30, "min_items": 6},
     {"key": "comedy", "name": "Commedia", "section_type": "genre", "media_type": "mixed", "genre_id": 35, "limit": 50, "min_items": 8},
     {"key": "horror", "name": "Horror", "section_type": "genre", "media_type": "mixed", "genre_id": 27, "limit": 50, "min_items": 8},
@@ -159,20 +159,29 @@ async def _genre_payload(app, section: dict) -> dict:
     return {"items": [item for payload in pages for item in _payload_items(payload)]}
 
 
+async def _trending_payload(app) -> dict:
+    pages = await asyncio.gather(
+        *(
+            _call_public(app, "/api/public/homepage/trending", page=page)
+            for page in range(1, 3)
+        )
+    )
+    return {"items": [item for payload in pages for item in _payload_items(payload)]}
+
+
 async def _upcoming_payload(app) -> dict:
     pages = await asyncio.gather(
         *(_call_public(app, "/api/public/tmdb/upcoming", page=page) for page in range(1, 4))
     )
-    merged = [item for payload in pages for item in _payload_items(payload)]
-    return {"items": merged}
+    return {"items": [item for payload in pages for item in _payload_items(payload)]}
 
 
 async def _load_section(app, section: dict) -> dict:
     section_type = str(section.get("section_type") or "")
-    if section_type == "latest":
+    if section_type == "trending":
+        payload = await _trending_payload(app)
+    elif section_type == "latest":
         payload = await _call_public(app, "/api/public/homepage/latest")
-    elif section_type == "new_seasons":
-        payload = await _call_public(app, "/api/public/new-releases/{media}", media="tv")
     elif section_type == "top10":
         payload = await _call_public(app, "/api/public/flixit-top10", hours=48)
     elif section_type == "upcoming":
@@ -207,9 +216,13 @@ def _artwork_ready(item: dict, *, top10: bool = False) -> bool:
     artwork = item.get("__artwork") if isinstance(item.get("__artwork"), dict) else {}
     if not artwork.get("active"):
         return False
+    poster = artwork.get("poster_url")
     if top10:
-        return bool(artwork.get("top10_ready") and artwork.get("poster_url"))
-    return bool(artwork.get("card_ready") and artwork.get("backdrop_url"))
+        return bool(poster)
+    # Desktop SC rows use landscape/background artwork while mobile SC uses the
+    # portrait poster. Publish only titles that have both so neither breakpoint
+    # produces empty cards or switches to a different title list.
+    return bool(poster and artwork.get("backdrop_url"))
 
 
 def _select_row_items(row: dict, blocked: set[str], limit: int) -> list[dict]:
@@ -230,7 +243,6 @@ def _select_row_items(row: dict, blocked: set[str], limit: int) -> list[dict]:
 
 
 def _finalize_rows(rows: list[dict]) -> list[dict]:
-    """Reserve SC core rows first, then globally dedupe every visible card."""
     by_key = {str(row.get("key")): row for row in rows}
 
     reserved_rows: dict[str, list[dict]] = {}
@@ -258,15 +270,14 @@ def _finalize_rows(rows: list[dict]) -> list[dict]:
             continue
 
         claimed.update(_item_key(item) for item in selected)
-        clean = {
+        final.append({
             "key": key,
             "name": row.get("name"),
             "section_type": row.get("section_type"),
             "media_type": row.get("media_type", "mixed"),
             "genre_id": row.get("genre_id"),
             "items": selected,
-        }
-        final.append(clean)
+        })
     return final
 
 
@@ -379,7 +390,7 @@ async def _build_snapshot(app, core) -> dict:
         generated = _now()
         payload = {
             "version": SNAPSHOT_VERSION,
-            "structure": "sc-canonical",
+            "structure": "sc-current",
             "generated_at": generated.isoformat(),
             "hero": hero or None,
             "rows": rows,
@@ -462,7 +473,7 @@ def install_home_bootstrap(app) -> bool:
                 return payload
             return {
                 "version": SNAPSHOT_VERSION,
-                "structure": "sc-canonical",
+                "structure": "sc-current",
                 "generated_at": now.isoformat(),
                 "hero": None,
                 "rows": [],
