@@ -362,3 +362,75 @@
     width: 45% !important;
   }
 }
+
+/* ---------------------------------------------------------------------
+   Netflix billboard replacement compatibility
+   The previous SC Hero rules above were written for the old full-bleed Hero.
+   Once HeroSection renders the measured Netflix billboard, neutralize those
+   legacy overrides so the real 1505.14 x 690.43 geometry is allowed to win.
+   --------------------------------------------------------------------- */
+@media (min-width: 900px) {
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard {
+    position: relative !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    aspect-ratio: 1505.14 / 690.43 !important;
+    margin: 8px 60px 32px !important;
+    overflow: hidden !important;
+    background: #111 !important;
+    border-radius: 24px !important;
+    box-shadow: rgba(0,0,0,.45) 10px 20px 32px 0 !important;
+    font-size: 16px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard::after {
+    content: none !important;
+    display: none !important;
+    background: none !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-backdrop"],
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-trailer"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: none !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-backdrop"] {
+    object-fit: cover !important;
+    object-position: 50% 0% !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-logo"] {
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: 33vw !important;
+    max-height: 22vh !important;
+    margin: 0 !important;
+    object-fit: contain !important;
+    object-position: left bottom !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-overview"] {
+    width: 36vw !important;
+    max-width: 590.4px !important;
+    max-height: 84px !important;
+    margin: 12px 0 0 !important;
+    font-size: 20px !important;
+    line-height: 28px !important;
+    font-weight: 400 !important;
+  }
+
+  /* Netflix's new billboard is a closed card. Home rows begin after it instead
+     of being pulled upward over an extended full-bleed background. */
+  [data-testid="home-page"] [data-testid="home-rows"] {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+    background: transparent !important;
+  }
+}
