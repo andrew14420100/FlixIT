@@ -262,7 +262,10 @@ export function Component() {
   }, [bootstrap]);
 
   useEffect(() => {
-    if (!bootstrap?.rows?.length || bootstrap?.compact === false) return;
+    // A brand-new backend can deliberately return a Hero-only compact payload
+    // while it builds the catalogue in the background. Hydrate even when that
+    // first compact response has zero rows; never force the first paint to wait.
+    if (!bootstrap || bootstrap?.compact === false) return;
     let cancelled = false;
     let timer = 0;
     let idleId: any = null;
