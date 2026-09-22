@@ -7,6 +7,7 @@ import { useQueryClient } from "@tanstack/react-query";
 const MOBILE_QUERY = "(max-width:899px)";
 const FEED_QUERY_PREFIX = "home-feed-v11";
 const FEED_CACHE_PREFIX = "flix-home-v11:feed:";
+const RECOVERY_MEMORY_TTL = 5 * 60 * 1000;
 
 const FALLBACK_SECTIONS = [
   { name: "Top 10 titoli oggi", section_type: "top10", media_type: "mixed" },
@@ -17,6 +18,8 @@ const FALLBACK_SECTIONS = [
   { name: "Serie TV popolari", section_type: "popular", media_type: "tv" },
   { name: "I più votati", section_type: "top_rated", media_type: "movie" },
 ];
+
+let recoveredMemo: { at: number; feed: any[] } | null = null;
 
 function signature(section: any) {
   return [
@@ -54,16 +57,15 @@ function normalizeSections(adminPayload: any, templatePayload: any) {
   return [...top10, ...rest];
 }
 
-async function fetchJson(url: string) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}_mobile_recover=${Date.now()}`, {
-        cache: "no-store",
-        headers: { Accept: "application/json", "Cache-Control": "no-cache" },
-      });
-      if (response.ok) return await response.json();
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 220 * (attempt + 1)));
+async function fetchJson(url: string, signal: AbortSignal) {
+  try {
+    const response = await fetch(url, {
+      signal,
+      headers: { Accept: "application/json" },
+    });
+    if (response.ok) return await response.json();
+  } catch (error: any) {
+    if (error?.name === "AbortError") throw error;
   }
   return { sections: [] };
 }
@@ -77,6 +79,20 @@ function persistRecoveredFeed(feed: any[]) {
   } catch {}
 }
 
+function hasUsableFeed(queryClient: any) {
+  const matching = queryClient.getQueryCache().findAll({ queryKey: [FEED_QUERY_PREFIX] });
+  return matching.some((query: any) => Array.isArray(query.state.data) && query.state.data.length > 0);
+}
+
+function injectFeed(queryClient: any, feed: any[]) {
+  if (!feed.length || hasUsableFeed(queryClient)) return false;
+  const matching = queryClient.getQueryCache().findAll({ queryKey: [FEED_QUERY_PREFIX] });
+  if (!matching.length) return false;
+  queryClient.setQueriesData({ queryKey: [FEED_QUERY_PREFIX] }, feed);
+  persistRecoveredFeed(feed);
+  return true;
+}
+
 export default function MobileHomeSectionRecovery() {
   const isMobile = useMediaQuery(MOBILE_QUERY);
   const location = useLocation();
@@ -85,38 +101,56 @@ export default function MobileHomeSectionRecovery() {
 
   useEffect(() => {
     if (!isMobile || !isHome) return;
+
     let cancelled = false;
-    let feed: any[] = [];
-    let interval = 0;
+    const controller = new AbortController();
+    const timers: number[] = [];
 
-    const apply = () => {
-      if (cancelled || !feed.length) return;
-      const matching = queryClient.getQueryCache().findAll({ queryKey: [FEED_QUERY_PREFIX] });
-      const empty = matching.length === 0 || matching.every((query: any) => !Array.isArray(query.state.data) || query.state.data.length === 0);
-      if (!empty) return;
-      queryClient.setQueriesData({ queryKey: [FEED_QUERY_PREFIX] }, feed);
-      persistRecoveredFeed(feed);
+    const applyWithShortRetry = (feed: any[]) => {
+      if (cancelled || !feed.length || injectFeed(queryClient, feed)) return;
+      // The Home query may be created a few frames after this runtime mounts.
+      // Retry only the cache injection; never repeat the network request.
+      timers.push(window.setTimeout(() => injectFeed(queryClient, feed), 350));
+      timers.push(window.setTimeout(() => injectFeed(queryClient, feed), 1100));
     };
 
-    const run = async () => {
-      const [admin, templates] = await Promise.all([
-        fetchJson("/api/public/sections"),
-        fetchJson("/api/public/available-sections"),
-      ]);
-      if (cancelled) return;
-      feed = normalizeSections(admin, templates);
-      apply();
-      interval = window.setInterval(apply, 1200);
-      window.setTimeout(() => window.clearInterval(interval), 12000);
+    const recoverOnlyIfNeeded = async () => {
+      if (cancelled || hasUsableFeed(queryClient)) return;
+
+      const now = Date.now();
+      if (recoveredMemo && now - recoveredMemo.at < RECOVERY_MEMORY_TTL) {
+        applyWithShortRetry(recoveredMemo.feed);
+        return;
+      }
+
+      try {
+        const [admin, templates] = await Promise.all([
+          fetchJson("/api/public/sections", controller.signal),
+          fetchJson("/api/public/available-sections", controller.signal),
+        ]);
+        if (cancelled) return;
+        const feed = normalizeSections(admin, templates);
+        recoveredMemo = { at: Date.now(), feed };
+        applyWithShortRetry(feed);
+      } catch (error: any) {
+        if (error?.name === "AbortError" || cancelled) return;
+        const feed = normalizeSections(null, null);
+        recoveredMemo = { at: Date.now(), feed };
+        applyWithShortRetry(feed);
+      }
     };
 
-    const timer = window.setTimeout(run, 350);
+    // Recovery is not part of the normal Home load. Give the real feed enough
+    // time to arrive first; this removes two duplicate no-store requests and the
+    // old 12-second polling loop from every successful mobile Home visit.
+    timers.push(window.setTimeout(recoverOnlyIfNeeded, 1400));
+
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
-      if (interval) window.clearInterval(interval);
+      controller.abort();
+      timers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [isMobile, isHome, location.pathname, queryClient]);
+  }, [isMobile, isHome, queryClient]);
 
   return null;
 }
