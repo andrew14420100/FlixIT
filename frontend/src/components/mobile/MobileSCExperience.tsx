@@ -22,10 +22,18 @@ function isActivePath(pathname: string, path: string) {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
+function shouldMarkCards(pathname: string) {
+  if (pathname.startsWith("/watch")) return false;
+  if (/^\/(?:detail|browse)\/(?:movie|tv)\/\d+(?:\/|$)/i.test(pathname)) return false;
+  if (pathname.startsWith("/account")) return false;
+  if (pathname.startsWith("/premium")) return false;
+  return true;
+}
+
 /**
- * Poster URLs are now resolved by useArtworkBatch through the lightweight
- * backend batch API.  This runtime only adds the presentation classes that the
- * mobile CSS needs; it deliberately never downloads/parses the 6+ MB catalogue.
+ * Poster URLs are resolved by useArtworkBatch through the lightweight backend
+ * batch API. This runtime only adds presentation classes; it never downloads
+ * or parses the multi-megabyte artwork catalogue in the browser.
  */
 function markMobileCards(scope: ParentNode = document) {
   const visit = (selector: string, callback: (node: HTMLElement) => void) => {
@@ -35,6 +43,7 @@ function markMobileCards(scope: ParentNode = document) {
   };
 
   visit(".netflix-standard-card-root", (node) => {
+    if (node.classList.contains("flixit-mobile-poster")) return;
     node.classList.add("flixit-mobile-poster");
     const img = node.querySelector<HTMLImageElement>("img");
     if (img) {
@@ -44,6 +53,7 @@ function markMobileCards(scope: ParentNode = document) {
   });
 
   visit('[data-testid^="horizontal-card-"]', (node) => {
+    if (node.classList.contains("flixit-mobile-list-poster")) return;
     node.classList.add("flixit-mobile-list-poster");
     const img = node.querySelector<HTMLImageElement>("img");
     if (img) {
@@ -59,6 +69,7 @@ export default function MobileSCExperience() {
   const navigate = useNavigate();
   const isWatch = location.pathname.startsWith("/watch");
   const isHome = location.pathname === "/" || location.pathname === "/browse";
+  const cardMarkingEnabled = shouldMarkCards(location.pathname);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
@@ -86,7 +97,7 @@ export default function MobileSCExperience() {
   }, [isMobile]);
 
   useEffect(() => {
-    if (!isMobile) return;
+    if (!isMobile || !cardMarkingEnabled) return;
     let raf = 0;
     const pending = new Set<ParentNode>();
     const flush = () => {
@@ -108,13 +119,14 @@ export default function MobileSCExperience() {
         });
       });
     });
-    observer.observe(document.body, { subtree: true, childList: true });
+    const appRoot = document.getElementById("root") || document.body;
+    observer.observe(appRoot, { subtree: true, childList: true });
     return () => {
       if (raf) cancelAnimationFrame(raf);
       observer.disconnect();
       pending.clear();
     };
-  }, [isMobile, location.pathname]);
+  }, [isMobile, cardMarkingEnabled, location.pathname]);
 
   useEffect(() => setDrawerOpen(false), [location.pathname]);
 
