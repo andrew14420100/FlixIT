@@ -4,6 +4,7 @@ ResolverRegistry: central registry that owns provider ordering and stream cache.
 AdminSource remains first. Omni uses the stable `stremio_addon` resolver id and
 is promoted by its resolver to the first network source.
 """
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -31,6 +32,10 @@ class ResolverRegistry:
         self._db = None
         self._get_setting = None
         self._set_setting = None
+        # Same movie/episode can be requested almost simultaneously by Hero
+        # prefetch, Detail warmup and Watch (or by several clients). Only one
+        # provider chain should run for a cache miss; everyone else awaits it.
+        self._inflight: dict[str, asyncio.Task] = {}
 
     # ------------------------------------------------------------------ setup
     def bind(self, db, get_setting=None, set_setting=None) -> None:
@@ -160,18 +165,49 @@ class ResolverRegistry:
         except Exception:
             return False
 
+    async def _resolve_uncached(self, ctx: ResolveContext, key: str) -> dict:
+        not_found = {"success": False, "reason": "not_found", "message": "Stream non disponibile"}
+        had_transient_error = False
+
+        for provider in self._active_ordered():
+            try:
+                result = await provider.resolve(
+                    ctx.tmdb_id, ctx.season, ctx.episode, media_type=ctx.media_type
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("resolver '%s' raised: %s", provider.id, e)
+                had_transient_error = True
+                continue
+            if result and result.get("success") and result.get("stream"):
+                result.setdefault("source", provider.id)
+                self._cache_set(key, result)
+                return self._route(result)
+
+        if had_transient_error:
+            # Do not negative-cache transient provider outages. A later request
+            # can retry immediately instead of being stuck behind a false miss.
+            return {
+                **not_found,
+                "reason": "temporary",
+                "message": "Sorgente momentaneamente non raggiungibile, riprova",
+            }
+
+        self._cache_set(key, not_found)
+        return not_found
+
     # ------------------------------------------------------------------ resolution
     async def resolve(self, ctx: ResolveContext) -> dict:
-        not_found = {"success": False, "reason": "not_found", "message": "Stream non disponibile"}
-        key = self.cache_key(ctx.media_type, ctx.tmdb_id, ctx.season, ctx.episode)
+        if self._db is None:
+            return {"success": False, "reason": "temporary", "message": "Player non inizializzato"}
 
+        key = self.cache_key(ctx.media_type, ctx.tmdb_id, ctx.season, ctx.episode)
         cached = self._cache_get(key)
         if cached is not None:
             cached_stream = str(cached.get("stream") or "").lower()
             cached_source = str(cached.get("source") or "")
 
-            # Once Omni is configured, do not let old network-provider hits or
-            # cached misses bypass it. Admin-managed streams remain authoritative.
             if self._omni_active() and cached_source not in ("admin_source", "stremio_addon"):
                 logger.info("Invalidating pre-Omni cached result for %s (source=%s)", key, cached_source or "miss")
                 self.clear_cache(key)
@@ -181,25 +217,28 @@ class ResolverRegistry:
             else:
                 return self._route(cached)
 
-        had_transient_error = False
-        for provider in self._active_ordered():
-            try:
-                result = await provider.resolve(
-                    ctx.tmdb_id, ctx.season, ctx.episode, media_type=ctx.media_type
-                )
-            except Exception as e:
-                logger.warning(f"resolver '{provider.id}' raised: {e}")
-                had_transient_error = True
-                continue
-            if result and result.get("success") and result.get("stream"):
-                result.setdefault("source", provider.id)
-                self._cache_set(key, result)
-                return self._route(result)
+        pending = self._inflight.get(key)
+        if pending is not None and not pending.done():
+            # Shield the shared resolver from a browser disconnect/navigation.
+            # The provider chain can finish and populate cache for the next page.
+            return await asyncio.shield(pending)
 
-        if had_transient_error:
-            return {**not_found, "reason": "temporary", "message": "Sorgente momentaneamente non raggiungibile, riprova"}
-        self._cache_set(key, not_found)
-        return not_found
+        task = asyncio.create_task(self._resolve_uncached(ctx, key))
+        self._inflight[key] = task
+
+        def forget(done: asyncio.Task) -> None:
+            if self._inflight.get(key) is done:
+                self._inflight.pop(key, None)
+            # Consume an exception if every original HTTP waiter disconnected.
+            try:
+                done.exception()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+
+        task.add_done_callback(forget)
+        return await asyncio.shield(task)
 
     def _route(self, result: dict) -> dict:
         """Route resolved streams exactly once."""
