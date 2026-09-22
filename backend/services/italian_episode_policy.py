@@ -1,11 +1,10 @@
-"""Annotate TV episodes with strict Italian-audio availability from the active source.
+"""Annotate TV episodes with Italian-audio availability without blocking Detail.
 
-The detail page keeps the full TMDB episode list, but an episode is playable only
-when the source explicitly advertises Italian audio. Episodes that are missing,
-not aired yet, original-language-only, or whose source payload has no explicit
-Italian-language evidence are marked as "Disponibile prossimamente in italiano".
-Pending entries are rechecked frequently, so they become playable automatically
-as soon as the source starts publishing the Italian version.
+The season list is returned immediately. Cached language checks are applied at
+once; uncached episodes are marked as pending and verified in the background.
+The frontend performs one short follow-up when checks are still running, then
+uses the normal low-frequency refresh. This avoids waiting for one upstream
+request per episode before the page can render.
 """
 from __future__ import annotations
 
@@ -29,11 +28,12 @@ USER_AGENT = (
     "Chrome/122.0.0.0 Safari/537.36"
 )
 ROUTE_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
-POLICY_VERSION = "strict-explicit-it-v2"
+POLICY_VERSION = "strict-explicit-it-v3-nonblocking"
 
 _client: Optional[httpx.AsyncClient] = None
 _cache: dict[tuple[int, int, int], tuple[float, dict]] = {}
 _locks: dict[tuple[int, int, int], asyncio.Lock] = {}
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _http() -> httpx.AsyncClient:
@@ -122,13 +122,7 @@ def _language_hints(payload: dict) -> list[str]:
                     except Exception:
                         query = {}
                     for query_key in (
-                        "lang",
-                        "language",
-                        "locale",
-                        "audio",
-                        "audio_language",
-                        "audio-lang",
-                        "dub",
+                        "lang", "language", "locale", "audio", "audio_language", "audio-lang", "dub"
                     ):
                         for query_value in query.get(query_key, []):
                             add(query_value)
@@ -174,27 +168,31 @@ def _future_episode(episode: dict) -> bool:
         return False
 
 
+def _cache_hit(key: tuple[int, int, int]) -> Optional[dict]:
+    cached = _cache.get(key)
+    if cached and cached[0] > time.monotonic():
+        return dict(cached[1])
+    return None
+
+
 async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
     key = (int(tmdb_id), int(season), int(episode))
-    cached = _cache.get(key)
-    now = time.monotonic()
-    if cached and cached[0] > now:
-        return dict(cached[1])
+    hit = _cache_hit(key)
+    if hit:
+        return hit
 
     lock = _locks.setdefault(key, asyncio.Lock())
     async with lock:
-        cached = _cache.get(key)
+        hit = _cache_hit(key)
+        if hit:
+            return hit
         now = time.monotonic()
-        if cached and cached[0] > now:
-            return dict(cached[1])
 
         try:
             response = await _http().get(f"{VIXSRC_BASE}/api/tv/{tmdb_id}/{season}/{episode}")
         except Exception:
-            # Transport failures are temporary. Do not mass-hide an entire season
-            # because the source is momentarily unreachable; retry very soon.
-            result = _result(True, "verification_error", source_available=True)
-            _cache[key] = (now + 45.0, result)
+            result = _result(False, "checking", source_available=False)
+            _cache[key] = (now + 20.0, result)
             return dict(result)
 
         if response.status_code in {404, 410, 422}:
@@ -202,15 +200,15 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
             _cache[key] = (now + 90.0, result)
             return dict(result)
         if response.status_code != 200:
-            result = _result(True, "verification_error", source_available=True)
-            _cache[key] = (now + 45.0, result)
+            result = _result(False, "checking", source_available=False)
+            _cache[key] = (now + 20.0, result)
             return dict(result)
 
         try:
             payload = response.json()
         except Exception:
-            result = _result(True, "verification_error", source_available=True)
-            _cache[key] = (now + 45.0, result)
+            result = _result(False, "checking", source_available=False)
+            _cache[key] = (now + 20.0, result)
             return dict(result)
 
         if not isinstance(payload, dict) or not _source_url(payload):
@@ -220,17 +218,12 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
 
         hints = _language_hints(payload)
         if any(_is_italian(value) for value in hints):
-            # Positive Italian evidence is the only state that enables playback.
             result = _result(True, "italian", source_available=True, hints=hints)
             ttl = 30 * 60.0
         elif any(_is_original_only(value) for value in hints):
             result = _result(False, "original_only", source_available=True, hints=hints)
             ttl = 90.0
         else:
-            # VixSrc's player defaults to the original/English language when no
-            # language is explicitly supplied. Therefore an untagged source is
-            # not considered Italian. This fail-closed rule prevents freshly
-            # published original-language episodes from appearing as dubbed IT.
             result = _result(False, "italian_not_confirmed", source_available=True, hints=hints)
             ttl = 90.0
 
@@ -238,28 +231,50 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
         return dict(result)
 
 
-async def _annotate_episode(
-    tmdb_id: int,
-    season_number: int,
-    episode: dict,
-    index: int,
-    semaphore: asyncio.Semaphore,
-) -> dict:
+async def _refresh_uncached(tmdb_id: int, season_number: int, episodes: list[dict]) -> None:
+    semaphore = asyncio.Semaphore(6)
+
+    async def one(episode: dict, index: int):
+        if _future_episode(episode):
+            return
+        number = int(episode.get("episode_number") or index + 1)
+        key = (int(tmdb_id), int(season_number), number)
+        if _cache_hit(key):
+            return
+        async with semaphore:
+            await _inspect_source(tmdb_id, season_number, number)
+
+    await asyncio.gather(*(one(episode, index) for index, episode in enumerate(episodes)), return_exceptions=True)
+
+
+def _spawn_refresh(tmdb_id: int, season_number: int, episodes: list[dict]) -> None:
+    task = asyncio.create_task(_refresh_uncached(tmdb_id, season_number, episodes))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+def _annotate_cached(tmdb_id: int, season_number: int, episode: dict, index: int) -> tuple[dict, bool]:
     row = dict(episode or {})
     number = int(row.get("episode_number") or index + 1)
     if _future_episode(row):
-        return {
-            **row,
-            **_result(False, "not_aired", source_available=False),
-        }
-    async with semaphore:
-        status = await _inspect_source(tmdb_id, season_number, number)
-    return {**row, **status}
+        return {**row, **_result(False, "not_aired", source_available=False)}, False
+    hit = _cache_hit((int(tmdb_id), int(season_number), number))
+    if hit:
+        return {**row, **hit}, False
+    return {**row, **_result(False, "checking", source_available=False)}, True
 
 
 def install_italian_episode_policy(app) -> bool:
     if getattr(app.state, "flixit_italian_episode_policy_registered", False):
         return True
+
+    # Register the lightweight artwork endpoint at the same point in startup;
+    # this keeps all performance APIs independent from the large server_core file.
+    try:
+        from services.performance_api import install_performance_api
+        install_performance_api(app)
+    except Exception:
+        pass
 
     legacy_endpoint = None
     kept_routes = []
@@ -287,20 +302,22 @@ def install_italian_episode_policy(app) -> bool:
         if not isinstance(episodes, list) or not episodes:
             return value
 
-        semaphore = asyncio.Semaphore(6)
-        annotated = await asyncio.gather(
-            *(
-                _annotate_episode(int(tmdb_id), int(season_number), episode, index, semaphore)
-                for index, episode in enumerate(episodes)
-            ),
-            return_exceptions=False,
-        )
+        annotated = []
+        needs_refresh = False
+        for index, episode in enumerate(episodes):
+            row, missing = _annotate_cached(int(tmdb_id), int(season_number), episode, index)
+            annotated.append(row)
+            needs_refresh = needs_refresh or missing
+
+        if needs_refresh:
+            _spawn_refresh(int(tmdb_id), int(season_number), episodes)
+
         return {
             **value,
             "episodes": annotated,
-            "italian_audio_policy": "explicit_italian_required",
+            "italian_audio_policy": "explicit_italian_required_nonblocking",
             "italian_audio_policy_version": POLICY_VERSION,
-            "pending_recheck_seconds": 90,
+            "pending_recheck_seconds": 4 if needs_refresh else 90,
         }
 
     app.include_router(router)
