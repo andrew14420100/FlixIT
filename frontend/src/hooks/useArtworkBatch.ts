@@ -9,7 +9,7 @@ import {
 } from "./useAutomaticMediaAssets";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
-const BATCH_VERSION = "sc-artwork-server-batch-v1";
+const BATCH_VERSION = "sc-artwork-server-batch-v2-embedded";
 const MAX_VISIBLE_CANDIDATES = 90;
 const ARTWORK_STALE_MS = 24 * 60 * 60 * 1000;
 
@@ -70,15 +70,40 @@ async function fetchBatch(entries: NormalizedEntry[], signal?: AbortSignal) {
   return response.json();
 }
 
+function embeddedArtwork(entry: NormalizedEntry) {
+  const raw = entry?.item?.__artwork;
+  if (!raw || typeof raw !== "object") return null;
+  const id = Number(raw?.tmdbId || raw?.tmdb_id || entry.id || 0);
+  if (!id) return null;
+  return {
+    ...raw,
+    tmdbId: id,
+    type: raw?.type === "tv" ? "tv" : entry.type,
+  };
+}
+
 export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const queryClient = useQueryClient();
   const normalized = useMemo(() => uniqueItems(items), [items]);
-  const signature = useMemo(() => normalized.map((entry) => entry.key).join("|"), [normalized]);
+
+  const embedded = useMemo(
+    () => normalized.map(embeddedArtwork).filter(Boolean),
+    [normalized]
+  );
+  const embeddedKeys = useMemo(
+    () => new Set(embedded.map((raw: any) => `${raw.type === "tv" ? "tv" : "movie"}:${Number(raw.tmdbId || raw.tmdb_id || 0)}`)),
+    [embedded]
+  );
+  const missing = useMemo(
+    () => normalized.filter((entry) => !embeddedKeys.has(entry.key)),
+    [normalized, embeddedKeys]
+  );
+  const signature = useMemo(() => missing.map((entry) => entry.key).join("|"), [missing]);
 
   const batchQuery = useQuery({
     queryKey: [BATCH_VERSION, signature],
-    queryFn: ({ signal }: any) => fetchBatch(normalized, signal),
-    enabled: !!enabled && normalized.length > 0,
+    queryFn: ({ signal }: any) => fetchBatch(missing, signal),
+    enabled: !!enabled && missing.length > 0,
     staleTime: ARTWORK_STALE_MS,
     gcTime: ARTWORK_STALE_MS * 7,
     refetchOnMount: false,
@@ -87,10 +112,16 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     retry: 1,
   });
 
-  const data = useMemo(
-    () => (Array.isArray(batchQuery.data?.items) ? batchQuery.data.items : []),
-    [batchQuery.data]
-  );
+  const data = useMemo(() => {
+    const remote = Array.isArray(batchQuery.data?.items) ? batchQuery.data.items : [];
+    const map = new Map<string, any>();
+    [...embedded, ...remote].forEach((raw: any) => {
+      const id = Number(raw?.tmdbId || raw?.tmdb_id || 0);
+      const type = raw?.type === "tv" ? "tv" : "movie";
+      if (id) map.set(`${type}:${id}`, raw);
+    });
+    return [...map.values()];
+  }, [embedded, batchQuery.data]);
 
   const byKey = useMemo(() => {
     const map = new Map<string, any>();
@@ -102,9 +133,6 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     return map;
   }, [data]);
 
-  // Seed every title resolved by the batch, including explicit misses. Without
-  // the miss seed, each visible card that had no SC match immediately repeated
-  // the same work through /official-artwork, creating dozens of redundant GETs.
   useEffect(() => {
     if (!data.length) return;
     normalized.forEach((entry) => {
@@ -139,9 +167,9 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     isReady,
     count: normalized.length,
     catalogCount: Number(batchQuery.data?.catalog_count || 0),
-    isPending: batchQuery.isPending && !data.length,
-    isFetching: batchQuery.isFetching,
-    primaryPending: batchQuery.isPending,
+    isPending: missing.length > 0 && batchQuery.isPending && !data.length,
+    isFetching: missing.length > 0 && batchQuery.isFetching,
+    primaryPending: missing.length > 0 && batchQuery.isPending,
     backgroundPending: false,
     error: batchQuery.error,
   };
