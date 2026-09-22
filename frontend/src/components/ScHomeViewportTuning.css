@@ -7,7 +7,8 @@
 @media (min-width: 900px) {
   [data-testid="home-page"] {
     --sc-home-gutter: 4%;
-    --sc-row-title: clamp(18px, 1.22vw, 22px);
+    --sc-row-title: clamp(18px, 1.2vw, 21px);
+    --sc-card-gap-half: 3.82px;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"] {
@@ -114,32 +115,178 @@
 
   /* Keep the existing buttons exactly as implemented by HeroSection. */
 
-  /* The first existing section enters only the lower part of the Hero fade. */
+  /* First existing section enters only the lower part of the Hero fade. */
   [data-testid="home-page"] [data-testid="home-rows"] {
     margin-top: -4.2vw !important;
     padding-top: 0 !important;
     position: relative !important;
     z-index: 20 !important;
     background: transparent !important;
+    overflow: visible !important;
   }
 
+  /* ALL HOME ROWS -------------------------------------------------------- */
+  [data-testid="home-page"] .slider-row,
+  [data-testid="home-page"] #continua.slider-row,
+  [data-testid="home-page"] .slider-row.compact-row,
+  [data-testid="home-page"] .top10-row {
+    position: relative !important;
+    width: 100% !important;
+    height: auto !important;
+    margin-top: 0 !important;
+    margin-bottom: clamp(30px, 2.15vw, 40px) !important;
+    overflow: visible !important;
+    contain: none !important;
+  }
+
+  /* Same left axis as the first real card, exactly as in the SC screenshot. */
   [data-testid="home-page"] .slider-row .row-header,
   [data-testid="home-page"] .top10-row .row-header {
     min-height: 24px !important;
-    margin-bottom: 8px !important;
+    height: auto !important;
+    margin: 0 0 8px !important;
+    padding-left: var(--flix-row-axis, var(--sc-home-gutter)) !important;
+    padding-right: var(--sc-home-gutter) !important;
+    box-sizing: border-box !important;
+    align-items: center !important;
   }
 
   [data-testid="home-page"] .slider-row .row-header .label,
   [data-testid="home-page"] .top10-row .row-header .label {
+    margin: 0 !important;
+    color: #e8e8e8 !important;
+    font-family: "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
     font-size: var(--sc-row-title) !important;
+    font-weight: 700 !important;
     line-height: 1.08 !important;
+    letter-spacing: -.012em !important;
   }
 
-  [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) {
+  /* Standard rows use the same 4% start and the same narrow card gutter. */
+  [data-testid="home-page"] .slider-row:not(.top10-row) .slider,
+  [data-testid="home-page"] .slider-row:not(.top10-row) .show-peek {
+    width: 100% !important;
+    padding-left: var(--sc-home-gutter) !important;
+    padding-right: 0 !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+
+  [data-testid="home-page"] .slider-row:not(.top10-row) .slider-item {
+    padding-left: var(--sc-card-gap-half) !important;
+    padding-right: var(--sc-card-gap-half) !important;
+    box-sizing: border-box !important;
+  }
+
+  [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait),
+  [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) .netflix-standard-card-link,
+  [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) .netflix-standard-card-frame,
+  [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) .netflix-standard-card-image-wrap {
+    width: 100% !important;
+    aspect-ratio: 342 / 192 !important;
     border-radius: 4px !important;
     overflow: hidden !important;
   }
 
+  [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) .netflix-standard-card-image {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+  }
+
+  /* Continue Watching uses exactly the same card footprint as the other rows. */
+  [data-testid="home-page"] #continua .netflix-standard-card-root,
+  [data-testid="home-page"] #continua .netflix-standard-card-frame,
+  [data-testid="home-page"] #continua .netflix-standard-card-image-wrap {
+    aspect-ratio: 342 / 192 !important;
+  }
+
+  [data-testid="home-page"] #continua .netflix-standard-card-progress-track {
+    left: 8% !important;
+    right: 8% !important;
+    bottom: 5px !important;
+    height: 3px !important;
+  }
+
+  /* TOP 10 -------------------------------------------------------------- */
+  [data-testid="home-page"] .top10-row .slider {
+    width: 100% !important;
+    padding-left: var(--sc-home-gutter) !important;
+    padding-right: var(--sc-home-gutter) !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+  }
+
+  [data-testid="home-page"] .top10-row .slick-list,
+  [data-testid="home-page"] .top10-row .slick-track,
+  [data-testid="home-page"] .top10-row .slick-slide,
+  [data-testid="home-page"] .top10-row .slick-slide > div {
+    overflow: visible !important;
+  }
+
+  /* Number lane + real 2:3 poster lane. */
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-root {
+    position: relative !important;
+    width: 100% !important;
+    height: 0 !important;
+    padding: 37.5% 0 !important;
+    overflow: visible !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-link {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-rank {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 50% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    overflow: visible !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-rank-svg {
+    width: 100% !important;
+    height: 100% !important;
+    opacity: .72 !important;
+    overflow: visible !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-poster-wrap {
+    position: absolute !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: auto !important;
+    width: 50% !important;
+    height: 100% !important;
+    border-radius: 4px !important;
+    overflow: hidden !important;
+    background: #222 !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-poster {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+  }
+
+  /* Source cards never shift when the pointer moves between rows. */
+  [data-testid="home-page"] .slick-slide,
+  [data-testid="home-page"] .slider-item,
   [data-testid="home-page"] .netflix-standard-card-root,
   [data-testid="home-page"] .netflix-ranked-card-root,
   [data-testid="home-page"] .netflix-standard-card-root:hover,
