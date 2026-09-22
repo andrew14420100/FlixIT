@@ -12,11 +12,20 @@ const FINAL_STYLE_ID = 'flixit-home-hero-runtime-final';
 
 const FINAL_HERO_CSS = String.raw`
 @media (min-width: 900px) {
-  /* Restore the Home header geometry used before the 80px experiment. Keep the
-     route stage in lockstep so nothing is clipped underneath the fixed AppBar. */
+  /* Restore the complete pre-Hero-tuning header. The ambient backdrop must not
+     bleed upward into the fixed AppBar and visually cut its lower part. */
   body:has([data-testid="home-page"] .netflix-home-billboard) [data-testid="main-header"] {
     height: 78px !important;
     min-height: 78px !important;
+    background: #141414 !important;
+    background-image: none !important;
+    overflow: visible !important;
+  }
+
+  body:has([data-testid="home-page"] .netflix-home-billboard) [data-testid="main-header"] .MuiToolbar-root {
+    height: 78px !important;
+    min-height: 78px !important;
+    overflow: visible !important;
   }
 
   body:has([data-testid="home-page"] .netflix-home-billboard) .flixit-route-stage {
@@ -29,11 +38,11 @@ const FINAL_HERO_CSS = String.raw`
     overflow-x: clip !important;
   }
 
-  /* Ambient colour follows the artwork published from Admin. */
+  /* Ambient colour starts below the header instead of washing through it. */
   [data-testid="home-page"]::before {
     content: "" !important;
     position: absolute !important;
-    top: -28px !important;
+    top: 0 !important;
     left: -8vw !important;
     right: -8vw !important;
     height: min(980px, 68vw) !important;
@@ -61,10 +70,16 @@ const FINAL_HERO_CSS = String.raw`
     z-index: 2 !important;
   }
 
-  /* Keep the trailer full-bleed like Netflix. The forced contain experiment
-     produced a narrow panel with visible side bars. */
+  /* Make the trailer truly fill the complete billboard. Some direct trailers
+     include thin cinematic bars inside the source itself; a measured 1.10 crop
+     removes those top/bottom strips while preserving the Netflix full-bleed look. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard .netflix-home-video-layer,
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="trailer-player"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden !important;
     background: #000 !important;
   }
 
@@ -79,7 +94,8 @@ const FINAL_HERO_CSS = String.raw`
     min-height: 100% !important;
     object-fit: cover !important;
     object-position: center center !important;
-    transform: none !important;
+    transform: scale(1.10) !important;
+    transform-origin: center center !important;
     background: #000 !important;
   }
 
@@ -89,8 +105,7 @@ const FINAL_HERO_CSS = String.raw`
     transform: none !important;
   }
 
-  /* The title logo is the logo already supplied by the normal SC artwork
-     pipeline. Runtime code must never replace it with TMDB artwork. */
+  /* The title logo is supplied by the SC-first artwork pipeline. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-logo"].netflix-home-logo {
     width: min(39vw, 680px) !important;
     max-width: min(39vw, 680px) !important;
