@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { useHeroData } from "src/hooks/useHeroData";
 
 const STYLE_ID = "flixit-netflix-home-ambient-exact";
 const HERO_SELECTOR = '[data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard';
@@ -16,8 +15,6 @@ const AMBIENT_CSS = String.raw`
     background: #141414 !important;
   }
 
-  /* Netflix's measured page wrapper starts at y=0, reserves the 80px header,
-     and paints the title-specific radial wash behind both header and billboard. */
   body:has([data-testid="home-page"] .netflix-home-billboard) .flixit-route-stage {
     position: relative !important;
     isolation: isolate !important;
@@ -48,15 +45,11 @@ const AMBIENT_CSS = String.raw`
     z-index: 1 !important;
   }
 
-  /* The Home itself must be transparent so the wrapper wash remains visible
-     around the whole billboard and can dissolve naturally into #141414 below. */
   body:has([data-testid="home-page"] .netflix-home-billboard) [data-testid="home-page"] {
     background: transparent !important;
     background-color: transparent !important;
   }
 
-  /* Disable the older blurred-backdrop ambient layer. Netflix uses a generated
-     radial colour field here, not a blurred copy that is stronger on one side. */
   body:has([data-testid="home-page"] .netflix-home-billboard) [data-testid="home-page"]::before {
     content: none !important;
     display: none !important;
@@ -65,9 +58,6 @@ const AMBIENT_CSS = String.raw`
     opacity: 0 !important;
   }
 
-  /* Values measured from the Netflix header supplied in DevTools:
-     80px block size, 60px horizontal padding, transparent header and a vertical
-     black-to-transparent gradient so the title colour passes through it. */
   body:has([data-testid="home-page"] .netflix-home-billboard) [data-testid="main-header"] {
     height: 80px !important;
     min-height: 80px !important;
@@ -93,7 +83,6 @@ const AMBIENT_CSS = String.raw`
     overflow: visible !important;
   }
 
-  /* Netflix turns the navigation opaque only after leaving the top billboard. */
   body:has([data-testid="home-page"] .netflix-home-billboard) [data-testid="main-header"][data-flixit-netflix-scrolled="true"] {
     background-color: rgba(20,20,20,.96) !important;
     background-image: none !important;
@@ -119,40 +108,20 @@ function toHex(value: number) {
   return clampByte(value).toString(16).padStart(2, "0");
 }
 
-function normalizeHex(value: any) {
-  const text = String(value || "").trim();
-  if (/^#[0-9a-f]{6}$/i.test(text)) return text.toUpperCase();
-  if (/^#[0-9a-f]{3}$/i.test(text)) {
-    return `#${text[1]}${text[1]}${text[2]}${text[2]}${text[3]}${text[3]}`.toUpperCase();
-  }
-  return "";
-}
-
 function darkNetflixTone(r: number, g: number, b: number) {
   const average = (r + g + b) / 3;
   r = r * .91 + average * .09;
   g = g * .91 + average * .09;
   b = b * .91 + average * .09;
-
   const peak = Math.max(r, g, b, 1);
   const scale = 72 / peak;
-  r *= scale;
-  g *= scale;
-  b *= scale;
-
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+  return `#${toHex(r * scale)}${toHex(g * scale)}${toHex(b * scale)}`.toUpperCase();
 }
 
 function fallbackColor(seed: string) {
   const palette = [
-    "#47211B",
-    "#182B43",
-    "#332047",
-    "#1B4033",
-    "#493415",
-    "#421D2C",
-    "#17383E",
-    "#352948",
+    "#47211B", "#182B43", "#332047", "#1B4033",
+    "#493415", "#421D2C", "#17383E", "#352948",
   ];
   let hash = 2166136261;
   for (let i = 0; i < seed.length; i += 1) {
@@ -169,18 +138,15 @@ function netflixGradient(color: string) {
 
 async function imageBitmapFromBlob(blob: Blob) {
   if (typeof createImageBitmap === "function") return createImageBitmap(blob);
-
   const objectUrl = URL.createObjectURL(blob);
   try {
     const img = new Image();
     img.src = objectUrl;
     if (img.decode) await img.decode();
-    else {
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-      });
-    }
+    else await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+    });
     return img;
   } finally {
     URL.revokeObjectURL(objectUrl);
@@ -201,35 +167,26 @@ async function dominantAmbientColor(src: string, signal: AbortSignal) {
   const blob = await response.blob();
   const bitmap: any = await imageBitmapFromBlob(blob);
   const canvas = document.createElement("canvas");
-  canvas.width = 48;
-  canvas.height = 32;
+  canvas.width = 40;
+  canvas.height = 24;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("ambient canvas unavailable");
-
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap?.close?.();
 
   const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
   const buckets = new Map<string, { weight: number; r: number; g: number; b: number; n: number }>();
-
   for (let i = 0; i < pixels.length; i += 4) {
-    const alpha = pixels[i + 3];
-    if (alpha < 180) continue;
-
+    if (pixels[i + 3] < 180) continue;
     const r = pixels[i];
     const g = pixels[i + 1];
     const b = pixels[i + 2];
     const hi = Math.max(r, g, b);
     const lo = Math.min(r, g, b);
-
     if (hi < 42 || lo > 220) continue;
-
     const saturation = hi ? (hi - lo) / hi : 0;
     const brightness = hi / 255;
-    const qr = r >> 5;
-    const qg = g >> 5;
-    const qb = b >> 5;
-    const key = `${qr}:${qg}:${qb}`;
+    const key = `${r >> 5}:${g >> 5}:${b >> 5}`;
     const weight = (.72 + saturation * 2.2) * (.55 + Math.min(1, brightness * 1.35));
     const current = buckets.get(key) || { weight: 0, r: 0, g: 0, b: 0, n: 0 };
     current.weight += weight;
@@ -242,25 +199,9 @@ async function dominantAmbientColor(src: string, signal: AbortSignal) {
 
   const winner = [...buckets.values()].sort((a, b) => b.weight - a.weight)[0];
   if (!winner?.n) throw new Error("ambient palette unavailable");
-
-  const color = darkNetflixTone(
-    winner.r / winner.n,
-    winner.g / winner.n,
-    winner.b / winner.n
-  );
+  const color = darkNetflixTone(winner.r / winner.n, winner.g / winner.n, winner.b / winner.n);
   COLOR_CACHE.set(src, color);
   return color;
-}
-
-function explicitAmbientColor(hero: any) {
-  return normalizeHex(
-    hero?.ambientColor ||
-    hero?.ambient_color ||
-    hero?.backgroundColor ||
-    hero?.background_color ||
-    hero?.assets?.ambientColor ||
-    hero?.assets?.ambient_color
-  );
 }
 
 function applyColor(color: string) {
@@ -269,11 +210,9 @@ function applyColor(color: string) {
   root.style.setProperty("--flixit-netflix-ambient-bg", netflixGradient(color));
 }
 
-function updateAmbientHeight() {
-  const hero = document.querySelector(HERO_SELECTOR) as HTMLElement | null;
+function updateAmbientHeight(hero: HTMLElement | null) {
   const stage = document.querySelector(".flixit-route-stage") as HTMLElement | null;
   if (!hero || !stage) return;
-
   const heroRect = hero.getBoundingClientRect();
   const stageRect = stage.getBoundingClientRect();
   const bottomWithinStage = Math.max(80, heroRect.bottom - stageRect.top);
@@ -292,83 +231,108 @@ function updateHeaderState() {
 export default function NetflixHomeAmbientExact() {
   const location = useLocation();
   const isHome = location.pathname === "/" || location.pathname === "/browse";
-  const { data: heroSettings } = useHeroData();
-  const heroIdentity = `${heroSettings?.contentId || ""}:${heroSettings?.mediaType || ""}:${heroSettings?.updatedAt || ""}:${heroSettings?.customBackdrop || ""}`;
 
   useEffect(() => {
     if (!isHome || typeof window === "undefined" || window.innerWidth < 900) return;
 
     ensureStyle();
-
     const abort = new AbortController();
-    let raf = 0;
+    let ambientRaf = 0;
+    let scrollRaf = 0;
     let generation = 0;
     let lastSrc = "";
+    let boundHero: HTMLElement | null = null;
+    let heroObserver: MutationObserver | null = null;
+    let waitObserver: MutationObserver | null = null;
+    let resizeObserver: ResizeObserver | null = null;
 
-    const seed = `${heroSettings?.contentId || ""}:${heroSettings?.customTitle || heroSettings?.detail?.title || heroSettings?.detail?.name || ""}`;
-    const manualColor = explicitAmbientColor(heroSettings);
-    applyColor(manualColor || fallbackColor(seed));
+    const syncAmbient = () => {
+      ambientRaf = 0;
+      updateAmbientHeight(boundHero);
+      if (!boundHero) return;
 
-    const sync = () => {
-      raf = 0;
-      updateAmbientHeight();
-      updateHeaderState();
-
-      if (manualColor) return;
-
-      const hero = document.querySelector(HERO_SELECTOR);
-      const image = hero?.querySelector(BACKDROP_SELECTOR) as HTMLImageElement | null;
+      const image = boundHero.querySelector(BACKDROP_SELECTOR) as HTMLImageElement | null;
       const src = String(image?.currentSrc || image?.src || "").trim();
       if (!src || src === lastSrc) return;
       lastSrc = src;
       const myGeneration = ++generation;
+      applyColor(fallbackColor(src));
 
       dominantAmbientColor(src, abort.signal)
         .then((color) => {
-          if (abort.signal.aborted || myGeneration !== generation) return;
-          applyColor(color);
+          if (!abort.signal.aborted && myGeneration === generation) applyColor(color);
         })
-        .catch(() => {
-          if (!abort.signal.aborted && myGeneration === generation) {
-            applyColor(fallbackColor(`${seed}:${src}`));
-          }
-        });
+        .catch(() => {});
     };
 
-    const schedule = () => {
-      if (raf) return;
-      raf = window.requestAnimationFrame(sync);
+    const scheduleAmbient = () => {
+      if (!ambientRaf) ambientRaf = window.requestAnimationFrame(syncAmbient);
     };
 
-    sync();
+    const bindHero = (hero: HTMLElement) => {
+      if (boundHero === hero) return;
+      boundHero = hero;
+      waitObserver?.disconnect();
+      heroObserver?.disconnect();
+      resizeObserver?.disconnect();
 
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["src", "srcset"],
-    });
+      heroObserver = new MutationObserver(scheduleAmbient);
+      heroObserver.observe(hero, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src", "srcset"],
+      });
 
-    window.addEventListener("resize", schedule, { passive: true });
-    window.addEventListener("scroll", schedule, { passive: true });
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver(scheduleAmbient);
+        resizeObserver.observe(hero);
+      }
+      scheduleAmbient();
+    };
+
+    const hero = document.querySelector(HERO_SELECTOR) as HTMLElement | null;
+    if (hero) {
+      bindHero(hero);
+    } else {
+      // Only use a document observer while waiting for the Hero to mount; it is
+      // disconnected immediately afterwards so carousel DOM churn is ignored.
+      waitObserver = new MutationObserver(() => {
+        const nextHero = document.querySelector(HERO_SELECTOR) as HTMLElement | null;
+        if (nextHero) bindHero(nextHero);
+      });
+      waitObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    const onScroll = () => {
+      if (scrollRaf) return;
+      scrollRaf = window.requestAnimationFrame(() => {
+        scrollRaf = 0;
+        updateHeaderState();
+      });
+    };
+    updateHeaderState();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", scheduleAmbient, { passive: true });
 
     return () => {
       abort.abort();
-      observer.disconnect();
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("scroll", schedule);
-      if (raf) window.cancelAnimationFrame(raf);
+      waitObserver?.disconnect();
+      heroObserver?.disconnect();
+      resizeObserver?.disconnect();
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", scheduleAmbient);
+      if (ambientRaf) window.cancelAnimationFrame(ambientRaf);
+      if (scrollRaf) window.cancelAnimationFrame(scrollRaf);
 
       const header = document.querySelector('[data-testid="main-header"]') as HTMLElement | null;
       if (header) delete header.dataset.flixitNetflixScrolled;
-
       const root = document.documentElement;
       root.style.removeProperty("--flixit-netflix-ambient-color");
       root.style.removeProperty("--flixit-netflix-ambient-bg");
       root.style.removeProperty("--flixit-netflix-ambient-height");
     };
-  }, [isHome, heroIdentity, heroSettings]);
+  }, [isHome]);
 
   return null;
 }
