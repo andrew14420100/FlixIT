@@ -149,8 +149,8 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const heroLandscape = firstUsableArtwork(
     automaticAssets?.hero_backdrop_path,
     automaticAssets?.detail_backdrop_path,
-    automaticLandscape,
-    embeddedScLandscape
+    embeddedScLandscape,
+    automaticLandscape
   );
   const automaticPoster = firstUsableArtwork(
     automaticAssets?.poster_path,
@@ -171,18 +171,15 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     [embeddedScLandscape, automaticLandscape, mappedBackdrop, legacyLandscape]
   );
 
-  // SC mobile uses vertical posters. Prefer the exact SC poster embedded by the
-  // bootstrap/catalog, then SC resolver output; only use the mapped poster as a
-  // visual fallback so a valid title never becomes an empty mobile slot.
   const posterCandidates = useMemo(
     () => unique([
       embeddedScPoster,
       explicitScPoster,
       automaticScPoster,
-      mappedPoster,
       automaticPoster,
+      mappedPoster,
     ]),
-    [embeddedScPoster, explicitScPoster, automaticScPoster, mappedPoster, automaticPoster]
+    [embeddedScPoster, explicitScPoster, automaticScPoster, automaticPoster, mappedPoster]
   );
 
   const imageCandidates = isMobile ? posterCandidates : landscapeCandidates;
@@ -235,8 +232,8 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   }, [intent, open, trailerUrl]);
 
   const scHoverLogo = firstNonTmdbArtwork(
-    automaticAssets?.logo_path,
     video?.__artwork?.logo_url,
+    automaticAssets?.logo_path,
     video?.netflix_logo_url,
     video?.logo_path,
     video?.logo
@@ -245,7 +242,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     deferredAssets?.logo_path,
     deferredAssets?.fallback_logo_path
   );
-  const hoverArtwork = heroLandscape || automaticLandscape || embeddedScLandscape || mappedBackdrop || legacyLandscape;
+  const hoverArtwork = heroLandscape || embeddedScLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
   const hoverCoverUrl = embeddedScLandscape || automaticLandscape || mappedBackdrop || legacyLandscape || hoverArtwork;
   const hoverPoster = embeddedScPoster || automaticPoster || mappedPoster || hoverArtwork;
 
@@ -270,6 +267,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
         imageCandidates={imageCandidates.slice(1)}
         fallbackImageUrl={null}
         embeddedTitleTreatment={true}
+        portrait={isMobile}
         title={title}
         href={detailHref}
         onClick={goDetail}
