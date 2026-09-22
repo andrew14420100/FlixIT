@@ -12,17 +12,25 @@
     --sc-row-gap: clamp(44px, 3.125vw, 60px);
   }
 
-  /* Titles: same left axis, compact line height and SC-like gap to the cards. */
+  /*
+   * Titles must follow the REAL first-card axis, not a nominal 4%.
+   * HomepageSlider and Top10Slider measure the first rendered card and expose
+   * that exact x coordinate through --flix-row-axis. This keeps every heading
+   * pixel-aligned with its rail even when slick/card padding changes.
+   */
   [data-testid="home-page"] .slider-row .row-header,
   [data-testid="home-page"] .top10-row .row-header {
     min-height: 24px !important;
     margin: 0 0 14px !important;
-    padding-left: var(--sc-home-gutter) !important;
+    padding-left: var(--flix-row-axis, var(--sc-home-gutter)) !important;
     padding-right: var(--sc-home-gutter) !important;
+    box-sizing: border-box !important;
   }
 
   [data-testid="home-page"] .slider-row .row-header .label,
   [data-testid="home-page"] .top10-row .row-header .label {
+    margin-left: 0 !important;
+    padding-left: 0 !important;
     font-size: var(--sc-row-title) !important;
     font-weight: 700 !important;
     line-height: 1.08 !important;
@@ -30,9 +38,17 @@
     color: #e5e5e5 !important;
   }
 
+  [data-testid="home-page"] .slider-row .row-header .header-wrap,
+  [data-testid="home-page"] .top10-row .row-header .header-wrap,
+  [data-testid="home-page"] .slider-row .row-header a,
+  [data-testid="home-page"] .top10-row .row-header a {
+    margin-left: 0 !important;
+    padding-left: 0 !important;
+  }
+
   /* SC rows have about a seven-pixel visual gap between 16:9 cards. Shift the
      slick viewport half a gap left so the first image edge, not its slide box,
-     lands exactly on the 4% section axis. */
+     lands exactly on the section axis. */
   [data-testid="home-page"] .slider-row:not(.top10-row) .slick-list {
     width: calc(100% - (var(--sc-home-gutter) - var(--sc-card-gap-half))) !important;
     margin-left: calc(var(--sc-home-gutter) - var(--sc-card-gap-half)) !important;
