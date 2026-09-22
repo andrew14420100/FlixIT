@@ -17,9 +17,9 @@ import "src/components/NetflixHoverMotionExact.css";
  * - opacity fades in separately, almost linearly over ~50ms;
  * - the shadow is already present while the opening opacity is still 0.
  *
- * Opening is frame-driven. Exit now mirrors the transform path back toward the
- * source tile while preserving the captured 150ms linear opacity fade. This
- * avoids the previous fade-only disappearance when the pointer leaves.
+ * The measured 366 x 374.557 Netflix box is used as a REFERENCE ratio only.
+ * The real hover always scales from the live card width, so smaller/larger rows
+ * produce proportionally smaller/larger mini-modals instead of a fixed 366px box.
  */
 const OPEN_DELAY_MS = 300;
 const OPEN_MOTION_MS = 200;
@@ -28,6 +28,9 @@ const OPEN_OPACITY_MS = 50;
 const CLOSE_MOTION_MS = 150;
 const INITIAL_SCALE = 0.666667;
 const NETFLIX_SHADOW = "rgba(0, 0, 0, 0.75) 0px 3px 10px";
+const REFERENCE_MODAL_WIDTH = 366;
+const REFERENCE_MODAL_HEIGHT = 374.557;
+const REFERENCE_PLAYER_RATIO = 0.563925;
 
 type AnchorData = {
   offsetX: number;
@@ -92,7 +95,6 @@ function netflixMotionProgress(progress: number) {
   );
 }
 
-/* Same path played backwards: fast enough to feel responsive, no hard pop. */
 function netflixReverseMotionProgress(progress: number) {
   const p = clamp01(progress);
   return 1 - netflixMotionProgress(1 - p);
@@ -191,8 +193,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       if (hasPreview() || !element.isConnected) return;
 
       const rect = element.getBoundingClientRect();
-      const width = element.clientWidth || rect.width;
-      const height = element.clientHeight || rect.height;
+      const width = rect.width || element.clientWidth;
+      const height = rect.height || element.clientHeight;
 
       setPosition({
         offsetX: rect.left,
@@ -394,8 +396,6 @@ export function ExpandOverlay({
       return;
     }
 
-    // Read the exact currently-painted state before cancelling the opening rAF.
-    // This makes mouse-out smooth even if the pointer leaves mid-expansion.
     const from = readTransformState(node);
     cancelOpenMotion();
     cancelCloseMotion();
@@ -442,7 +442,11 @@ export function ExpandOverlay({
 
   if (!position || typeof document === "undefined" || typeof window === "undefined") return null;
 
-  const modalWidth = Math.round(position.modalWidth);
+  const modalWidth = position.modalWidth;
+  const modalScale = modalWidth / REFERENCE_MODAL_WIDTH;
+  const modalHeight = REFERENCE_MODAL_HEIGHT * modalScale;
+  const playerHeight = modalWidth * REFERENCE_PLAYER_RATIO;
+  const infoHeight = Math.max(0, modalHeight - playerHeight);
 
   const handleOverlayClick = (event: any) => {
     const target = event?.target;
@@ -482,6 +486,10 @@ export function ExpandOverlay({
         onClick={handleOverlayClick}
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
+          ["--flix-mini-modal-height" as any]: `${modalHeight}px`,
+          ["--flix-mini-player-height" as any]: `${playerHeight}px`,
+          ["--flix-mini-info-height" as any]: `${infoHeight}px`,
+          ["--flix-mini-scale" as any]: modalScale,
           ["--flix-netflix-shadow" as any]: geometry ? NETFLIX_SHADOW : "none",
           position: "absolute",
           zIndex: 3,
@@ -489,6 +497,7 @@ export function ExpandOverlay({
           top: geometry ? `${geometry.top}px` : "-9999px",
           left: geometry ? `${geometry.left}px` : "-9999px",
           width: `${modalWidth}px`,
+          height: `${modalHeight}px`,
           transform: "none",
           transformOrigin: geometry?.transformOrigin || "50% 50%",
           transition: "none",
