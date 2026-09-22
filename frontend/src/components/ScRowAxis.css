@@ -13,6 +13,19 @@
   padding-left: var(--flix-row-axis, 40px) !important;
 }
 
+/* Older self-scaling rails use the same inward edge behaviour. */
+.horizontal-card-slot.edge-left > [data-testid^="horizontal-card-"] {
+  transform-origin: 0% 50% !important;
+}
+
+.horizontal-card-slot.edge-right > [data-testid^="horizontal-card-"] {
+  transform-origin: 100% 50% !important;
+}
+
+.horizontal-card-slot.edge-center > [data-testid^="horizontal-card-"] {
+  transform-origin: 50% 50% !important;
+}
+
 @media (max-width: 899px) {
   .site-slider-row .row-header,
   .site-horizontal-row .row-header {
