@@ -1,12 +1,14 @@
 """Small, cache-friendly APIs used by the performance-sensitive frontend paths.
 
-The browser must never download the complete SC artwork catalogue.  The backend
+The browser must never download the complete SC artwork catalogue. The backend
 keeps the committed catalogue indexed in memory and returns only the artwork for
 the titles currently needed by the UI.
 """
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException
@@ -130,10 +132,50 @@ def _bundle(raw: dict) -> dict | None:
     }
 
 
+def _install_startup_load_shed(app) -> None:
+    """Prevent the legacy 1,600-title artwork import from fighting first users.
+
+    `server.py` historically started `_warm_sc_cover_catalog()` 2.5 seconds after
+    every backend restart. That job fans out through many TMDB/artwork calls while
+    a freshly restarted preview is receiving its first Home/Detail requests. The
+    committed SC catalogue now serves card artwork directly, so that warm-up is
+    redundant. Keep it opt-in for maintenance via SC_STARTUP_WARM_ENABLED=true.
+    """
+    if getattr(app.state, "flixit_startup_load_shed_registered", False):
+        return
+
+    async def disable_legacy_startup_warm() -> None:
+        enabled = str(os.environ.get("SC_STARTUP_WARM_ENABLED", "false")).strip().lower() in {
+            "1", "true", "yes", "on", "enabled"
+        }
+        if enabled:
+            return
+        module = sys.modules.get("server")
+        if module is None:
+            return
+        if not hasattr(module, "_startup_sc_cover_import"):
+            return
+
+        async def no_startup_cover_import(_stop) -> None:
+            return None
+
+        module._startup_sc_cover_import = no_startup_cover_import
+        try:
+            state = getattr(module, "_sc_import_state", None)
+            if isinstance(state, dict):
+                state["startup_warm_disabled"] = True
+        except Exception:
+            pass
+
+    app.add_event_handler("startup", disable_legacy_startup_warm)
+    app.state.flixit_startup_load_shed_registered = True
+
+
 def install_performance_api(app) -> bool:
     if getattr(app.state, "flixit_performance_api_registered", False):
         return True
 
+    _install_startup_load_shed(app)
     router = APIRouter()
 
     @router.post("/api/public/sc-artwork/batch", tags=["artwork"])
