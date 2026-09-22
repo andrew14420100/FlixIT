@@ -309,6 +309,15 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
   );
   const contentWarning = firstValue(item?.content_warning, item?.contentWarning?.message, item?.contentWarning);
   const mostLiked = firstValue(item?.most_liked_message, item?.mostLikedMessage, item?.most_liked);
+  const description = firstValue(
+    item?.overview,
+    item?.plot,
+    item?.description,
+    item?.synopsis,
+    item?.summary,
+    item?.short_description,
+    item?.shortDescription
+  );
   const watchPercent = Math.max(0, Math.min(100, Number(watch?.percent || item?.progress_percent || 0)));
 
   const toggleList = (event: any) => {
@@ -452,6 +461,24 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
                       </div>
                     </div>
                   </div>
+
+                  {description ? (
+                    <div
+                      className="previewModal-description"
+                      style={{
+                        color: "#d2d2d2",
+                        fontSize: "13px",
+                        lineHeight: "18px",
+                        margin: "8px 0 0",
+                        display: "-webkit-box",
+                        WebkitBoxOrient: "vertical",
+                        WebkitLineClamp: 3,
+                        overflow: "hidden",
+                      }}
+                    >
+                      {String(description)}
+                    </div>
+                  ) : null}
 
                   {evidence.length > 0 ? (
                     <div className="previewModal--metadatAndControls-tags-container">
