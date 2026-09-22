@@ -30,11 +30,6 @@ function shouldMarkCards(pathname: string) {
   return true;
 }
 
-/**
- * Poster URLs are resolved by useArtworkBatch through the lightweight backend
- * batch API. This runtime only adds presentation classes; it never downloads
- * or parses the multi-megabyte artwork catalogue in the browser.
- */
 function markMobileCards(scope: ParentNode = document) {
   const visit = (selector: string, callback: (node: HTMLElement) => void) => {
     const root = scope as HTMLElement;
@@ -97,7 +92,10 @@ export default function MobileSCExperience() {
   }, [isMobile]);
 
   useEffect(() => {
-    if (!isMobile || !cardMarkingEnabled) return;
+    // Home cards now carry flixit-mobile-poster directly from React, so the
+    // busiest page no longer needs a root-wide MutationObserver just to add a
+    // presentation class. Keep the compatibility scanner for secondary pages.
+    if (!isMobile || !cardMarkingEnabled || isHome) return;
     let raf = 0;
     const pending = new Set<ParentNode>();
     const flush = () => {
@@ -126,7 +124,7 @@ export default function MobileSCExperience() {
       observer.disconnect();
       pending.clear();
     };
-  }, [isMobile, cardMarkingEnabled, location.pathname]);
+  }, [isMobile, cardMarkingEnabled, isHome, location.pathname]);
 
   useEffect(() => setDrawerOpen(false), [location.pathname]);
 
