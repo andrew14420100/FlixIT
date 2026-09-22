@@ -19,6 +19,7 @@ CACHE_TTL_SETTING_KEY = "player_cache_ttl_hours"
 RESOLVER_ORDER_SETTING_KEY = "player_resolver_order"
 DEFAULT_CACHE_TTL_HOURS = 2.0
 MISS_TTL = timedelta(minutes=15)
+MEMORY_CACHE_MAX = 1200
 
 
 def _now() -> datetime:
@@ -32,10 +33,8 @@ class ResolverRegistry:
         self._db = None
         self._get_setting = None
         self._set_setting = None
-        # Same movie/episode can be requested almost simultaneously by Hero
-        # prefetch, Detail warmup and Watch (or by several clients). Only one
-        # provider chain should run for a cache miss; everyone else awaits it.
         self._inflight: dict[str, asyncio.Task] = {}
+        self._memory_cache: dict[str, tuple[datetime, dict]] = {}
 
     # ------------------------------------------------------------------ setup
     def bind(self, db, get_setting=None, set_setting=None) -> None:
@@ -57,7 +56,6 @@ class ResolverRegistry:
 
     # ------------------------------------------------------------------ ordering
     def _ordered_ids(self) -> list[str]:
-        """Return all provider ids in resolution order (always-active providers first)."""
         saved = []
         if self._get_setting is not None:
             try:
@@ -121,42 +119,77 @@ class ResolverRegistry:
     def cache_key(media_type: str, tmdb_id: int, season: Optional[int], episode: Optional[int]) -> str:
         return f"{media_type}:{tmdb_id}:{season or 0}:{episode or 0}"
 
+    def _remember(self, key: str, expires_at: datetime, result: dict) -> None:
+        if len(self._memory_cache) >= MEMORY_CACHE_MAX and key not in self._memory_cache:
+            # Cache is intentionally small; an occasional bulk clear is cheaper
+            # than maintaining a full LRU on the player hot path.
+            self._memory_cache.clear()
+        self._memory_cache[key] = (expires_at, dict(result))
+
     def _cache_get(self, key: str) -> Optional[dict]:
+        now = _now()
+        hot = self._memory_cache.get(key)
+        if hot:
+            if hot[0] > now:
+                return dict(hot[1])
+            self._memory_cache.pop(key, None)
+
         if self._db is None:
             return None
         doc = self._db["stream_cache"].find_one({"key": key}, {"_id": 0})
         if not doc:
             return None
         try:
-            if datetime.fromisoformat(doc["expiresAt"]) < _now():
+            expires_at = datetime.fromisoformat(doc["expiresAt"])
+            if expires_at < now:
+                # Opportunistically remove expired rows so this collection does
+                # not grow forever between manual cache clears.
+                try:
+                    self._db["stream_cache"].delete_one({"key": key})
+                except Exception:
+                    pass
                 return None
         except Exception:
             return None
-        return doc.get("result")
+        result = doc.get("result")
+        if isinstance(result, dict):
+            self._remember(key, expires_at, result)
+            return dict(result)
+        return None
 
     def _cache_set(self, key: str, result: dict) -> None:
+        ttl = timedelta(hours=self.cache_ttl_hours()) if result.get("success") else MISS_TTL
+        expires_at = _now() + ttl
+        self._remember(key, expires_at, result)
         if self._db is None:
             return
-        ttl = timedelta(hours=self.cache_ttl_hours()) if result.get("success") else MISS_TTL
         self._db["stream_cache"].update_one(
             {"key": key},
-            {"$set": {"key": key, "result": result, "expiresAt": (_now() + ttl).isoformat()}},
+            {"$set": {"key": key, "result": result, "expiresAt": expires_at.isoformat()}},
             upsert=True,
         )
 
     def clear_cache(self, key: Optional[str] = None) -> int:
+        if key:
+            self._memory_cache.pop(key, None)
+        else:
+            self._memory_cache.clear()
         if self._db is None:
             return 0
         query = {"key": key} if key else {}
         return self._db["stream_cache"].delete_many(query).deleted_count
 
     def clear_cache_for_title(self, tmdb_id: int) -> int:
+        prefix_movie = f"movie:{tmdb_id}:"
+        prefix_tv = f"tv:{tmdb_id}:"
+        for key in list(self._memory_cache):
+            if key.startswith(prefix_movie) or key.startswith(prefix_tv):
+                self._memory_cache.pop(key, None)
         if self._db is None:
             return 0
         return self._db["stream_cache"].delete_many({"key": {"$regex": f"^(movie|tv):{tmdb_id}:"}}).deleted_count
 
     def _omni_active(self) -> bool:
-        """True when the Omni resolver has an effective runtime/Admin URL."""
         provider = self._providers.get("stremio_addon")
         if provider is None:
             return False
@@ -182,19 +215,17 @@ class ResolverRegistry:
                 continue
             if result and result.get("success") and result.get("stream"):
                 result.setdefault("source", provider.id)
-                self._cache_set(key, result)
+                await asyncio.to_thread(self._cache_set, key, result)
                 return self._route(result)
 
         if had_transient_error:
-            # Do not negative-cache transient provider outages. A later request
-            # can retry immediately instead of being stuck behind a false miss.
             return {
                 **not_found,
                 "reason": "temporary",
                 "message": "Sorgente momentaneamente non raggiungibile, riprova",
             }
 
-        self._cache_set(key, not_found)
+        await asyncio.to_thread(self._cache_set, key, not_found)
         return not_found
 
     # ------------------------------------------------------------------ resolution
@@ -203,24 +234,22 @@ class ResolverRegistry:
             return {"success": False, "reason": "temporary", "message": "Player non inizializzato"}
 
         key = self.cache_key(ctx.media_type, ctx.tmdb_id, ctx.season, ctx.episode)
-        cached = self._cache_get(key)
+        cached = await asyncio.to_thread(self._cache_get, key)
         if cached is not None:
             cached_stream = str(cached.get("stream") or "").lower()
             cached_source = str(cached.get("source") or "")
 
             if self._omni_active() and cached_source not in ("admin_source", "stremio_addon"):
                 logger.info("Invalidating pre-Omni cached result for %s (source=%s)", key, cached_source or "miss")
-                self.clear_cache(key)
+                await asyncio.to_thread(self.clear_cache, key)
             elif "/extractor/video.m3u8" in cached_stream and "vixsrc.to" in cached_stream:
                 logger.info("Invalidating legacy cached VixSrc extractor stream for %s", key)
-                self.clear_cache(key)
+                await asyncio.to_thread(self.clear_cache, key)
             else:
                 return self._route(cached)
 
         pending = self._inflight.get(key)
         if pending is not None and not pending.done():
-            # Shield the shared resolver from a browser disconnect/navigation.
-            # The provider chain can finish and populate cache for the next page.
             return await asyncio.shield(pending)
 
         task = asyncio.create_task(self._resolve_uncached(ctx, key))
@@ -229,7 +258,6 @@ class ResolverRegistry:
         def forget(done: asyncio.Task) -> None:
             if self._inflight.get(key) is done:
                 self._inflight.pop(key, None)
-            # Consume an exception if every original HTTP waiter disconnected.
             try:
                 done.exception()
             except asyncio.CancelledError:
@@ -246,10 +274,6 @@ class ResolverRegistry:
         if not stream:
             return result
 
-        # Headerless Omni/Stremio streams are already browser-ready and should
-        # stay direct. Proxy only when request headers (Referer/User-Agent/etc.)
-        # are explicitly required; this removes one full manifest/segment hop
-        # and substantially improves startup latency for public HLS streams.
         if result.get("source") == "stremio_addon":
             if result.get("headers"):
                 return proxy.wrap_stream_internal(result)
