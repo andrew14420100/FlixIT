@@ -17,9 +17,11 @@ import "src/components/NetflixHoverMotionExact.css";
  * - opacity fades in separately, almost linearly over ~50ms;
  * - the shadow is already present while the opening opacity is still 0.
  *
- * The measured Netflix box is used only to preserve the lower-panel proportion.
- * Width AND player height are derived from the live source card, so the hover
- * remains visually coherent with whatever card dimensions the row actually has.
+ * Standard rows use their live 16:9 card geometry. Top 10 is special: the
+ * visible poster is portrait, but SC opens the same landscape preview family as
+ * the other rows. For ranked tiles we therefore keep the full ranked-tile width
+ * while deriving a 16:9 source height, preventing the portrait poster height from
+ * stretching the hover player and creating the extra artwork strip seen before.
  */
 const OPEN_DELAY_MS = 300;
 const OPEN_MOTION_MS = 200;
@@ -33,6 +35,7 @@ const REFERENCE_MODAL_HEIGHT = 374.557;
 const REFERENCE_PLAYER_HEIGHT = 366 * 0.563925;
 const REFERENCE_INFO_TO_PLAYER_RATIO =
   (REFERENCE_MODAL_HEIGHT - REFERENCE_PLAYER_HEIGHT) / REFERENCE_PLAYER_HEIGHT;
+const STANDARD_CARD_ASPECT_HEIGHT = 192 / 342;
 
 type AnchorData = {
   offsetX: number;
@@ -178,8 +181,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   }, [clearOpenTimer, clearRemoveTimer, finishClose]);
 
   const onEnter = useCallback((event?: any) => {
-    const element = (event?.currentTarget || ref.current) as HTMLElement | null;
-    if (!element || typeof window === "undefined") return;
+    const eventElement = (event?.currentTarget || ref.current) as HTMLElement | null;
+    if (!eventElement || typeof window === "undefined") return;
 
     clearOpenTimer();
     clearRemoveTimer();
@@ -192,19 +195,25 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
     openTimerRef.current = setTimeout(() => {
       openTimerRef.current = null;
-      if (hasPreview() || !element.isConnected) return;
+      if (hasPreview() || !eventElement.isConnected) return;
 
-      const rect = element.getBoundingClientRect();
-      const width = rect.width || element.clientWidth;
-      const height = rect.height || element.clientHeight;
+      const rankedRoot = eventElement.closest?.(".netflix-ranked-card-root") as HTMLElement | null;
+      const isRanked = !!rankedRoot;
+      const geometryElement = isRanked ? rankedRoot : eventElement;
+      const rect = geometryElement.getBoundingClientRect();
+
+      const width = rect.width || geometryElement.clientWidth;
+      const height = isRanked
+        ? width * STANDARD_CARD_ASPECT_HEIGHT
+        : (rect.height || geometryElement.clientHeight);
 
       setPosition({
         offsetX: rect.left,
-        offsetY: rect.top + window.scrollY,
+        offsetY: (isRanked ? eventElement.getBoundingClientRect().top : rect.top) + window.scrollY,
         width,
         height,
         modalWidth: width * 1.5,
-        anchor: element,
+        anchor: eventElement,
       });
 
       openRef.current = true;
@@ -323,12 +332,6 @@ export function ExpandOverlay({
 
     const startTranslateY = INITIAL_SCALE * Math.max(0, modalHeight - playerHeight) / 2;
 
-    /*
-     * Netflix's first visible frame is the 2/3-scaled modal. At that moment the
-     * scaled PLAYER, not the full modal including its info panel, must sit on top
-     * of the source card. Centering the whole 374px box around the tile pushed the
-     * hover much too far upward (the exact problem visible in the screenshot).
-     */
     const scaledTopInset = ((1 - INITIAL_SCALE) * modalHeight) / 2;
     const top = position.offsetY - scaledTopInset - startTranslateY;
 
