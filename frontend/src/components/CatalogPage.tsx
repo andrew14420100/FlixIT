@@ -1,8 +1,8 @@
 // @ts-nocheck
 /**
  * CatalogPage - griglia con filtri per genere, riutilizzata da Film e Serie TV.
- * Gestisce la paginazione a scorrimento infinito appoggiandosi allo slice `discover`
- * e pubblica soltanto card che hanno già un vero title-treatment incorporato.
+ * Loads network pages and DOM cards progressively so long browsing sessions do
+ * not turn into hundreds of active hover/artwork components at once.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Box from "@mui/material/Box";
@@ -22,7 +22,6 @@ import {
   useLazyGetVideosByMediaTypeAndCustomGenreQuery,
 } from "src/store/slices/discover";
 import VideoItemWithHover from "src/components/VideoItemWithHover";
-import useIntersectionObserver from "src/hooks/useIntersectionObserver";
 import { useAvailableItems } from "src/hooks/useAvailability";
 import useArtworkBatch from "src/hooks/useArtworkBatch";
 
@@ -32,13 +31,17 @@ interface CatalogPageProps {
   categories: { name: string; apiString: string }[];
 }
 
+const INITIAL_RENDER_LIMIT = 36;
+const RENDER_STEP = 36;
+
 export default function CatalogPage({ mediaType, title, categories }: CatalogPageProps) {
   const dispatch = useAppDispatch();
   const { data: genres = [] } = useGetGenresQuery(mediaType);
-
   const [active, setActive] = useState(() => ({ type: "custom", value: categories[0]?.apiString }));
+  const [renderLimit, setRenderLimit] = useState(INITIAL_RENDER_LIMIT);
+  const requestedPageRef = useRef(0);
 
-  const itemKey = active.type === "genre" ? active.value : active.value;
+  const itemKey = active.value;
   const mediaState = useAppSelector((state) => state.discover[mediaType]);
   const pageState = mediaState ? mediaState[itemKey] : undefined;
 
@@ -47,14 +50,22 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
 
   const handleNext = useCallback(
     (page: number) => {
-      if (active.type === "genre") {
-        getByGenreId({ mediaType, genreId: active.value, page });
-      } else {
-        getByCustom({ mediaType, apiString: active.value, page });
-      }
+      if (!page || requestedPageRef.current === page) return;
+      requestedPageRef.current = page;
+      const request = active.type === "genre"
+        ? getByGenreId({ mediaType, genreId: active.value, page })
+        : getByCustom({ mediaType, apiString: active.value, page });
+      Promise.resolve(request).catch(() => {
+        if (requestedPageRef.current === page) requestedPageRef.current = 0;
+      });
     },
     [active, getByGenreId, getByCustom, mediaType]
   );
+
+  useEffect(() => {
+    requestedPageRef.current = 0;
+    setRenderLimit(INITIAL_RENDER_LIMIT);
+  }, [mediaType, itemKey, active.type]);
 
   useEffect(() => {
     if (!mediaState || !pageState) {
@@ -65,24 +76,43 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
   useEffect(() => {
     if (pageState && pageState.page === 0) {
       handleNext(1);
+    } else if (pageState?.page && requestedPageRef.current <= pageState.page) {
+      requestedPageRef.current = 0;
     }
-  }, [pageState, handleNext]);
-
-  const intersectionRef = useRef<HTMLDivElement>(null);
-  const intersection = useIntersectionObserver(intersectionRef);
-  useEffect(() => {
-    if (intersection && intersection.intersectionRatio === 1 && pageState && pageState.page < pageState.total_pages) {
-      handleNext(pageState.page + 1);
-    }
-  }, [intersection, pageState, handleNext]);
+  }, [pageState?.page, handleNext]);
 
   const results = pageState?.results ?? [];
-  const availableResults = useAvailableItems(results, mediaType);
+  const candidateResults = useMemo(
+    () => results.slice(0, Math.min(renderLimit, results.length)),
+    [results, renderLimit]
+  );
+  const availableResults = useAvailableItems(candidateResults, mediaType);
   const artworkBatch = useArtworkBatch(availableResults, availableResults.length > 0);
   const visible = useMemo(
     () => availableResults.filter((item) => artworkBatch.isReady(item, "landscape")),
     [availableResults, artworkBatch.data]
   );
+
+  const intersectionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = intersectionRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        if (renderLimit < results.length) {
+          setRenderLimit((current) => Math.min(results.length, current + RENDER_STEP));
+          return;
+        }
+        if (pageState && pageState.page < pageState.total_pages) {
+          handleNext(pageState.page + 1);
+        }
+      },
+      { rootMargin: "900px 0px", threshold: 0.01 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [renderLimit, results.length, pageState?.page, pageState?.total_pages, handleNext]);
 
   const isActiveFilter = (type: string, value: any) => active.type === type && active.value === value;
   const chipSx = (selected: boolean) => ({
@@ -131,14 +161,22 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
         ) : (
           <Grid container spacing={2} data-testid="catalog-grid">
             {visible.map((video, idx) => (
-              <Grid key={`${video.id}_${idx}`} item xs={6} sm={4} md={3} lg={2} sx={{ zIndex: 1 }}>
+              <Grid
+                key={`${video.id}_${idx}`}
+                item xs={6} sm={4} md={3} lg={2}
+                sx={{
+                  zIndex: 1,
+                  contentVisibility: "auto",
+                  containIntrinsicSize: "342px 192px",
+                }}
+              >
                 <VideoItemWithHover video={video} mediaType={mediaType} />
               </Grid>
             ))}
           </Grid>
         )}
       </Container>
-      <Box sx={{ height: 1 }} ref={intersectionRef} />
+      <Box sx={{ height: 1 }} ref={intersectionRef} data-testid="catalog-sentinel" />
     </Box>
   );
 }
