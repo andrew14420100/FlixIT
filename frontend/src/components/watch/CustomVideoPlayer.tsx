@@ -32,8 +32,10 @@ const SAVE_EVERY_MS = 5000;
 const RESUME_MIN_SECONDS = 30;
 const END_THRESHOLD_SECONDS = 20;
 const STORAGE_PREFIX = "flixit_player_time:";
-const MAX_NETWORK_RECOVERIES = 4;
+const MAX_NETWORK_RECOVERIES = 3;
 const MAX_MEDIA_RECOVERIES = 2;
+const STALL_FATAL_MS = 25000;
+const NATIVE_ERROR_GRACE_MS = 800;
 const HLS_CONFIG = {
   enableWorker: true,
   lowLatencyMode: false,
@@ -191,10 +193,21 @@ export default function CustomVideoPlayer({
 
   const resumeTarget = useMemo(() => Math.max(Number(startAt) || 0, readSavedTime(storageKey)), [startAt, storageKey]);
 
+  const reportFatal = useCallback((message) => {
+    const text = String(message || "Impossibile riprodurre lo stream");
+    clearTimeout(fatalErrorTimerRef.current);
+    setPlaying(false);
+    setBuffering(false);
+    setControlsVisible(true);
+    setFatalError(text);
+    try { onError?.(new Error(text)); } catch {}
+  }, [onError]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return undefined;
     resumeAppliedRef.current = false;
+    userRequestedPlayRef.current = false;
     setFatalError(null);
     setBuffering(true);
     setAudioTracks([]);
@@ -217,7 +230,9 @@ export default function CustomVideoPlayer({
       }).catch(async (err) => {
         console.warn("[PLAYER] autoplay con audio fallito:", err?.name, err?.message);
         if (err?.name !== "NotAllowedError") {
-          setBuffering(false);
+          // Source/navigation races can reject play() even while HLS is still
+          // recovering. The media error/stall watchdog below decides whether it
+          // is actually terminal instead of flashing an error immediately.
           return;
         }
         try {
@@ -229,7 +244,9 @@ export default function CustomVideoPlayer({
           console.info("[PLAYER] autoplay avviato muted per policy browser");
         } catch (mutedErr) {
           console.warn("[PLAYER] autoplay muted fallito:", mutedErr?.name, mutedErr?.message);
-          setBuffering(false);
+          if (mutedErr?.name === "NotAllowedError") {
+            setBuffering(false);
+          }
         }
       });
     };
@@ -239,9 +256,10 @@ export default function CustomVideoPlayer({
       hlsRef.current = hls;
       let networkRecoveries = 0;
       let mediaRecoveries = 0;
-      const fail = (_msg) => {
-        setBuffering(true);
-        clearTimeout(fatalErrorTimerRef.current);
+      const fail = (message) => {
+        clearTimeout(recoveryTimer);
+        try { hls.stopLoad(); } catch {}
+        reportFatal(message);
       };
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         const tracks = hls.audioTracks || [];
@@ -265,7 +283,9 @@ export default function CustomVideoPlayer({
           networkRecoveries += 1;
           setBuffering(true);
           clearTimeout(recoveryTimer);
-          recoveryTimer = setTimeout(() => hls.startLoad(video.currentTime || -1), 600 * networkRecoveries);
+          recoveryTimer = setTimeout(() => {
+            try { hls.startLoad(video.currentTime || -1); } catch {}
+          }, 600 * networkRecoveries);
         } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           if (mediaRecoveries >= MAX_MEDIA_RECOVERIES) return fail("Errore di decodifica del video");
           mediaRecoveries += 1;
@@ -294,13 +314,27 @@ export default function CustomVideoPlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, type, autoPlay, onError]);
+  }, [src, type, autoPlay, reportFatal]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return undefined;
     video.volume = volume;
     video.muted = muted;
+
+    const clearFatalTimer = () => {
+      clearTimeout(fatalErrorTimerRef.current);
+      fatalErrorTimerRef.current = null;
+    };
+    const armStallWatchdog = () => {
+      clearFatalTimer();
+      fatalErrorTimerRef.current = setTimeout(() => {
+        if (video.ended || fatalError) return;
+        if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+          reportFatal("La riproduzione non riesce a ripartire. Riprova.");
+        }
+      }, STALL_FATAL_MS);
+    };
 
     const updateVideoQuality = () => {
       const detected = qualityFromDimensions(video.videoWidth, video.videoHeight);
@@ -328,31 +362,44 @@ export default function CustomVideoPlayer({
       }
     };
     const onPlay = () => {
-      clearTimeout(fatalErrorTimerRef.current);
+      clearFatalTimer();
       setFatalError(null);
       setPlaying(true);
       setBuffering(false);
       updateVideoQuality();
     };
-    const onPause = () => { setPlaying(false); setBuffering(false); writeSavedTime(storageKey, video.currentTime, video.duration || 0); onProgress?.(video.currentTime, video.duration || 0); };
+    const onPause = () => {
+      clearFatalTimer();
+      setPlaying(false);
+      setBuffering(false);
+      writeSavedTime(storageKey, video.currentTime, video.duration || 0);
+      onProgress?.(video.currentTime, video.duration || 0);
+    };
     const onSeeked = () => { setCurrentTime(video.currentTime || 0); if (video.paused) setBuffering(false); };
-    const onWaiting = () => setBuffering(true);
+    const onWaiting = () => { setBuffering(true); armStallWatchdog(); };
+    const onStalled = () => { setBuffering(true); armStallWatchdog(); };
     const onPlaying = () => {
-      clearTimeout(fatalErrorTimerRef.current);
+      clearFatalTimer();
       setFatalError(null);
       setBuffering(false);
       updateVideoQuality();
     };
-    const onCanPlay = () => { setBuffering(false); updateVideoQuality(); };
-    const onEnd = () => { setPlaying(false); writeSavedTime(storageKey, video.duration || 0, video.duration || 0); onProgress?.(video.duration || 0, video.duration || 0); onEnded?.(); };
+    const onCanPlay = () => { clearFatalTimer(); setBuffering(false); updateVideoQuality(); };
+    const onEnd = () => {
+      clearFatalTimer();
+      setPlaying(false);
+      setBuffering(false);
+      writeSavedTime(storageKey, video.duration || 0, video.duration || 0);
+      onProgress?.(video.duration || 0, video.duration || 0);
+      onEnded?.();
+    };
     const onVolume = () => { setMuted(video.muted); setVolume(video.volume); };
     const onErr = () => {
       if (hlsRef.current) return;
-      if (!userRequestedPlayRef.current) {
-        setBuffering(true);
-        return;
-      }
-      setBuffering(true);
+      clearFatalTimer();
+      fatalErrorTimerRef.current = setTimeout(() => {
+        if (video.error) reportFatal("Il browser non riesce a caricare questo stream.");
+      }, NATIVE_ERROR_GRACE_MS);
     };
 
     video.addEventListener("loadedmetadata", onLoadedMeta);
@@ -361,6 +408,7 @@ export default function CustomVideoPlayer({
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     video.addEventListener("waiting", onWaiting);
+    video.addEventListener("stalled", onStalled);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("canplay", onCanPlay);
     video.addEventListener("resize", updateVideoQuality);
@@ -369,12 +417,14 @@ export default function CustomVideoPlayer({
     video.addEventListener("volumechange", onVolume);
     video.addEventListener("error", onErr);
     return () => {
+      clearFatalTimer();
       video.removeEventListener("loadedmetadata", onLoadedMeta);
       video.removeEventListener("durationchange", onDuration);
       video.removeEventListener("timeupdate", onTime);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("waiting", onWaiting);
+      video.removeEventListener("stalled", onStalled);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("canplay", onCanPlay);
       video.removeEventListener("resize", updateVideoQuality);
@@ -383,7 +433,7 @@ export default function CustomVideoPlayer({
       video.removeEventListener("volumechange", onVolume);
       video.removeEventListener("error", onErr);
     };
-  }, [storageKey, resumeTarget, onProgress, onEnded, onError, src]);
+  }, [storageKey, resumeTarget, onProgress, onEnded, reportFatal, src, fatalError]);
 
   useEffect(() => {
     const flush = () => { const v = videoRef.current; if (v && v.currentTime > 0) writeSavedTime(storageKey, v.currentTime, v.duration || 0); };
@@ -405,19 +455,35 @@ export default function CustomVideoPlayer({
         clearTimeout(fatalErrorTimerRef.current);
         setFatalError(null);
       }).catch((err) => {
-        const message = err?.name === "NotAllowedError" ? "La riproduzione è stata bloccata dal browser." : null;
-        if (message) {
+        const browserBlocked = err?.name === "NotAllowedError";
+        if (browserBlocked) {
           setBuffering(false);
           setFatalError(null);
-        } else {
-          setBuffering(true);
-          setFatalError(null);
+          return;
         }
+        clearTimeout(fatalErrorTimerRef.current);
+        fatalErrorTimerRef.current = setTimeout(() => {
+          const current = videoRef.current;
+          if (current && current.paused && current.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) {
+            reportFatal("La riproduzione non è riuscita ad avviarsi. Riprova.");
+          }
+        }, 1500);
       });
     } else {
       v.pause();
     }
-  }, [onError, muted]);
+  }, [reportFatal]);
+
+  const retryPlayback = useCallback(() => {
+    clearTimeout(fatalErrorTimerRef.current);
+    setFatalError(null);
+    setBuffering(true);
+    setControlsVisible(true);
+    // Recreate every transient resolver/HLS state cleanly. Stream resolution is
+    // cached/coalesced, so a retry reload is inexpensive while being much more
+    // reliable than reusing a HLS instance that already exhausted recovery.
+    window.location.reload();
+  }, []);
 
   const skip = useCallback((delta) => {
     const v = videoRef.current; if (!v) return;
@@ -520,7 +586,7 @@ export default function CustomVideoPlayer({
   };
 
   const VolumeIcon = muted || volume === 0 ? VolumeOffRoundedIcon : volume < 0.5 ? VolumeDownRoundedIcon : VolumeUpRoundedIcon;
-  const showOverlay = controlsVisible || !playing;
+  const showOverlay = controlsVisible || !playing || !!fatalError;
 
   return (
     <Box
@@ -528,10 +594,11 @@ export default function CustomVideoPlayer({
       data-testid="custom-video-player"
       data-controls={showOverlay ? "visible" : "hidden"}
       data-quality={videoQuality?.label || "unknown"}
+      data-fatal-error={fatalError ? "true" : "false"}
       onMouseMove={wakeControls}
       onTouchStart={wakeControls}
       onMouseLeave={() => { if (playing) setControlsVisible(false); }}
-      onClick={(e) => { if (e.target === videoRef.current) togglePlay(); }}
+      onClick={(e) => { if (!fatalError && e.target === videoRef.current) togglePlay(); }}
       onDoubleClick={(e) => { if (e.target === videoRef.current) toggleFullscreen(); }}
       sx={{ position: "relative", width: "100%", height: "100%", bgcolor: "#000", overflow: "hidden", cursor: showOverlay ? "default" : "none", userSelect: "none" }}
     >
@@ -551,7 +618,56 @@ export default function CustomVideoPlayer({
         </Box>
       )}
 
-      {!playing && !buffering && (
+      {fatalError && (
+        <Box
+          data-testid="player-fatal-error"
+          sx={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 20,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 2,
+            px: 3,
+            textAlign: "center",
+            bgcolor: "rgba(0,0,0,.88)",
+            background: "radial-gradient(circle at center, rgba(35,35,35,.92), rgba(0,0,0,.96) 70%)",
+          }}
+        >
+          <Typography sx={{ color: "#fff", fontSize: { xs: 21, md: 28 }, fontWeight: 800 }}>
+            Riproduzione interrotta
+          </Typography>
+          <Typography sx={{ color: "rgba(255,255,255,.68)", fontSize: { xs: 14, md: 16 }, maxWidth: 560 }}>
+            {fatalError}
+          </Typography>
+          <Stack direction="row" spacing={1.5} sx={{ mt: 1 }}>
+            <Box
+              component="button"
+              type="button"
+              onClick={retryPlayback}
+              data-testid="player-retry-button"
+              sx={{ border: 0, borderRadius: 1, px: 3, py: 1.25, bgcolor: "#fff", color: "#000", fontWeight: 800, fontSize: 15, cursor: "pointer", "&:hover": { bgcolor: "rgba(255,255,255,.82)" } }}
+            >
+              Riprova
+            </Box>
+            {onBack ? (
+              <Box
+                component="button"
+                type="button"
+                onClick={onBack}
+                data-testid="player-error-back-button"
+                sx={{ border: 0, borderRadius: 1, px: 3, py: 1.25, bgcolor: "rgba(109,109,110,.7)", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", "&:hover": { bgcolor: "rgba(109,109,110,.9)" } }}
+              >
+                Indietro
+              </Box>
+            ) : null}
+          </Stack>
+        </Box>
+      )}
+
+      {!fatalError && !playing && !buffering && (
         <Box onClick={togglePlay} data-testid="player-center-play"
           sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", cursor: "pointer" }}>
           <Box sx={{ width: 96, height: 96, borderRadius: "50%", bgcolor: "rgba(0,0,0,0.55)", border: "2px solid rgba(255,255,255,0.7)", display: "grid", placeItems: "center", backdropFilter: "blur(6px)", transition: "transform 200ms ease, background-color 200ms ease", "&:hover": { transform: "scale(1.06)", bgcolor: "rgba(229,9,20,0.85)", borderColor: "transparent" } }}>
@@ -562,7 +678,7 @@ export default function CustomVideoPlayer({
 
       <Box sx={{ position: "absolute", top: 0, left: 0, right: 0, p: { xs: 2, md: 3 }, display: "flex", alignItems: "center", gap: 2,
         background: "linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)",
-        opacity: showOverlay ? 1 : 0, transform: showOverlay ? "translateY(0)" : "translateY(-12px)", transition: "opacity 280ms ease, transform 280ms ease", pointerEvents: showOverlay ? "auto" : "none" }}>
+        opacity: fatalError ? 0 : showOverlay ? 1 : 0, transform: showOverlay ? "translateY(0)" : "translateY(-12px)", transition: "opacity 280ms ease, transform 280ms ease", pointerEvents: !fatalError && showOverlay ? "auto" : "none" }}>
         {onBack && (
           <IconButton onClick={onBack} data-testid="back-button" aria-label="Indietro"
             sx={{ ...ctrlBtnSx, width: 48, height: 48, bgcolor: "rgba(0,0,0,0.5)", border: "1px solid rgba(255,255,255,0.2)", "&:hover": { bgcolor: "#e50914", borderColor: "transparent", transform: "scale(1.08)" } }}>
@@ -588,7 +704,7 @@ export default function CustomVideoPlayer({
 
       <Box data-testid="player-controls" sx={{ position: "absolute", left: 0, right: 0, bottom: 0, px: { xs: 2, md: 4 }, pb: { xs: 1.5, md: 2.5 }, pt: 8,
         background: "linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 55%, rgba(0,0,0,0) 100%)",
-        opacity: showOverlay ? 1 : 0, transform: showOverlay ? "translateY(0)" : "translateY(12px)", transition: "opacity 280ms ease, transform 280ms ease", pointerEvents: showOverlay ? "auto" : "none" }}>
+        opacity: fatalError ? 0 : showOverlay ? 1 : 0, transform: showOverlay ? "translateY(0)" : "translateY(12px)", transition: "opacity 280ms ease, transform 280ms ease", pointerEvents: !fatalError && showOverlay ? "auto" : "none" }}>
         <Stack direction="row" alignItems="center" spacing={2}>
           <Slider
             data-testid="player-seekbar"
