@@ -23,12 +23,10 @@ function heroViewport() {
 }
 
 /**
- * Hero identity/detail/custom editorial fields come from /api/public/hero.
- * Visual assets deliberately do not: HeroSection must use the exact same unified
- * non-TMDB resolver as cards, Top 10 and Detail so provider choice/logo quality
- * never diverges between surfaces.
+ * The Home bootstrap can hydrate the hero inline so opening Home does not start
+ * a second request. Detail/navigation pages can still use this hook standalone.
  */
-export function useHeroData() {
+export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
 
@@ -53,6 +51,13 @@ export function useHeroData() {
         return null;
       }
     },
+    initialData: initialHero?.contentId
+      ? {
+          ...initialHero,
+          mediaType: initialHero.mediaType || 'tv',
+        }
+      : undefined,
+    initialDataUpdatedAt: initialHero?.contentId ? Date.now() : undefined,
     staleTime: 5 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     refetchOnWindowFocus: false,
