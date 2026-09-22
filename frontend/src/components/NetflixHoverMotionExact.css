@@ -3,32 +3,35 @@
 .previewModal--container[data-motion="netflix"] {
   box-shadow: var(--flix-netflix-shadow, none) !important;
 
-  /* Captured Netflix desktop MiniModal final box: 366 x 374.55px. */
-  width: 366px !important;
-  height: 374.557px !important;
-  min-width: 366px !important;
-  max-width: 366px !important;
-  min-height: 374.557px !important;
-  max-height: 374.557px !important;
+  /*
+   * 366 x 374.557 is the captured Netflix reference, not a fixed size.
+   * useHoverExpand now derives these variables from the LIVE card width:
+   * hover width = card width * 1.5, with height/player/info scaled by the
+   * same Netflix reference proportions.
+   */
+  width: var(--flix-mini-modal-width) !important;
+  height: var(--flix-mini-modal-height) !important;
+  min-width: var(--flix-mini-modal-width) !important;
+  max-width: var(--flix-mini-modal-width) !important;
+  min-height: var(--flix-mini-modal-height) !important;
+  max-height: var(--flix-mini-modal-height) !important;
   overflow: hidden !important;
 }
 
-/* Captured player ratio: 366 * .563925 = 206.397px. */
 .previewModal--container[data-motion="netflix"] .previewModal--player_container {
-  width: 366px !important;
-  height: 206.39655px !important;
-  min-height: 206.39655px !important;
-  max-height: 206.39655px !important;
+  width: 100% !important;
+  height: var(--flix-mini-player-height) !important;
+  min-height: var(--flix-mini-player-height) !important;
+  max-height: var(--flix-mini-player-height) !important;
   aspect-ratio: auto !important;
   overflow: hidden !important;
 }
 
-/* Remaining captured lower panel: 374.557 - 206.397 = 168.160px. */
 .previewModal--container[data-motion="netflix"] .previewModal--info {
   width: 100% !important;
-  height: 168.16045px !important;
-  min-height: 168.16045px !important;
-  max-height: 168.16045px !important;
+  height: var(--flix-mini-info-height) !important;
+  min-height: var(--flix-mini-info-height) !important;
+  max-height: var(--flix-mini-info-height) !important;
   overflow: hidden !important;
   transition: none !important;
 }
@@ -38,11 +41,11 @@
 .previewModal--container[data-motion="netflix"] .previewModal--info-container {
   height: 100% !important;
   min-height: 0 !important;
-  max-height: 168.16045px !important;
+  max-height: var(--flix-mini-info-height) !important;
   overflow: hidden !important;
 }
 
-/* Keep the description visible without letting it increase Netflix's measured height. */
+/* Keep the description present without allowing content to change modal height. */
 .previewModal--container[data-motion="netflix"] .previewModal-description {
   margin-top: 6px !important;
   line-height: 18px !important;
