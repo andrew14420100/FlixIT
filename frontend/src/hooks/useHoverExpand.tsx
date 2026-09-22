@@ -7,16 +7,17 @@ import "src/components/NetflixMotionOverrides.css";
 /*
  * StreamingCommunity-style hover controller.
  *
- * The supplied SC computed styles establish the important animation contract:
- * - final top/left/width already belong to the dialog;
- * - transform-origin: center center;
- * - final transform: translateY(0px) scale(1);
- * - transition: transform 200ms;
- * - opacity stays at 1;
- * - one preview at a time.
+ * Supplied SC computed style at the reference viewport:
+ *   font-size: .87vw;
+ *   width: 365px;
+ *   transform-origin: center center;
+ *   transform: translateY(0px) scale(1);
+ *   transition: transform 200ms;
+ *
+ * 365px corresponds almost exactly to ~22em at .87vw, i.e. 19.14vw.
+ * The preview therefore must NOT be 1.5x the source-card width.
  */
-const SCALE_FACTOR = 1.5;
-const MIN_MODAL_WIDTH = 320;
+const SC_PREVIEW_WIDTH_VW = 19.14;
 const OPEN_DELAY_MS = 135;
 const TRANSFORM_DURATION_MS = 200;
 const LEAVE_GRACE_MS = 150;
@@ -63,6 +64,11 @@ function pointInsideRect(x: number, y: number, rect?: DOMRect | null, pad = 0) {
     y >= rect.top - pad &&
     y <= rect.bottom + pad
   );
+}
+
+function getScPreviewWidth() {
+  if (typeof window === "undefined") return 365;
+  return Math.round(window.innerWidth * (SC_PREVIEW_WIDTH_VW / 100));
 }
 
 function findRow(element: HTMLElement | null) {
@@ -279,7 +285,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       openRef.current = true;
       setPosition({
         cardRect: rect,
-        modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
+        modalWidth: getScPreviewWidth(),
         anchor: element,
         ...measured,
       });
@@ -385,11 +391,6 @@ export function ExpandOverlay({
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "from" | "open" | "close">("measure");
 
-  /*
-   * SC sets the dialog at its final top/left/width and animates only transform.
-   * We therefore calculate those final coordinates once and never change them
-   * until the preview is removed.
-   */
   const calculateGeometry = useCallback(() => {
     const node = modalRef.current;
     const card = position?.cardRect as DOMRect | undefined;
@@ -407,7 +408,6 @@ export function ExpandOverlay({
     if (edge === "left") desiredLeft = rowStart;
     if (edge === "right") desiredLeft = rowEnd - modalRect.width;
 
-    /* Keep the media/card centre as the visual expansion anchor. */
     const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
     const minLeft = edge === "left" ? rowStart : VIEWPORT_GUTTER;
     const rightGutter = edge === "right"
@@ -420,13 +420,6 @@ export function ExpandOverlay({
     const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
 
     const startScale = Math.max(0.01, card.width / modalRect.width);
-
-    /*
-     * With center-center transform origin, scale preserves the dialog centre.
-     * translateY only compensates if viewport clamping moved the final dialog
-     * away from the source card's centre. This mirrors SC's translateY+scale
-     * transform rather than translating on both axes.
-     */
     const sourceCenterY = card.top + card.height / 2;
     const finalCenterY = top + modalRect.height / 2;
     const startTranslateY = Math.round(sourceCenterY - finalCenterY);
@@ -474,7 +467,7 @@ export function ExpandOverlay({
   if (!position || typeof document === "undefined") return null;
 
   const card = position.cardRect as DOMRect;
-  const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
+  const modalWidth = position.modalWidth || getScPreviewWidth();
   const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
   const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
   const rowEnd = Number.isFinite(position?.rowEnd)
