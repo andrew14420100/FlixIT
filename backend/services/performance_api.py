@@ -19,6 +19,7 @@ from services.sc_artwork_catalog import CATALOG, _url_for
 MAX_BATCH_ITEMS = 120
 API_VERSION = "sc-artwork-batch-v3-fast-enrichment"
 BUNDLE_CACHE_MAX = 30000
+STARTUP_BACKGROUND_GRACE_SECONDS = 12.0
 _bundle_cache: dict[tuple, dict] = {}
 _asset_warm_inflight: set[tuple[str, int]] = set()
 _asset_warm_tasks: set[asyncio.Task] = set()
@@ -199,8 +200,6 @@ def _install_nonblocking_enrichment(app) -> None:
             _asset_warm_inflight.discard(key)
 
     def schedule_warm(keys: list[tuple[str, int]]) -> None:
-        # Warm a small number of misses without rebuilding the old TMDB request
-        # storm. The SC artwork endpoint already supplies card artwork instantly.
         for key in keys[:12]:
             if key in _asset_warm_inflight:
                 continue
@@ -276,32 +275,66 @@ def _install_nonblocking_enrichment(app) -> None:
 
 
 def _install_startup_load_shed(app) -> None:
-    """Prevent the legacy 1,600-title artwork import from fighting first users."""
+    """Keep deploy-time maintenance from competing with the first users."""
     if getattr(app.state, "flixit_startup_load_shed_registered", False):
         return
 
-    async def disable_legacy_startup_warm() -> None:
+    async def shed_startup_work() -> None:
         enabled = str(os.environ.get("SC_STARTUP_WARM_ENABLED", "false")).strip().lower() in {
             "1", "true", "yes", "on", "enabled"
         }
-        if enabled:
+
+        # server.py launches a broad artwork import 2.5 seconds after startup.
+        # Home now has its own persistent snapshot and on-demand artwork bundle,
+        # so the bulk import should be opt-in instead of stealing CPU/network
+        # from the first real requests after every deployment.
+        server_module = sys.modules.get("server")
+        if not enabled and server_module is not None and hasattr(server_module, "_startup_sc_cover_import"):
+            async def no_startup_cover_import(_stop) -> None:
+                return None
+            server_module._startup_sc_cover_import = no_startup_cover_import
+            try:
+                state = getattr(server_module, "_sc_import_state", None)
+                if isinstance(state, dict):
+                    state["startup_warm_disabled"] = True
+            except Exception:
+                pass
+
+        core = sys.modules.get("server_core")
+        if core is None:
             return
-        module = sys.modules.get("server")
-        if module is None or not hasattr(module, "_startup_sc_cover_import"):
-            return
 
-        async def no_startup_cover_import(_stop) -> None:
-            return None
+        # The old startup loop also warmed nine Home rows independently. The
+        # persistent Home snapshot already owns this job; leaving both enabled
+        # doubled TMDB/catalogue work immediately after deploy.
+        current_home_warm = getattr(core, "warm_home_rows", None)
+        if callable(current_home_warm) and not getattr(current_home_warm, "_flixit_snapshot_owned", False):
+            async def snapshot_owned_home_warm() -> None:
+                return None
+            snapshot_owned_home_warm._flixit_snapshot_owned = True
+            snapshot_owned_home_warm._original = current_home_warm
+            core.warm_home_rows = snapshot_owned_home_warm
 
-        module._startup_sc_cover_import = no_startup_cover_import
-        try:
-            state = getattr(module, "_sc_import_state", None)
-            if isinstance(state, dict):
-                state["startup_warm_disabled"] = True
-        except Exception:
-            pass
+        # Availability refresh is still useful, but not in the first seconds of
+        # a fresh process. Delay only its first automatic execution; explicit
+        # Admin refreshes (force=True) and all later periodic runs stay immediate.
+        current_refresh = getattr(core, "refresh_vixsrc_catalog", None)
+        if callable(current_refresh) and not getattr(current_refresh, "_flixit_startup_deferred", False):
+            first_automatic = True
 
-    app.add_event_handler("startup", disable_legacy_startup_warm)
+            async def deferred_catalog_refresh(*args, **kwargs):
+                nonlocal first_automatic
+                force = bool(kwargs.get("force", False))
+                if first_automatic and not force:
+                    first_automatic = False
+                    await asyncio.sleep(STARTUP_BACKGROUND_GRACE_SECONDS)
+                return await current_refresh(*args, **kwargs)
+
+            deferred_catalog_refresh._flixit_startup_deferred = True
+            deferred_catalog_refresh._original = current_refresh
+            core.refresh_vixsrc_catalog = deferred_catalog_refresh
+
+    app.add_event_handler("startup", shed_startup_work)
     app.state.flixit_startup_load_shed_registered = True
 
 
