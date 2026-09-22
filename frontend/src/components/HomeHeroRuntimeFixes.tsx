@@ -44,7 +44,12 @@ function deriveBadge(hero: any) {
 
   const today = new Date();
   const releaseDate = parseDate(
-    firstValue(detail?.release_date, detail?.first_air_date, assets?.release_date)
+    firstValue(
+      detail?.release_date,
+      detail?.first_air_date,
+      assets?.release_date,
+      assets?.first_air_date
+    )
   );
 
   if (releaseDate && releaseDate.getTime() > today.getTime()) {
@@ -56,9 +61,26 @@ function deriveBadge(hero: any) {
   }
 
   if (mediaType === "tv") {
-    const nextEpisode = detail?.next_episode_to_air;
-    const status = String(detail?.status || "").toLowerCase();
+    const availableSeason = Number(
+      firstValue(
+        hero?.availableSeason,
+        detail?.availableSeason,
+        detail?.available_season,
+        assets?.availableSeason,
+        assets?.available_season,
+        0
+      )
+    );
 
+    if (availableSeason > 0) {
+      return {
+        kind: "season",
+        mark: "N",
+        text: `Stagione ${availableSeason} disponibile`,
+      };
+    }
+
+    const nextEpisode = detail?.next_episode_to_air;
     if (nextEpisode) {
       return {
         kind: "episodes",
@@ -67,6 +89,7 @@ function deriveBadge(hero: any) {
       };
     }
 
+    const status = String(detail?.status || "").toLowerCase();
     if (
       status.includes("returning") ||
       status.includes("production") ||
@@ -88,9 +111,7 @@ function deriveBadge(hero: any) {
 }
 
 function setBadge(callout: HTMLElement, badge: { kind: string; mark: string; text: string }) {
-  if (callout.dataset.badgeKind !== badge.kind) {
-    callout.dataset.badgeKind = badge.kind;
-  }
+  callout.dataset.badgeKind = badge.kind;
 
   const mark = callout.querySelector('.netflix-home-callout-mark') as HTMLElement | null;
   if (mark && mark.textContent !== badge.mark) mark.textContent = badge.mark;
@@ -134,13 +155,9 @@ function hideLegacyAdminLabel(hero: Element, legacyLabel: string) {
 }
 
 /**
- * Desktop Home-only runtime behavior for the billboard.
- *
- * - The static artwork remains visible until the trailer is genuinely playing.
- * - The lower-right badge is derived from the content selected in Admin instead
- *   of the legacy manual "Etichetta" field.
- * - Exactly four seconds after a new Hero is mounted, the synopsis collapses
- *   with the same fade/height choreography used by the desktop billboard.
+ * Desktop Home billboard behavior measured from the Netflix DOM supplied by
+ * the user. The metadata collapses after 4s by changing only height/opacity;
+ * the CSS then lets the actions reflow naturally upward.
  */
 export default function HomeHeroRuntimeFixes() {
   const location = useLocation();
@@ -246,7 +263,7 @@ export default function HomeHeroRuntimeFixes() {
         restoreLegacyMetadata(currentHero);
       }
     };
-  }, [isHome, heroIdentity, legacyLabel]);
+  }, [isHome, heroIdentity, legacyLabel, heroSettings]);
 
   return null;
 }
