@@ -29,7 +29,6 @@ function ResultsHeader({ total, loaded, sort, sorts, onSort, isFetching }) {
 export default function ArchiveGrid({ pages, total, sort, sorts, onSort, isFetching, isPending, hasMore, onMore }) {
   const items = (pages || []).flatMap((p) => p.items || []);
   const sentinel = useRef(null);
-  // Stop auto-loading after two consecutive pages without Italian-dubbed results; offer a manual button instead.
   const trailingEmpty = (() => { let n = 0; for (let i = (pages || []).length - 1; i >= 0 && !(pages[i].items || []).length; i--) n++; return n; })();
   const autoLoad = hasMore && trailingEmpty < 2;
 
@@ -57,7 +56,17 @@ export default function ArchiveGrid({ pages, total, sort, sorts, onSort, isFetch
       ) : (
         <Box data-testid="archive-grid" sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2,1fr)", sm: "repeat(3,1fr)", md: "repeat(4,1fr)", lg: "repeat(5,1fr)", xl: "repeat(6,1fr)" }, columnGap: 1, rowGap: 5 }}>
           {items.filter((i) => i.backdrop_path || i.poster_path).map((item, idx) => (
-            <Box key={`${item.type}-${item.tmdbId}-${idx}`} sx={{ position: "relative", zIndex: 1, "&:hover": { zIndex: 30 } }} data-testid={`archive-card-${item.tmdbId}`}>
+            <Box
+              key={`${item.type}-${item.tmdbId}-${idx}`}
+              sx={{
+                position: "relative",
+                zIndex: 1,
+                contentVisibility: "auto",
+                containIntrinsicSize: "342px 192px",
+                "&:hover": { zIndex: 30 },
+              }}
+              data-testid={`archive-card-${item.tmdbId}`}
+            >
               <VideoItemWithHover
                 video={{ ...item, id: item.tmdbId, name: item.title, genre_ids: item.genre_ids || [] }}
                 mediaType={item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie}
