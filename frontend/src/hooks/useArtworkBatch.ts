@@ -8,10 +8,10 @@ import {
   mergeOfficialArtwork,
 } from "./useAutomaticMediaAssets";
 
-const SC_CATALOG_URL = "/sc-artwork-catalog.json";
-const CURRENT_SC_CDN_BASE = "https://cdn.streamingunity-premium.to/images/";
-const DEPRECATED_SC_CDN_RE = /^https?:\/\/cdn\.streamingcommunityz\.ninja\/images\//i;
-const STATIC_CATALOG_KEY = ["sc-artwork-static-catalog", "v6-cdn-recovery-poster-deep-match"];
+const API_URL = process.env.REACT_APP_BACKEND_URL || "";
+const BATCH_VERSION = "sc-artwork-server-batch-v1";
+const MAX_VISIBLE_CANDIDATES = 90;
+const ARTWORK_STALE_MS = 24 * 60 * 60 * 1000;
 
 type NormalizedEntry = {
   item: any;
@@ -19,31 +19,6 @@ type NormalizedEntry = {
   type: "movie" | "tv";
   key: string;
 };
-
-type CatalogIndex = {
-  count: number;
-  cdnBase: string;
-  byTitle: Map<string, any[]>;
-  byTmdb: Map<string, any[]>;
-};
-
-let catalogPromise: Promise<CatalogIndex> | null = null;
-let catalogMemory: CatalogIndex | null = null;
-
-function normalizeText(value: any) {
-  return String(value || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function extractYear(value: any) {
-  const match = String(value || "").match(/(?:19|20)\d{2}/);
-  return match ? Number(match[0]) : null;
-}
 
 function normalizeItem(item: any): NormalizedEntry | null {
   const id = Number(item?.id || item?.tmdbId || item?.tmdb_id || 0);
@@ -60,283 +35,62 @@ function uniqueItems(items: any[]) {
     if (!entry || seen.has(entry.key)) continue;
     seen.add(entry.key);
     out.push(entry);
+    if (out.length >= MAX_VISIBLE_CANDIDATES) break;
   }
   return out;
 }
 
-function addTextVariants(out: Set<string>, value: any) {
-  const text = String(value || "").trim();
-  if (!text) return;
-  [
-    text,
-    text.split(/[:|–—]/, 1)[0],
-    text.replace(/\([^)]*\)/g, " "),
-    text.replace(/\b(?:il|lo|la|i|gli|le|un|uno|una|the|a|an)\b/gi, " "),
-    text.replace(/\b(?:stagione|season)\s+\d+\b/gi, " "),
-  ].forEach((candidate) => {
-    const normalized = normalizeText(candidate);
-    if (normalized) out.add(normalized);
-  });
-}
-
-function titleVariants(item: any) {
-  const out = new Set<string>();
-  [
-    item?.title,
-    item?.name,
-    item?.original_title,
-    item?.original_name,
-    item?.display_title,
-  ].forEach((value) => addTextVariants(out, value));
-  return [...out];
-}
-
-function rowAliases(row: any) {
-  const out = new Set<string>();
-  [
-    row?.name,
-    row?.title,
-    row?.original_title,
-    row?.original_name,
-    row?.slug,
-    row?.slug?.replace(/-/g, " "),
-  ].forEach((value) => addTextVariants(out, value));
-  return [...out];
-}
-
-function rewriteDeprecatedScUrl(value: any) {
-  const raw = String(value || "").trim();
-  if (!raw) return raw;
-  if (!DEPRECATED_SC_CDN_RE.test(raw)) return raw;
-  return raw.replace(DEPRECATED_SC_CDN_RE, CURRENT_SC_CDN_BASE);
-}
-
-function normalizeCdnBase(value: any) {
-  const raw = rewriteDeprecatedScUrl(value);
-  if (!/^https?:\/\//i.test(raw)) return CURRENT_SC_CDN_BASE;
-  return `${raw.replace(/\/+$/, "")}/`;
-}
-
-function recordType(row: any) {
-  const raw = String(row?.type || "").toLowerCase();
-  if (raw === "tv" || raw.includes("serie") || raw.includes("show")) return "tv";
-  if (raw === "movie" || raw.includes("film")) return "movie";
-  return null;
-}
-
-function rowTmdbId(row: any) {
-  return Number(
-    row?.tmdb_id ||
-    row?.tmdbId ||
-    row?.ids?.tmdb_id ||
-    row?.ids?.tmdbId ||
-    row?.tmdb?.id ||
-    0
-  );
-}
-
-function buildIndex(payload: any): CatalogIndex {
-  const rows = Array.isArray(payload?.titles) ? payload.titles : [];
-  const byTitle = new Map<string, any[]>();
-  const byTmdb = new Map<string, any[]>();
-
-  rows.forEach((row: any) => {
-    rowAliases(row).forEach((key) => {
-      const bucket = byTitle.get(key) || [];
-      bucket.push(row);
-      byTitle.set(key, bucket);
-    });
-
-    const type = recordType(row);
-    const id = rowTmdbId(row);
-    if (type && id) {
-      const key = `${type}:${id}`;
-      const bucket = byTmdb.get(key) || [];
-      bucket.push(row);
-      byTmdb.set(key, bucket);
-    }
-  });
-
+function requestItem(entry: NormalizedEntry) {
+  const item = entry.item || {};
   return {
-    count: Number(payload?.count || rows.length || 0),
-    cdnBase: normalizeCdnBase(payload?.cdn_base_url),
-    byTitle,
-    byTmdb,
-  };
-}
-
-async function loadCatalog(): Promise<CatalogIndex> {
-  if (catalogMemory) return catalogMemory;
-  if (catalogPromise) return catalogPromise;
-
-  const preloaded = typeof window !== "undefined" ? (window as any).__FLIXIT_SC_CATALOG_PROMISE__ : null;
-  const payloadPromise = preloaded
-    ? Promise.resolve(preloaded)
-    : fetch(SC_CATALOG_URL, {
-        cache: "no-cache",
-        headers: { Accept: "application/json" },
-      }).then(async (response) => {
-        if (!response.ok) throw new Error(`SC catalog ${response.status}`);
-        return response.json();
-      });
-
-  catalogPromise = payloadPromise
-    .then((payload: any) => {
-      if (!payload) throw new Error("SC catalog payload missing");
-      const index = buildIndex(payload);
-      catalogMemory = index;
-      return index;
-    })
-    .catch(() => {
-      const empty = {
-        count: 0,
-        cdnBase: CURRENT_SC_CDN_BASE,
-        byTitle: new Map<string, any[]>(),
-        byTmdb: new Map<string, any[]>(),
-      };
-      catalogMemory = empty;
-      return empty;
-    });
-
-  return catalogPromise;
-}
-
-function bestRecord(entry: NormalizedEntry, index: CatalogIndex) {
-  const variants = titleVariants(entry.item);
-  const candidates: any[] = [];
-  const seen = new Set<any>();
-
-  (index.byTmdb.get(entry.key) || []).forEach((row) => {
-    if (!seen.has(row)) {
-      seen.add(row);
-      candidates.push(row);
-    }
-  });
-
-  variants.forEach((variant) => {
-    (index.byTitle.get(variant) || []).forEach((row) => {
-      if (!seen.has(row)) {
-        seen.add(row);
-        candidates.push(row);
-      }
-    });
-  });
-
-  if (!candidates.length) return null;
-
-  const expectedYear = extractYear(entry.item?.release_date || entry.item?.first_air_date || entry.item?.year);
-  return candidates
-    .map((row) => {
-      let score = 0;
-      const rowId = rowTmdbId(row);
-      if (rowId && rowId === entry.id) score += 1000;
-
-      const type = recordType(row);
-      if (type) score += type === entry.type ? 40 : -100;
-
-      const rowYear = extractYear(row?.year || row?.release_date || row?.first_air_date);
-      if (expectedYear && rowYear) {
-        if (expectedYear === rowYear) score += 18;
-        else if (Math.abs(expectedYear - rowYear) === 1) score += 5;
-        else score -= 10;
-      }
-
-      const images = row?.images || {};
-      if (images.poster || images.poster_mobile) score += 45;
-      if (images.cover || images.cover_desktop) score += 18;
-      if (images.cover_mobile) score += 7;
-      if (images.background) score += 4;
-      if (images.logo) score += 3;
-      return { row, score };
-    })
-    .sort((a, b) => b.score - a.score)[0]?.row || null;
-}
-
-function cdnUrl(value: any, cdnBase: string) {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  if (/^https?:\/\//i.test(raw)) return rewriteDeprecatedScUrl(raw);
-  return `${normalizeCdnBase(cdnBase)}${raw.replace(/^\/+/, "")}`;
-}
-
-function role(images: any, keys: string[], cdnBase: string) {
-  for (const key of keys) {
-    const value = cdnUrl(images?.[key], cdnBase);
-    if (value) return value;
-  }
-  return null;
-}
-
-function officialFromCatalog(entry: NormalizedEntry, row: any, index: CatalogIndex) {
-  if (!row) return null;
-  const images = row?.images || {};
-  const landscape = role(images, ["cover", "cover_desktop", "card", "cover_mobile"], index.cdnBase);
-  const poster = role(images, ["poster", "poster_mobile"], index.cdnBase);
-  if (!landscape && !poster) return null;
-
-  const card = landscape || poster;
-  const ranked = poster;
-  const background = role(images, ["background", "backdrop", "hero", "wallpaper"], index.cdnBase) || card;
-  const logo = role(images, ["logo", "title_logo", "title-treatment", "title_treatment"], index.cdnBase);
-
-  return {
-    active: true,
-    type: entry.type,
     tmdbId: entry.id,
-    title: entry.item?.title || entry.item?.name || row?.name || "",
-    backdrop_url: card,
-    poster_url: ranked,
-    hero_backdrop_url: background,
-    detail_backdrop_url: background,
-    logo_url: logo,
-    backdrop_source: "streamingcommunity",
-    poster_source: ranked ? "streamingcommunity" : null,
-    hero_backdrop_source: "streamingcommunity",
-    logo_source: logo ? "streamingcommunity" : null,
-    backdrop_locale: "it",
-    poster_locale: ranked ? "it" : null,
-    hero_backdrop_locale: "it",
-    logo_locale: logo ? "it" : null,
-    backdrop_embedded_title_treatment: !!card,
-    poster_embedded_title_treatment: !!ranked,
-    hero_embedded_title_treatment: background === card || background === ranked,
-    embedded_title_treatment: !!card,
-    landscape_card_ready: !!card,
-    poster_card_ready: !!ranked,
-    card_ready: !!card,
-    top10_ready: !!ranked,
-    complete: !!card && !!ranked,
-    sc_cover_imported: true,
-    sc_catalog_hit: true,
-    sc_catalog_size: index.count,
-    sc_catalog_cdn: index.cdnBase,
-    sc_provider_id: row?.id || row?.slug || null,
-    sc_provider_name: row?.name || null,
-    version: "official-artwork-v17-sc-cdn-recovery",
+    type: entry.type,
+    title: item?.title || item?.name || "",
+    name: item?.name || item?.title || "",
+    original_title: item?.original_title || item?.original_name || "",
+    original_name: item?.original_name || item?.original_title || "",
+    release_date: item?.release_date || "",
+    first_air_date: item?.first_air_date || "",
+    year: item?.year || "",
   };
+}
+
+async function fetchBatch(entries: NormalizedEntry[], signal?: AbortSignal) {
+  if (!entries.length) return { items: [], catalog_count: 0 };
+  const response = await fetch(`${API_URL}/api/public/sc-artwork/batch`, {
+    method: "POST",
+    signal,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ items: entries.map(requestItem) }),
+  });
+  if (!response.ok) throw new Error(`Artwork batch ${response.status}`);
+  return response.json();
 }
 
 export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const queryClient = useQueryClient();
   const normalized = useMemo(() => uniqueItems(items), [items]);
+  const signature = useMemo(() => normalized.map((entry) => entry.key).join("|"), [normalized]);
 
-  const catalogQuery = useQuery({
-    queryKey: STATIC_CATALOG_KEY,
-    queryFn: loadCatalog,
+  const batchQuery = useQuery({
+    queryKey: [BATCH_VERSION, signature],
+    queryFn: ({ signal }: any) => fetchBatch(normalized, signal),
     enabled: !!enabled && normalized.length > 0,
-    staleTime: Infinity,
-    gcTime: Infinity,
+    staleTime: ARTWORK_STALE_MS,
+    gcTime: ARTWORK_STALE_MS * 7,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
 
-  const data = useMemo(() => {
-    const index = catalogQuery.data;
-    if (!index || !index.count) return [];
-    return normalized.map((entry) => officialFromCatalog(entry, bestRecord(entry, index), index)).filter(Boolean);
-  }, [catalogQuery.data, normalized]);
+  const data = useMemo(
+    () => (Array.isArray(batchQuery.data?.items) ? batchQuery.data.items : []),
+    [batchQuery.data]
+  );
 
   const byKey = useMemo(() => {
     const map = new Map<string, any>();
@@ -348,11 +102,13 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     return map;
   }, [data]);
 
+  // Seed the single-title query cache so opening a Detail/Hero for an artwork
+  // already seen in a row does not immediately repeat the artwork request.
   useEffect(() => {
     if (!data.length) return;
     normalized.forEach((entry) => {
       const official = byKey.get(entry.key);
-      if (!official) return;
+      if (!official?.active) return;
       const fallback = buildMediaAssetFallback(entry.item, entry.type);
       queryClient.setQueryData(
         ["media-assets", MEDIA_ASSET_QUALITY_VERSION, entry.type, entry.id],
@@ -366,7 +122,7 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     if (!entry) return null;
     const fallback = buildMediaAssetFallback(item, entry.type);
     const official = byKey.get(entry.key);
-    return official ? mergeOfficialArtwork(fallback, official) : fallback;
+    return official?.active ? mergeOfficialArtwork(fallback, official) : fallback;
   };
 
   const isReady = (item: any, targetRole: "landscape" | "poster" = "landscape") => {
@@ -381,11 +137,11 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     getResolved,
     isReady,
     count: normalized.length,
-    catalogCount: Number(catalogQuery.data?.count || 0),
-    isPending: catalogQuery.isPending && !data.length,
-    isFetching: catalogQuery.isFetching,
-    primaryPending: catalogQuery.isPending,
+    catalogCount: Number(batchQuery.data?.catalog_count || 0),
+    isPending: batchQuery.isPending && !data.length,
+    isFetching: batchQuery.isFetching,
+    primaryPending: batchQuery.isPending,
     backgroundPending: false,
-    error: catalogQuery.error,
+    error: batchQuery.error,
   };
 }
