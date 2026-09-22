@@ -5,79 +5,124 @@ import { useHeroData } from "src/hooks/useHeroData";
 
 const HERO_SELECTOR = '[data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard';
 const VIDEO_SELECTOR = '[data-testid="hero-trailer"] video';
-const FIRST_CALLOUT_SELECTOR = '.netflix-home-callouts .netflix-home-callout:first-child';
-const ADMIN_HIDDEN_ATTR = 'data-admin-availability-hidden';
+const CALLOUT_SELECTOR = '.netflix-home-callouts .netflix-home-callout';
+const DESCRIPTION_HIDE_MS = 4000;
 
-function textNodeValue(element: Element) {
-  return Array.from(element.childNodes)
-    .filter((node) => node.nodeType === Node.TEXT_NODE)
-    .map((node) => node.textContent || "")
-    .join("")
-    .trim();
+function firstValue(...values: any[]) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
 }
 
-function replaceCalloutText(element: Element, text: string) {
-  const clean = String(text || "").trim();
-  if (!clean || textNodeValue(element) === clean) return;
-
-  Array.from(element.childNodes).forEach((node) => {
-    if (node.nodeType === Node.TEXT_NODE) node.remove();
-  });
-  element.appendChild(document.createTextNode(` ${clean}`));
+function parseDate(value: any) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function restoreAdminHiddenMetadata(hero: Element) {
-  hero.querySelectorAll(`[${ADMIN_HIDDEN_ATTR}]`).forEach((element: HTMLElement) => {
-    element.style.removeProperty("display");
-    element.removeAttribute(ADMIN_HIDDEN_ATTR);
-  });
-}
+function deriveBadge(hero: any) {
+  const detail = hero?.detail || {};
+  const assets = hero?.assets || {};
+  const mediaType = hero?.mediaType === "movie" ? "movie" : "tv";
 
-function moveAvailabilityOutOfMetadata(hero: Element, label: string) {
-  restoreAdminHiddenMetadata(hero);
-  const clean = String(label || "").trim();
-  if (!clean) return;
-
-  const attributes = Array.from(
-    hero.querySelectorAll('.netflix-home-attributes .netflix-home-attribute')
-  ) as HTMLElement[];
-
-  const match = attributes.find(
-    (element) => String(element.textContent || "").trim().toLocaleLowerCase() === clean.toLocaleLowerCase()
+  const weeks = Number(
+    firstValue(
+      hero?.top10Weeks,
+      detail?.top10_weeks,
+      detail?.weeks_in_top10,
+      assets?.top10Weeks,
+      0
+    )
   );
-  if (!match) return;
 
-  match.style.setProperty("display", "none", "important");
-  match.setAttribute(ADMIN_HIDDEN_ATTR, "true");
+  if (weeks > 0) {
+    return {
+      kind: "top10",
+      mark: "10",
+      text: `${weeks} ${weeks === 1 ? "settimana" : "settimane"} nella Top 10`,
+    };
+  }
 
-  const previous = match.previousElementSibling as HTMLElement | null;
-  if (previous?.classList.contains("netflix-home-attribute-dot")) {
-    previous.style.setProperty("display", "none", "important");
-    previous.setAttribute(ADMIN_HIDDEN_ATTR, "true");
+  const today = new Date();
+  const releaseDate = parseDate(
+    firstValue(detail?.release_date, detail?.first_air_date, assets?.release_date)
+  );
+
+  if (releaseDate && releaseDate.getTime() > today.getTime()) {
+    return {
+      kind: "upcoming",
+      mark: "N",
+      text: "Prossimamente",
+    };
+  }
+
+  if (mediaType === "tv") {
+    const nextEpisode = detail?.next_episode_to_air;
+    const status = String(detail?.status || "").toLowerCase();
+
+    if (nextEpisode) {
+      return {
+        kind: "episodes",
+        mark: "N",
+        text: "Nuovi episodi in arrivo",
+      };
+    }
+
+    if (
+      status.includes("returning") ||
+      status.includes("production") ||
+      status.includes("planned")
+    ) {
+      return {
+        kind: "episodes",
+        mark: "N",
+        text: "Nuovi episodi",
+      };
+    }
+  }
+
+  return {
+    kind: "available",
+    mark: "▶",
+    text: "Disponibile ora",
+  };
+}
+
+function setBadge(callout: HTMLElement, badge: { kind: string; mark: string; text: string }) {
+  if (callout.dataset.badgeKind !== badge.kind) {
+    callout.dataset.badgeKind = badge.kind;
+  }
+
+  const mark = callout.querySelector('.netflix-home-callout-mark') as HTMLElement | null;
+  if (mark && mark.textContent !== badge.mark) mark.textContent = badge.mark;
+
+  const spans = Array.from(callout.querySelectorAll(':scope > span')) as HTMLElement[];
+  const label = spans.find((span) => !span.classList.contains('netflix-home-callout-mark'));
+  if (label && String(label.textContent || '').trim() !== badge.text) {
+    label.textContent = badge.text;
   }
 }
 
 /**
- * Desktop Home-only runtime guard for the billboard.
+ * Desktop Home-only runtime behavior for the billboard.
  *
- * 1) Keeps the static artwork visible until the trailer really reaches the
- *    HTMLMediaElement `playing` state. This prevents an empty/black Hero while
- *    HLS is still attaching, buffering or retrying.
- * 2) Mirrors the Admin Hero `seasonLabel` field into the primary lower-right
- *    availability badge (e.g. "Disponibile ora" / "Stagione 3 disponibile").
- *    The same label is removed from the metadata row so it is not duplicated.
+ * - The static artwork remains visible until the trailer is genuinely playing.
+ * - The lower-right badge is derived from the content selected in Admin instead
+ *   of the legacy manual "Etichetta" field.
+ * - Exactly four seconds after a new Hero is mounted, the synopsis collapses
+ *   with the same fade/height choreography used by the desktop billboard.
  */
 export default function HomeHeroRuntimeFixes() {
   const location = useLocation();
   const isHome = location.pathname === "/" || location.pathname === "/browse";
   const { data: heroSettings } = useHeroData();
-  const availabilityLabel = String(heroSettings?.seasonLabel || "").trim();
+  const heroIdentity = `${heroSettings?.contentId || ""}:${heroSettings?.mediaType || ""}:${heroSettings?.updatedAt || ""}`;
 
   useEffect(() => {
     if (!isHome || typeof window === "undefined" || window.innerWidth < 900) return;
 
     let currentVideo: HTMLVideoElement | null = null;
     let raf = 0;
+    let descriptionTimer = 0;
+    const badge = deriveBadge(heroSettings);
 
     const updatePlayingClass = () => {
       const hero = document.querySelector(HERO_SELECTOR);
@@ -113,19 +158,27 @@ export default function HomeHeroRuntimeFixes() {
       updatePlayingClass();
     };
 
+    const syncBadge = (hero: Element) => {
+      const callouts = Array.from(hero.querySelectorAll(CALLOUT_SELECTOR)) as HTMLElement[];
+      if (!callouts.length) return;
+
+      callouts.forEach((callout, index) => {
+        if (index === 0) {
+          callout.classList.remove("flixit-callout-hidden");
+          setBadge(callout, badge);
+        } else {
+          callout.classList.add("flixit-callout-hidden");
+        }
+      });
+    };
+
     const sync = () => {
       raf = 0;
       bindVideo();
 
       const hero = document.querySelector(HERO_SELECTOR);
       if (!hero) return;
-
-      moveAvailabilityOutOfMetadata(hero, availabilityLabel);
-
-      if (availabilityLabel) {
-        const callout = hero.querySelector(FIRST_CALLOUT_SELECTOR);
-        if (callout) replaceCalloutText(callout, availabilityLabel);
-      }
+      syncBadge(hero);
     };
 
     const scheduleSync = () => {
@@ -134,24 +187,29 @@ export default function HomeHeroRuntimeFixes() {
     };
 
     sync();
+
+    const hero = document.querySelector(HERO_SELECTOR);
+    hero?.classList.remove("flixit-hero-copy-collapsed");
+    descriptionTimer = window.setTimeout(() => {
+      document.querySelector(HERO_SELECTOR)?.classList.add("flixit-hero-copy-collapsed");
+    }, DESCRIPTION_HIDE_MS);
+
     const observer = new MutationObserver(scheduleSync);
     observer.observe(document.body, { childList: true, subtree: true });
 
     return () => {
       observer.disconnect();
       if (raf) window.cancelAnimationFrame(raf);
+      if (descriptionTimer) window.clearTimeout(descriptionTimer);
       if (currentVideo) {
         ["playing", "pause", "ended", "waiting", "stalled", "emptied", "loadstart", "error"].forEach((event) =>
           currentVideo?.removeEventListener(event, updatePlayingClass)
         );
       }
-      const hero = document.querySelector(HERO_SELECTOR);
-      if (hero) {
-        hero.classList.remove("flixit-hero-video-playing");
-        restoreAdminHiddenMetadata(hero);
-      }
+      const currentHero = document.querySelector(HERO_SELECTOR);
+      currentHero?.classList.remove("flixit-hero-video-playing", "flixit-hero-copy-collapsed");
     };
-  }, [isHome, availabilityLabel]);
+  }, [isHome, heroIdentity]);
 
   return null;
 }
