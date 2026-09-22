@@ -6,16 +6,10 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Toolbar from "@mui/material/Toolbar";
 import IconButton from "@mui/material/IconButton";
-import Typography from "@mui/material/Typography";
 import Menu from "@mui/material/Menu";
 import MenuIcon from "@mui/icons-material/Menu";
 import Avatar from "@mui/material/Avatar";
 import MenuItem from "@mui/material/MenuItem";
-import Divider from "@mui/material/Divider";
-import ListItemIcon from "@mui/material/ListItemIcon";
-import PersonIcon from "@mui/icons-material/Person";
-import PlayCircleOutlineIcon from "@mui/icons-material/PlayCircleOutline";
-import LogoutIcon from "@mui/icons-material/Logout";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import useOffSetTop from "src/hooks/useOffSetTop";
@@ -26,9 +20,12 @@ import { useAuthModal } from "src/store/authModal";
 import ProfileMenu from "./ProfileMenu";
 import NotificationsBell from "./NotificationsBell";
 import { useNotifications } from "src/hooks/useNotifications";
+import { avatarSrc } from "src/config/avatars";
 
 const API_URL = "";
-import { avatarSrc } from "src/config/avatars";
+const MENU_CACHE_KEY = "flixit_public_menu_v1";
+const MENU_CACHE_MS = 30 * 60 * 1000;
+const ME_MEMO_MS = 60 * 1000;
 
 const NAV_ITEMS = [
   { id: "home", name: "Home", path: "/browse" },
@@ -40,27 +37,99 @@ const NAV_ITEMS = [
 ];
 const isPremiumPath = (p) => (p || "").startsWith("/p/");
 
+let menuMemo: { at: number; promise: Promise<any> } | null = null;
+let meMemo: { token: string; at: number; promise: Promise<any> } | null = null;
+
+function readMenuCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(MENU_CACHE_KEY) || "null");
+    if (!cached?.savedAt || !Array.isArray(cached?.items) || !cached.items.length) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+function persistMenu(items) {
+  try {
+    localStorage.setItem(MENU_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), items }));
+  } catch {}
+}
+
+function fetchMenuShared() {
+  const now = Date.now();
+  if (menuMemo && now - menuMemo.at < MENU_CACHE_MS) return menuMemo.promise;
+  const promise = fetch(`${API_URL}/api/public/menu`, { headers: { Accept: "application/json" } })
+    .then((response) => response.ok ? response.json() : null)
+    .then((data) => {
+      if (data?.items?.length) persistMenu(data.items);
+      return data;
+    })
+    .catch(() => null);
+  menuMemo = { at: now, promise };
+  return promise;
+}
+
+function fetchMeShared(token: string) {
+  const now = Date.now();
+  if (meMemo?.token === token && now - meMemo.at < ME_MEMO_MS) return meMemo.promise;
+  const promise = fetch(`${API_URL}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+  })
+    .then((response) => response.ok ? response.json() : null)
+    .catch(() => null);
+  meMemo = { token, at: now, promise };
+  return promise;
+}
+
 const MainHeader = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isOffset = useOffSetTop(APP_BAR_HEIGHT);
-  const [menuItems, setMenuItems] = React.useState(NAV_ITEMS);
+  const [menuItems, setMenuItems] = React.useState(() => readMenuCache()?.items || NAV_ITEMS);
   const [anchorElNav, setAnchorElNav] = React.useState(null);
   const [anchorElUser, setAnchorElUser] = React.useState(null);
   const [userInfo, setUserInfo] = React.useState(null);
 
   React.useEffect(() => {
-    fetch(`${API_URL}/api/public/menu`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.items?.length > 0) setMenuItems(data.items); })
-      .catch(() => {});
+    let cancelled = false;
+    let idleId: any = null;
+    let timer = 0;
+    const cached = readMenuCache();
+    if (cached?.items?.length) setMenuItems(cached.items);
+
+    const refreshMenu = () => {
+      fetchMenuShared().then((data) => {
+        if (!cancelled && data?.items?.length) setMenuItems(data.items);
+      });
+    };
+
+    // NAV_ITEMS / local cache are sufficient for the initial header frame. Menu
+    // revalidation is low priority and should not compete with Home bootstrap,
+    // Hero imagery and the first visible cards on a hard refresh.
+    const cacheIsFresh = cached?.savedAt && Date.now() - Number(cached.savedAt) < MENU_CACHE_MS;
+    if (!cacheIsFresh) {
+      if ("requestIdleCallback" in window) {
+        idleId = (window as any).requestIdleCallback(refreshMenu, { timeout: 2200 });
+      } else {
+        timer = window.setTimeout(refreshMenu, 900);
+      }
+    }
+
     const token = localStorage.getItem("user_token");
     if (token) {
-      fetch(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data) setUserInfo(data); })
-        .catch(() => {});
+      fetchMeShared(token).then((data) => {
+        if (!cancelled && data) setUserInfo(data);
+      });
     }
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      if (idleId != null && "cancelIdleCallback" in window) {
+        (window as any).cancelIdleCallback(idleId);
+      }
+    };
   }, []);
 
   const isLoggedIn = !!localStorage.getItem("user_token");
@@ -91,7 +160,6 @@ const MainHeader = () => {
       <Toolbar disableGutters sx={{ height: '100%', minHeight: 'unset !important' }}>
         <Logo sx={{ mr: { xs: 3, sm: 5 } }} variant="header" />
 
-        {/* Mobile Menu */}
         <Box sx={{ flexGrow: 1, display: { xs: "flex", md: "none" } }}>
           <IconButton size="medium" onClick={(e) => setAnchorElNav(e.currentTarget)} sx={{ color: 'rgba(255,255,255,0.7)' }}>
             <MenuIcon sx={{ fontSize: 22 }} />
@@ -117,7 +185,6 @@ const MainHeader = () => {
           </Menu>
         </Box>
 
-        {/* Desktop Nav */}
         <Stack direction="row" spacing={0.3} sx={{ flexGrow: 1, display: { xs: "none", md: "flex" } }}>
           {visibleMenuItems.map((item) => {
             const active = isActive(item.path || "/browse");
@@ -147,7 +214,6 @@ const MainHeader = () => {
           })}
         </Stack>
 
-        {/* Right: Search + Avatar */}
         <Stack direction="row" spacing={1.5} alignItems="center">
           <SearchBox />
 
@@ -169,7 +235,6 @@ const MainHeader = () => {
 
           {isLoggedIn && <NotificationsBell notifications={notifications} />}
 
-          {/* Avatar Button - only for authenticated users */}
           {isLoggedIn && (
           <Box
             onClick={(e) => setAnchorElUser(e.currentTarget)}
