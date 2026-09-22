@@ -16,8 +16,8 @@
     height: 35em !important;
     min-height: 0 !important;
     max-height: none !important;
-    overflow: visible !important;
-    background: #0f0f0f !important;
+    overflow: hidden !important;
+    background: #141414 !important;
     font-size: 1vw !important;
   }
 
@@ -37,8 +37,8 @@
     object-position: top center !important;
   }
 
-  /* SC-style lower blend: the first existing row enters a real fade instead of
-     sitting directly on the raw frame. This is decorative only. */
+  /* The artwork is clipped at the billboard boundary. The rows overlap only
+     this fade; the raw backdrop must never reappear below the Hero. */
   [data-testid="home-page"] [data-testid="hero-section"]::after {
     content: "" !important;
     display: block !important;
@@ -46,16 +46,17 @@
     left: 0 !important;
     right: 0 !important;
     bottom: -1px !important;
-    height: 16.5em !important;
+    height: 17.5em !important;
     z-index: 5 !important;
     pointer-events: none !important;
     background: linear-gradient(
       to bottom,
       rgba(20,20,20,0) 0%,
-      rgba(20,20,20,.05) 28%,
-      rgba(20,20,20,.18) 48%,
-      rgba(20,20,20,.46) 68%,
-      rgba(20,20,20,.80) 86%,
+      rgba(20,20,20,.035) 26%,
+      rgba(20,20,20,.12) 43%,
+      rgba(20,20,20,.30) 60%,
+      rgba(20,20,20,.58) 76%,
+      rgba(20,20,20,.84) 90%,
       #141414 100%
     ) !important;
   }
@@ -119,6 +120,7 @@
     padding-top: 0 !important;
     position: relative !important;
     z-index: 20 !important;
+    background: transparent !important;
   }
 
   [data-testid="home-page"] .slider-row .row-header,
