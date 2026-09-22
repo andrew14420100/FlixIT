@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
-import { useHeroData } from "src/hooks/useHeroData";
 import "./HomeHeroRuntimeFixes.css";
 
 const HERO_SELECTOR = '[data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard';
@@ -9,6 +8,11 @@ const VIDEO_SELECTOR = '[data-testid="hero-trailer"] video';
 const CALLOUT_SELECTOR = '.netflix-home-callouts .netflix-home-callout';
 const LEGACY_HIDDEN_ATTR = 'data-legacy-hero-label-hidden';
 const DESCRIPTION_HIDE_MS = 4000;
+
+function currentHero() {
+  if (typeof window === "undefined") return null;
+  return (window as any).__flixitHomeHero || null;
+}
 
 function firstValue(...values: any[]) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
@@ -35,13 +39,7 @@ function badgeMark(kind: string) {
   return "N";
 }
 
-function deriveBadge(hero: any) {
-  const adminText = String(hero?.seasonLabel || "").trim();
-  if (adminText) {
-    const kind = badgeKindFromText(adminText);
-    return { kind, mark: badgeMark(kind), text: adminText };
-  }
-
+function deriveBadge(hero: any, fallbackText = "") {
   const detail = hero?.detail || {};
   const assets = hero?.assets || {};
   const mediaType = hero?.mediaType === "movie" ? "movie" : "tv";
@@ -98,6 +96,11 @@ function deriveBadge(hero: any) {
     }
   }
 
+  const cleanFallback = String(fallbackText || "").trim();
+  if (cleanFallback) {
+    const kind = badgeKindFromText(cleanFallback);
+    return { kind, mark: badgeMark(kind), text: cleanFallback };
+  }
   return { kind: "available", mark: "▶", text: "Disponibile ora" };
 }
 
@@ -141,21 +144,16 @@ function hideAdminBadgeFromMetadata(hero: Element, badgeText: string) {
 }
 
 /**
- * Desktop Hero behavior only. The expensive old implementation observed the
- * entire document, so every carousel/card insertion triggered Hero work. This
- * version waits for the Hero once and then observes only that small subtree.
+ * Presentation-only desktop Hero runtime. It consumes the Hero already embedded
+ * in Home bootstrap and never opens a second /api/public/hero request.
  */
 export default function HomeHeroRuntimeFixes() {
   const location = useLocation();
   const isHome = location.pathname === "/" || location.pathname === "/browse";
-  const { data: heroSettings } = useHeroData();
-  const heroIdentity = `${heroSettings?.contentId || ""}:${heroSettings?.mediaType || ""}:${heroSettings?.updatedAt || ""}:${heroSettings?.seasonLabel || ""}`;
-  const adminBadgeText = String(heroSettings?.seasonLabel || '').trim();
 
   useEffect(() => {
     if (!isHome || typeof window === "undefined" || window.innerWidth < 900) return;
 
-    const badge = deriveBadge(heroSettings);
     const videoEvents = ['playing', 'pause', 'ended', 'waiting', 'stalled', 'emptied', 'loadstart', 'error', 'loadedmetadata'];
     let raf = 0;
     let descriptionTimer = 0;
@@ -192,8 +190,11 @@ export default function HomeHeroRuntimeFixes() {
       raf = 0;
       if (!boundHero) return;
       bindVideo();
-      hideAdminBadgeFromMetadata(boundHero, adminBadgeText);
+      const heroSettings = currentHero();
+      hideAdminBadgeFromMetadata(boundHero, String(heroSettings?.seasonLabel || ''));
       const callouts = Array.from(boundHero.querySelectorAll(CALLOUT_SELECTOR)) as HTMLElement[];
+      const firstLabel = callouts[0]?.querySelector(':scope > span:not(.netflix-home-callout-mark)')?.textContent || '';
+      const badge = deriveBadge(heroSettings, firstLabel);
       callouts.forEach((callout, index) => {
         if (index === 0) {
           callout.classList.remove('flixit-callout-hidden');
@@ -257,7 +258,7 @@ export default function HomeHeroRuntimeFixes() {
         restoreLegacyMetadata(boundHero);
       }
     };
-  }, [isHome, heroIdentity, adminBadgeText, heroSettings]);
+  }, [isHome]);
 
   return null;
 }
