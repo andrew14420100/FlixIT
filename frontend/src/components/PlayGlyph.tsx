@@ -74,10 +74,9 @@ function scanPlayIcons(scope: ParentNode = document) {
 }
 
 /**
- * MUI and the player render play icons from several components. This normalizer
- * guarantees that every play/resume control — desktop and mobile — uses the
- * approved FLIXIT play silhouette without having to maintain multiple icon
- * implementations.
+ * MUI and the player render play icons from several components. New nodes are
+ * normalized once when they enter the DOM. Watching aria/title/data-testid
+ * mutations document-wide was unnecessary and expensive on card-heavy pages.
  */
 export function GlobalPlayGlyphNormalizer() {
   useEffect(() => {
@@ -100,10 +99,6 @@ export function GlobalPlayGlyphNormalizer() {
     schedule(document);
     const observer = new MutationObserver((records) => {
       for (const record of records) {
-        if (record.type === "attributes") {
-          schedule(record.target as Element);
-          continue;
-        }
         record.addedNodes.forEach((node) => {
           if (node instanceof Element) schedule(node);
         });
@@ -112,8 +107,6 @@ export function GlobalPlayGlyphNormalizer() {
     observer.observe(document.documentElement, {
       subtree: true,
       childList: true,
-      attributes: true,
-      attributeFilter: ["aria-label", "title", "data-testid"],
     });
 
     return () => {
