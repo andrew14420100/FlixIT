@@ -1,6 +1,7 @@
 /*
- * Final visual tuning for the Home.
- * Layout only: never changes text, sections, controls or data.
+ * Desktop Home final pass.
+ * SC is used only as a visual/layout reference.
+ * IMPORTANT: hero buttons are intentionally not styled here.
  */
 
 @media (min-width: 900px) {
@@ -9,117 +10,101 @@
     --sc-row-title: clamp(18px, 1.22vw, 22px);
   }
 
-  /* Keep the billboard proportional to the viewport, then let the first rail
-     enter the lower fade instead of starting only after the artwork. */
+  /*
+   * HERO — restore the original SC billboard geometry.
+   * The visible billboard is 35em high while artwork/video keep a 16:9
+   * 56.25em canvas behind it. This is what creates the characteristic SC
+   * crop and allows the lower artwork/fade to continue behind the first row.
+   */
   [data-testid="home-page"] [data-testid="hero-section"] {
-    height: clamp(540px, 36.5vw, 680px) !important;
-    min-height: 540px !important;
-    max-height: 680px !important;
+    position: relative !important;
+    width: 100% !important;
+    height: 35em !important;
+    min-height: 0 !important;
+    max-height: none !important;
     overflow: visible !important;
-    background: #141414 !important;
+    background: #0f0f0f !important;
+    font-size: 1vw !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"] [data-testid="hero-backdrop"],
-  [data-testid="home-page"] [data-testid="hero-section"] [data-testid="hero-trailer"],
-  [data-testid="home-page"] [data-testid="hero-section"] > div:nth-of-type(3) {
-    height: 100% !important;
-    max-height: 100% !important;
+  [data-testid="home-page"] [data-testid="hero-section"] [data-testid="hero-trailer"] {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    height: 56.25em !important;
+    max-height: none !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"] [data-testid="hero-backdrop"] {
     object-fit: cover !important;
-    object-position: center top !important;
+    object-position: top center !important;
   }
 
-  /* SC-like fade: image remains readable through the middle, then becomes the
-     same #141414 surface used by the rows. */
+  /* Do not stack a second artificial fade over the gradients already rendered
+     by HeroSection: SC uses the billboard's own top/side/bottom gradient layers. */
   [data-testid="home-page"] [data-testid="hero-section"]::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: -1px;
-    height: 31%;
-    z-index: 5;
-    pointer-events: none;
-    background: linear-gradient(
-      to bottom,
-      rgba(20,20,20,0) 0%,
-      rgba(20,20,20,.08) 18%,
-      rgba(20,20,20,.30) 42%,
-      rgba(20,20,20,.72) 72%,
-      #141414 100%
-    );
+    content: none !important;
+    display: none !important;
   }
 
+  /* SC information block geometry. */
   [data-testid="home-page"] [data-testid="hero-section"] .info-wrap {
+    position: absolute !important;
+    top: 0 !important;
+    bottom: 10% !important;
     left: 4% !important;
-    width: min(40%, 650px) !important;
-    bottom: 15.5% !important;
+    width: 36% !important;
+    max-width: none !important;
+    z-index: 10 !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-content"] {
-    margin: 0 !important;
+    position: absolute !important;
+    bottom: 0 !important;
+    width: auto !important;
+    margin: 1em 0 !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"] .title {
+    font-size: 3em !important;
+    line-height: 1em !important;
     transform-origin: left bottom !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-logo"] {
+    display: block !important;
     width: auto !important;
     height: auto !important;
-    max-width: min(31vw, 520px) !important;
-    max-height: clamp(74px, 6vw, 120px) !important;
+    max-width: none !important;
+    max-height: 3em !important;
+    margin: 0 !important;
     object-fit: contain !important;
     object-position: left bottom !important;
   }
 
-  /* Prevent the existing season/subtitle line from colliding with controls. */
   [data-testid="home-page"] [data-testid="hero-season-label"] {
-    margin-top: .65em !important;
-    margin-bottom: 0 !important;
-    font-size: clamp(16px, 1.15vw, 21px) !important;
-    line-height: 1.18 !important;
+    margin-top: 1em !important;
+    margin-bottom: -.75em !important;
+    font-size: 1.3em !important;
+    line-height: inherit !important;
+    font-weight: 700 !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-overview"] {
-    margin-top: .85em !important;
-    font-size: clamp(15px, 1.05vw, 19px) !important;
-    line-height: 1.35 !important;
-    max-width: 38vw !important;
+    margin-top: 1.5em !important;
+    max-width: 100% !important;
+    font-size: 1.2em !important;
+    line-height: 1.4 !important;
+    font-weight: 400 !important;
   }
 
-  [data-testid="home-page"] [data-testid="hero-section"] .info-buttons {
-    margin-top: 1.15em !important;
-    align-items: center !important;
-  }
+  /* Do not override .info-buttons or either Hero button here. */
 
-  [data-testid="home-page"] [data-testid="hero-play-button"],
-  [data-testid="home-page"] [data-testid="hero-info-button"] {
-    min-height: 42px !important;
-    height: 42px !important;
-    padding: 0 1.55em !important;
-    border-radius: 4px !important;
-    font-size: clamp(13px, .92vw, 16px) !important;
-    line-height: 1 !important;
-  }
-
-  /* Pull the first existing section into the billboard fade. */
-  [data-testid="home-page"] [data-testid="home-rows"] {
-    margin-top: clamp(-118px, -6.4vw, -88px) !important;
-    padding-top: 0 !important;
-    position: relative !important;
-    z-index: 20 !important;
-  }
-
-  [data-testid="home-page"] .slider-row,
-  [data-testid="home-page"] #continua.slider-row,
-  [data-testid="home-page"] .slider-row.compact-row {
-    margin-top: 0 !important;
-    margin-bottom: clamp(22px, 1.65vw, 30px) !important;
-  }
-
+  /* Section typography/card stability remain SC-aligned, but section content
+     and order are untouched. */
   [data-testid="home-page"] .slider-row .row-header,
   [data-testid="home-page"] .top10-row .row-header {
     min-height: 24px !important;
@@ -132,8 +117,6 @@
     line-height: 1.08 !important;
   }
 
-  /* Standard landscape cards: same compact rail rhythm as SC, with no source
-     movement on hover. The preview portal remains responsible for enlargement. */
   [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) {
     border-radius: 4px !important;
     overflow: hidden !important;
@@ -149,8 +132,14 @@
   }
 }
 
-@media (min-width: 1400px) {
+@media (min-width: 1100px) and (max-width: 1399px) {
   [data-testid="home-page"] [data-testid="hero-section"] .info-wrap {
-    width: min(36%, 620px) !important;
+    width: 40% !important;
+  }
+}
+
+@media (min-width: 900px) and (max-width: 1099px) {
+  [data-testid="home-page"] [data-testid="hero-section"] .info-wrap {
+    width: 45% !important;
   }
 }
