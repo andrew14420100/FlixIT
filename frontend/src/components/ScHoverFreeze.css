@@ -1,0 +1,53 @@
+/*
+ * Desktop hover freeze.
+ * Once a preview is shown it must remain visually locked in place: no
+ * micro-translation, no hover scaling and no transform animation while the
+ * pointer moves inside the preview.
+ */
+
+@media (min-width: 900px) {
+  .flix-netflix-preview-portal > .previewModal--container {
+    backface-visibility: hidden !important;
+    -webkit-backface-visibility: hidden !important;
+    transform-style: flat !important;
+  }
+
+  /* The visible hover is always rendered at its final geometry. */
+  .flix-netflix-preview-portal > .previewModal--container[data-phase="open"] {
+    transform: translate3d(0, 0, 0) scale(1) !important;
+    transition: opacity 70ms linear !important;
+    will-change: opacity !important;
+  }
+
+  /* Moving the pointer over any part of the open preview must never move it. */
+  .flix-netflix-preview-portal > .previewModal--container[data-phase="open"]:hover,
+  .flix-netflix-preview-portal > .previewModal--container[data-phase="open"]:focus,
+  .flix-netflix-preview-portal > .previewModal--container[data-phase="open"]:focus-within {
+    transform: translate3d(0, 0, 0) scale(1) !important;
+    translate: none !important;
+    scale: 1 !important;
+  }
+
+  /* The source tile also stays completely locked while its portal is active. */
+  [data-testid="home-page"] .netflix-standard-card-root,
+  [data-testid="home-page"] .netflix-ranked-card-root,
+  [data-testid="home-page"] .netflix-standard-card-root:hover,
+  [data-testid="home-page"] .netflix-ranked-card-root:hover,
+  [data-testid="home-page"] .slick-slide:hover,
+  [data-testid="home-page"] .slider-item:hover {
+    transform: none !important;
+    translate: none !important;
+    scale: 1 !important;
+  }
+
+  /* Media inside the preview must not introduce a transform when it starts. */
+  .flix-netflix-preview-portal .flixit-hover-trailer,
+  .flix-netflix-preview-portal .flixit-hover-trailer > img,
+  .flix-netflix-preview-portal .flixit-hover-trailer > div,
+  .flix-netflix-preview-portal .previewModal--boxart,
+  .flix-netflix-preview-portal .previewModal--video-shell,
+  .flix-netflix-preview-portal .previewModal--video-shell-inner {
+    translate: none !important;
+    scale: 1 !important;
+  }
+}
