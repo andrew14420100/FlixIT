@@ -36,7 +36,9 @@ function heroRevision(hero: HeroSettings | null | undefined) {
     hero.contentId || '',
     hero.mediaType || '',
     hero.customTitle || '',
+    hero.customDescription || '',
     hero.customBackdrop || '',
+    hero.seasonLabel || '',
   ].join('|');
 }
 
