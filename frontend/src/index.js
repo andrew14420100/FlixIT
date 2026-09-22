@@ -16,6 +16,7 @@ import { extendedApi } from "./store/slices/configuration";
 import palette from "./theme/palette";
 import router from "./routes";
 import MainLoadingScreen from "./components/MainLoadingScreen";
+import GlobalErrorBoundary from "./components/GlobalErrorBoundary";
 
 function installPublicCatalogueRequestBudget() {
   if (typeof window === "undefined" || window.__flixitCatalogueBudgetInstalled) return;
@@ -172,9 +173,6 @@ function installPublicCatalogueRequestBudget() {
 
 installPublicCatalogueRequestBudget();
 
-// Configuration is useful to later pages but not needed for the first Home
-// frame. The old queueMicrotask competed with Home/Hero for a connection and CPU
-// immediately after refresh. Warm it after the browser has had a chance to paint.
 const warmConfiguration = () => {
   try { store.dispatch(extendedApi.endpoints.getConfiguration.initiate(undefined)); } catch {}
 };
@@ -199,14 +197,16 @@ const queryClient = new QueryClient({
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
-  <Provider store={store}>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider theme={createTheme({ palette })}>
-        <RouterProvider
-          router={router}
-          fallbackElement={<MainLoadingScreen />}
-        />
-      </ThemeProvider>
-    </QueryClientProvider>
-  </Provider>
+  <GlobalErrorBoundary>
+    <Provider store={store}>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider theme={createTheme({ palette })}>
+          <RouterProvider
+            router={router}
+            fallbackElement={<MainLoadingScreen />}
+          />
+        </ThemeProvider>
+      </QueryClientProvider>
+    </Provider>
+  </GlobalErrorBoundary>
 );
