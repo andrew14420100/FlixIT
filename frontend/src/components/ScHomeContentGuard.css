@@ -10,9 +10,8 @@ html.flixit-home-reference [data-testid="home-page"] [data-testid="home-rows"] >
   order: initial !important;
 }
 
-/* Keep the existing Hero buttons and their existing labels/icons.
-   Older reference CSS visually replaced the existing info button with
-   generated '+ La mia lista' pseudo-content. Never do that here. */
+/* Keep the existing Hero info button exactly as authored in HeroSection.
+   Older reference CSS visually replaced it with generated '+ La mia lista'. */
 html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-info-button"]::before,
 html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-info-button"]::after {
   content: none !important;
@@ -26,18 +25,4 @@ html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-info-but
 
 html.flixit-home-reference [data-testid="home-page"] [data-testid="hero-info-button"] > span {
   display: inline-block !important;
-}
-
-/* Styling may resize or reposition existing elements, but must never create
-   textual UI through CSS pseudo-elements inside Home controls. */
-html.flixit-home-reference [data-testid="home-page"] button::before,
-html.flixit-home-reference [data-testid="home-page"] button::after {
-  content: none;
-}
-
-/* Exceptions: keep pseudo-elements that are purely decorative and belong to
-   card/progress/nav internals outside Hero buttons. */
-html.flixit-home-reference [data-testid="home-page"] .netflix-standard-card-remove::after,
-html.flixit-home-reference [data-testid="home-page"] .flixit-mobile-nav-indicator::after {
-  content: "";
 }
