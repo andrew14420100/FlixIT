@@ -9,7 +9,6 @@ const CALLOUT_SELECTOR = '.netflix-home-callouts .netflix-home-callout';
 const LEGACY_HIDDEN_ATTR = 'data-legacy-hero-label-hidden';
 const DESCRIPTION_HIDE_MS = 4000;
 const FINAL_STYLE_ID = 'flixit-home-hero-runtime-final';
-const TMDB_API_KEY = process.env.REACT_APP_TMDB_V3_API_KEY || "4f153630f8d7e92d542dde3a38fbddf2";
 
 const FINAL_HERO_CSS = String.raw`
 @media (min-width: 900px) {
@@ -19,8 +18,7 @@ const FINAL_HERO_CSS = String.raw`
     overflow-x: clip !important;
   }
 
-  /* Netflix-like ambient colour wash: use the currently published Hero
-     artwork itself, so the surrounding page changes palette with the content. */
+  /* Ambient colour follows the artwork published from Admin. */
   [data-testid="home-page"]::before {
     content: "" !important;
     position: absolute !important;
@@ -52,13 +50,11 @@ const FINAL_HERO_CSS = String.raw`
     z-index: 2 !important;
   }
 
-  /* Never crop a trailer. The Hero is wider than most source trailers; Netflix
-     can use specially mastered billboard media, but our external direct sources
-     are often 16:9. Preserve the whole frame and use the Hero artwork behind it
-     to fill the unused area rather than cutting faces/credits. */
+  /* Keep the trailer full-bleed like Netflix. The old forced contain mode made
+     a 16:9 trailer look like a cut-out panel with visible side bars. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard .netflix-home-video-layer,
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="trailer-player"] {
-    background: transparent !important;
+    background: #000 !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard .netflix-home-video-layer video {
@@ -68,37 +64,37 @@ const FINAL_HERO_CSS = String.raw`
     left: 0 !important;
     width: 100% !important;
     height: 100% !important;
-    min-width: 0 !important;
-    min-height: 0 !important;
-    object-fit: contain !important;
+    min-width: 100% !important;
+    min-height: 100% !important;
+    object-fit: cover !important;
     object-position: center center !important;
     transform: none !important;
-    background: transparent !important;
+    background: #000 !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard.flixit-hero-video-playing [data-testid="hero-backdrop"] {
-    opacity: .52 !important;
-    filter: blur(16px) saturate(1.22) brightness(.58) !important;
-    transform: scale(1.075) !important;
+    opacity: 0 !important;
+    filter: none !important;
+    transform: none !important;
   }
 
-  /* Italian title treatment gets a larger envelope. */
+  /* The logo rendered by HeroSection comes from the normal artwork pipeline.
+     Do not replace it at runtime: for this project that is the SC title logo. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-logo"].netflix-home-logo {
     width: min(39vw, 680px) !important;
     max-width: min(39vw, 680px) !important;
     max-height: 270px !important;
     object-fit: contain !important;
     object-position: left bottom !important;
-    margin-bottom: 8px !important;
+    margin-bottom: 10px !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard .netflix-home-title-fallback {
     max-width: min(44vw, 760px) !important;
     font-size: clamp(58px, 5vw, 90px) !important;
-    margin-bottom: 8px !important;
+    margin-bottom: 10px !important;
   }
 
-  /* Give each copy tier the same breathing room seen in the Netflix reference. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard .netflix-home-attributes {
     margin-top: 18px !important;
     font-size: 18px !important;
@@ -110,7 +106,7 @@ const FINAL_HERO_CSS = String.raw`
     width: min(45vw, 790px) !important;
     height: 60px !important;
     max-height: 60px !important;
-    margin-top: 18px !important;
+    margin-top: 20px !important;
     font-size: 22px !important;
     line-height: 30px !important;
     transition:
@@ -343,53 +339,6 @@ function syncAmbient(hero: Element) {
   home.dataset.heroAmbient = 'ready';
 }
 
-async function fetchItalianTmdbLogo(hero: any, signal: AbortSignal) {
-  const id = Number(hero?.contentId || 0);
-  if (!id) return '';
-  const type = hero?.mediaType === 'movie' ? 'movie' : 'tv';
-
-  try {
-    const response = await fetch(
-      `https://api.themoviedb.org/3/${type}/${id}/images?api_key=${TMDB_API_KEY}&include_image_language=it,null,en`,
-      { signal, cache: 'no-store' }
-    );
-    if (!response.ok) return '';
-    const data = await response.json();
-    const italian = (Array.isArray(data?.logos) ? data.logos : [])
-      .filter((entry: any) => String(entry?.iso_639_1 || '').toLowerCase() === 'it')
-      .sort((a: any, b: any) => Number(b?.width || 0) - Number(a?.width || 0));
-
-    return italian[0]?.file_path
-      ? `https://image.tmdb.org/t/p/original${italian[0].file_path}`
-      : '';
-  } catch {
-    return '';
-  }
-}
-
-function applyItalianLogo(hero: Element, url: string, title: string) {
-  if (!url) return;
-  const titleBlock = hero.querySelector('.netflix-home-title-block');
-  if (!titleBlock) return;
-
-  let logo = titleBlock.querySelector('[data-testid="hero-logo"]') as HTMLImageElement | null;
-  if (!logo) {
-    logo = document.createElement('img');
-    logo.setAttribute('data-uia', 'billboard-logo');
-    logo.setAttribute('data-testid', 'hero-logo');
-    logo.className = 'netflix-home-logo';
-    logo.alt = title || '';
-    logo.decoding = 'async';
-    titleBlock.insertBefore(logo, titleBlock.firstChild);
-  }
-
-  if (logo.src !== url) logo.src = url;
-  logo.dataset.preferredLocale = 'it';
-
-  const fallback = titleBlock.querySelector('[data-testid="hero-title-fallback"]') as HTMLElement | null;
-  if (fallback) fallback.style.setProperty('display', 'none', 'important');
-}
-
 /** Desktop Home Hero runtime behavior. */
 export default function HomeHeroRuntimeFixes() {
   const location = useLocation();
@@ -406,22 +355,7 @@ export default function HomeHeroRuntimeFixes() {
     let raf = 0;
     let descriptionTimer = 0;
     let currentVideo: HTMLVideoElement | null = null;
-    let italianLogo = '';
-    const logoAbort = new AbortController();
     const badge = deriveBadge(heroSettings);
-
-    fetchItalianTmdbLogo(heroSettings, logoAbort.signal).then((url) => {
-      if (!url || logoAbort.signal.aborted) return;
-      italianLogo = url;
-      const hero = document.querySelector(HERO_SELECTOR);
-      if (hero) {
-        applyItalianLogo(
-          hero,
-          italianLogo,
-          heroSettings?.customTitle || heroSettings?.detail?.name || heroSettings?.detail?.title || ''
-        );
-      }
-    });
 
     const updatePlayingClass = () => {
       const hero = document.querySelector(HERO_SELECTOR);
@@ -479,14 +413,6 @@ export default function HomeHeroRuntimeFixes() {
       hideAdminBadgeFromMetadata(hero, adminBadgeText);
       syncBadge(hero);
       syncAmbient(hero);
-
-      if (italianLogo) {
-        applyItalianLogo(
-          hero,
-          italianLogo,
-          heroSettings?.customTitle || heroSettings?.detail?.name || heroSettings?.detail?.title || ''
-        );
-      }
     };
 
     const scheduleSync = () => {
@@ -512,7 +438,6 @@ export default function HomeHeroRuntimeFixes() {
     window.addEventListener('resize', scheduleSync, { passive: true });
 
     return () => {
-      logoAbort.abort();
       observer.disconnect();
       window.removeEventListener('resize', scheduleSync);
       if (raf) window.cancelAnimationFrame(raf);
