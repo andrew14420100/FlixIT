@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Slider, { Settings } from "react-slick";
 import { styled, Theme, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -83,6 +83,7 @@ export default function HomepageSlider({
   rowId,
 }: HomepageSliderProps) {
   const sliderRef = useRef<Slider>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const theme = useTheme();
   const isMobile = useMediaQuery("(max-width:899px)");
   const up1400 = useMediaQuery("(min-width:1400px)");
@@ -108,6 +109,49 @@ export default function HomepageSlider({
     () => visibleItems.filter((item) => artworkBatch.isReady(item, isMobile ? "poster" : "landscape")),
     [visibleItems, artworkBatch.data, isMobile]
   );
+
+  const syncRowAxis = useCallback(() => {
+    const row = rowRef.current;
+    if (!row || typeof window === "undefined") return;
+
+    const firstCard = (
+      row.querySelector(".slick-slide.slick-active .netflix-standard-card-root") ||
+      row.querySelector(".netflix-standard-card-root")
+    ) as HTMLElement | null;
+    if (!firstCard) return;
+
+    const rowRect = row.getBoundingClientRect();
+    const cardRect = firstCard.getBoundingClientRect();
+    const axis = Math.max(0, Math.round((cardRect.left - rowRect.left) * 100) / 100);
+    row.style.setProperty("--flix-row-axis", `${axis}px`);
+  }, []);
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row || !readyItems.length || typeof window === "undefined") return;
+
+    let frame = window.requestAnimationFrame(syncRowAxis);
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(syncRowAxis);
+    };
+
+    window.addEventListener("resize", schedule);
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    observer?.observe(row);
+
+    const firstCard = (
+      row.querySelector(".slick-slide.slick-active .netflix-standard-card-root") ||
+      row.querySelector(".netflix-standard-card-root")
+    ) as HTMLElement | null;
+    if (firstCard) observer?.observe(firstCard);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedule);
+      observer?.disconnect();
+    };
+  }, [syncRowAxis, readyItems.length, activeSlideIndex, isMobile, visibleTiles]);
 
   const pageCount = Math.max(1, Math.ceil(readyItems.length / Math.max(1, scrollTiles)));
   const activePage = Math.min(pageCount - 1, Math.floor(activeSlideIndex / Math.max(1, scrollTiles)));
@@ -151,6 +195,7 @@ export default function HomepageSlider({
 
   return (
     <Box
+      ref={rowRef}
       id={rowId}
       className={`slider-row${compactSpacing ? " compact-row" : ""}`}
       data-testid={`homepage-slider-${title.toLowerCase().replace(/\s+/g, "-")}`}
