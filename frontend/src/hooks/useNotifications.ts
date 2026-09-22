@@ -2,14 +2,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
-export const POLL_MS = 20000;
+export const POLL_MS = 60000;
 const EMPTY = { items: [], unread: 0, must_reset_password: false, role: "user" };
 
 export function authHeaders() {
   return { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("user_token") || ""}` };
 }
 
-// Ban detection shared by every authenticated fetch: clear the session and surface the reason on the next page load.
 export function handleBanned(res) {
   if (res.status !== 403) return false;
   return res.clone().json().then((d) => {
@@ -23,13 +22,14 @@ export function handleBanned(res) {
   }).catch(() => false);
 }
 
-// Polls the user's notifications (and the forced-reset flag) every 20s while a session is active.
+// Notifications are low urgency. Poll once a minute only while the document is
+// visible; focus/visibility immediately refreshes after the user comes back.
 export function useNotifications() {
   const [state, setState] = useState(EMPTY);
   const loggedIn = !!localStorage.getItem("user_token");
 
   const refresh = useCallback(async () => {
-    if (!localStorage.getItem("user_token")) return;
+    if (!localStorage.getItem("user_token") || document.visibilityState === "hidden") return;
     try {
       const res = await fetch(`${API_URL}/api/notifications`, { headers: authHeaders() });
       if (res.status === 403) { await handleBanned(res); return; }
@@ -41,10 +41,15 @@ export function useNotifications() {
   useEffect(() => {
     if (!loggedIn) return;
     refresh();
-    const id = setInterval(refresh, POLL_MS);
-    const onFocus = () => document.visibilityState === "visible" && refresh();
-    document.addEventListener("visibilitychange", onFocus);
-    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onFocus); };
+    const id = window.setInterval(refresh, POLL_MS);
+    const onVisibility = () => document.visibilityState === "visible" && refresh();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", refresh, { passive: true });
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", refresh);
+    };
   }, [loggedIn, refresh]);
 
   const markRead = useCallback(async (ids) => {
