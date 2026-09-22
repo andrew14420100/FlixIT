@@ -15,7 +15,11 @@ interface HeroSettings {
 
 function heroProfile() {
   if (typeof window === 'undefined') return 'guest';
-  return localStorage.getItem('netflix_user_id') || 'guest';
+  try {
+    return localStorage.getItem('netflix_user_id') || 'guest';
+  } catch {
+    return 'guest';
+  }
 }
 
 function heroViewport() {
@@ -29,32 +33,20 @@ function bootstrappedHero() {
   return value?.contentId ? value : null;
 }
 
-function heroRevision(hero: HeroSettings | null | undefined) {
-  if (!hero?.contentId) return 'standalone';
-  return [
-    hero.updatedAt || '',
-    hero.contentId || '',
-    hero.mediaType || '',
-    hero.customTitle || '',
-    hero.customDescription || '',
-    hero.customBackdrop || '',
-    hero.seasonLabel || '',
-  ].join('|');
-}
-
 /**
- * Home can bootstrap the current Hero, but Admin edits must become visible
- * immediately when the user returns to /browse. Keep the bootstrap for fast
- * first paint and always revalidate it in the background.
+ * All Home Hero consumers share one React Query key. Previously the cache key
+ * included the current Hero revision, so MainLayout helpers and HeroSection could
+ * issue parallel /api/public/hero requests during the same refresh. A stable key
+ * lets React Query coalesce them into one request while focus/reconnect still
+ * revalidate Admin changes immediately.
  */
 export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
   const hydrated = initialHero?.contentId ? initialHero : bootstrappedHero();
-  const revision = heroRevision(hydrated);
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v4', profile, viewport, revision],
+    queryKey: ['hero-settings-v5', profile, viewport],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
@@ -65,10 +57,12 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
         if (!response.ok) return hydrated || null;
         const data = await response.json();
         if (!data?.contentId) return hydrated || null;
-        return {
+        const normalized = {
           ...data,
           mediaType: data.mediaType || 'tv',
         };
+        if (typeof window !== 'undefined') (window as any).__flixitHomeHero = normalized;
+        return normalized;
       } catch {
         return hydrated || null;
       }
@@ -84,7 +78,10 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
-    refetchOnMount: 'always',
+    // If the Home bootstrap already supplied the Hero there is no reason to
+    // duplicate that network request during the same mount. Returning to the
+    // tab still revalidates because staleTime stays at zero.
+    refetchOnMount: hydrated?.contentId ? false : 'always',
     retry: 1,
   });
 }
