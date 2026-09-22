@@ -1,0 +1,51 @@
+name: FLIXIT Quality Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - '.github/workflows/quality-gate.yml'
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - 'backend/**'
+      - '.github/workflows/quality-gate.yml'
+
+concurrency:
+  group: flixit-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - run: corepack enable
+      - run: yarn install --frozen-lockfile --non-interactive
+      - name: Production build
+        env:
+          CI: 'false'
+          GENERATE_SOURCEMAP: 'false'
+        run: yarn build
+
+  backend-syntax:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile backend Python
+        run: python -m compileall -q backend
