@@ -49,10 +49,23 @@ const DetailEpisodeVisualPolish = lazy(() => import("src/components/detail/Detai
 const SeasonMenuAnchorTracker = lazy(() => import("src/components/SeasonMenuAnchorTracker"));
 const WatchEpisodeAdvanceTracker = lazy(() => import("src/components/watch/WatchEpisodeAdvanceTracker"));
 
+function isHomeRoute(pathname: string) {
+  const raw = String(pathname || "/");
+  const path = raw.length > 1 ? raw.replace(/\/+$/, "") : raw;
+  return (
+    path === "/" ||
+    path === "/browse" ||
+    path === "/browse/genre/movie" ||
+    path === "/browse/genre/tv" ||
+    path === "/browse/latest" ||
+    path === "/browse/trending"
+  );
+}
+
 export default function MainLayout() {
   const location = useLocation();
   const isMobile = useMediaQuery("(max-width:899px)");
-  const isHome = location.pathname === "/" || location.pathname === "/browse";
+  const isHome = isHomeRoute(location.pathname);
   const isWatch = location.pathname.startsWith(`/${MAIN_PATH.watch}`) || location.pathname.startsWith("/watch");
   const isDetail = /^\/(?:detail|browse)\/(?:movie|tv)\/\d+(?:\/|$)/i.test(location.pathname);
   const isTvDetail = /^\/(?:detail|browse)\/tv\/\d+(?:\/|$)/i.test(location.pathname);
@@ -83,10 +96,10 @@ export default function MainLayout() {
     <Box sx={{ width: "100%", minHeight: "100vh", bgcolor: "background.default", margin: 0, padding: 0, overflowX: "hidden" }}>
       <ScCdnRecovery />
       <GlobalPlayGlyphNormalizer />
-      <MainHeader />
+      {!isWatch ? <MainHeader /> : null}
       {isHome ? <HomeHeroRuntimeFixes /> : null}
       {isHome ? <NetflixHomeAmbientExact /> : null}
-      <MobileGlobalBottomNav />
+      {!isWatch ? <MobileGlobalBottomNav /> : null}
 
       <Suspense fallback={null}>
         {isMobile && !isWatch ? <MobileSCExperience /> : null}
@@ -115,7 +128,7 @@ export default function MainLayout() {
           <VideoPortalContainer />
         </PortalProvider>
       </DetailModalProvider>
-      {location.pathname !== `/${MAIN_PATH.watch}` && !isMobileDetail && <Footer />}
+      {!isWatch && !isMobileDetail ? <Footer /> : null}
     </Box>
   );
 }
