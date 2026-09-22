@@ -6,7 +6,7 @@ import "src/components/NetflixMotionOverrides.css";
 import "src/components/NetflixHoverMotionExact.css";
 
 /*
- * Mini-modal motion reconstructed from the user's live frame capture.
+ * Mini-modal motion reconstructed from the user's live Netflix frame capture.
  *
  * Directly observed:
  * - the modal is first measured offscreen at top/left -9999px with opacity 0;
@@ -15,18 +15,17 @@ import "src/components/NetflixHoverMotionExact.css";
  * - the opening keyframe has a positive translateY (56px in the 366px sample);
  * - transform is updated inline every frame while computed CSS transition is 0s;
  * - opacity fades in separately, almost linearly over ~50ms;
- * - the shadow is already present while the opening opacity is still 0;
- * - the captured close animation is opacity 1 -> 0, 150ms linear, fill both.
+ * - the shadow is already present while the opening opacity is still 0.
  *
- * The measured transform samples fit a 200ms CSS-ease curve very closely.
- * We still drive it frame-by-frame because the captured inline transform changes
- * continuously while computed transition-duration remains 0s.
+ * Opening is frame-driven. Exit now mirrors the transform path back toward the
+ * source tile while preserving the captured 150ms linear opacity fade. This
+ * avoids the previous fade-only disappearance when the pointer leaves.
  */
 const OPEN_DELAY_MS = 300;
 const OPEN_MOTION_MS = 200;
 const OPEN_OPACITY_DELAY_MS = 0;
 const OPEN_OPACITY_MS = 50;
-const CLOSE_FADE_MS = 150;
+const CLOSE_MOTION_MS = 150;
 const INITIAL_SCALE = 0.666667;
 const NETFLIX_SHADOW = "rgba(0, 0, 0, 0.75) 0px 3px 10px";
 
@@ -93,6 +92,39 @@ function netflixMotionProgress(progress: number) {
   );
 }
 
+/* Same path played backwards: fast enough to feel responsive, no hard pop. */
+function netflixReverseMotionProgress(progress: number) {
+  const p = clamp01(progress);
+  return 1 - netflixMotionProgress(1 - p);
+}
+
+function readTransformState(node: HTMLElement) {
+  const style = getComputedStyle(node);
+  const transform = style.transform;
+  let scale = 1;
+  let translateY = 0;
+
+  if (transform && transform !== "none") {
+    try {
+      const MatrixCtor = (window as any).DOMMatrixReadOnly || (window as any).DOMMatrix;
+      if (MatrixCtor) {
+        const matrix = new MatrixCtor(transform);
+        scale = Number.isFinite(matrix.a) ? matrix.a : 1;
+        translateY = Number.isFinite(matrix.f) ? matrix.f : 0;
+      }
+    } catch (_) {
+      // Keep final-state defaults if matrix parsing is unavailable.
+    }
+  }
+
+  const opacity = Number.parseFloat(style.opacity);
+  return {
+    scale,
+    translateY,
+    opacity: Number.isFinite(opacity) ? opacity : 1,
+  };
+}
+
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
   const removeTimerRef = useRef<any>(null);
@@ -138,7 +170,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     removeTimerRef.current = setTimeout(() => {
       removeTimerRef.current = null;
       finishClose();
-    }, CLOSE_FADE_MS);
+    }, CLOSE_MOTION_MS);
   }, [clearOpenTimer, clearRemoveTimer, finishClose]);
 
   const onEnter = useCallback((event?: any) => {
@@ -230,7 +262,7 @@ export function ExpandOverlay({
 }: any) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const openRafRef = useRef<number>(0);
-  const closeAnimationRef = useRef<Animation | null>(null);
+  const closeRafRef = useRef<number>(0);
   const [geometry, setGeometry] = useState<MotionGeometry | null>(null);
 
   const cancelOpenMotion = useCallback(() => {
@@ -241,9 +273,9 @@ export function ExpandOverlay({
   }, []);
 
   const cancelCloseMotion = useCallback(() => {
-    if (closeAnimationRef.current) {
-      closeAnimationRef.current.cancel();
-      closeAnimationRef.current = null;
+    if (closeRafRef.current) {
+      cancelAnimationFrame(closeRafRef.current);
+      closeRafRef.current = 0;
     }
   }, []);
 
@@ -286,10 +318,6 @@ export function ExpandOverlay({
       transformOrigin = "100% 50%";
     }
 
-    // In the capture, the modal's FINAL center sits above the source center by
-    // exactly the opening translateY. At the first scaled keyframe, translateY
-    // moves that center back onto the source card. This was the main geometry
-    // mismatch in the previous implementation.
     const startTranslateY = INITIAL_SCALE * Math.max(0, modalHeight - playerHeight) / 2;
     const top = sourceCenterY - modalHeight / 2 - startTranslateY;
 
@@ -351,41 +379,59 @@ export function ExpandOverlay({
 
   useLayoutEffect(() => {
     const node = modalRef.current;
-    if (!geometry || !node) return;
+    if (!geometry || !node || typeof window === "undefined") return;
 
     if (!closing) {
       cancelCloseMotion();
       if (node.dataset.phase === "close") {
+        node.style.transition = "none";
+        node.style.transform = "none";
         node.style.opacity = "1";
+        node.style.boxShadow = NETFLIX_SHADOW;
+        node.style.willChange = "transform";
         node.dataset.phase = "open";
       }
       return;
     }
 
+    // Read the exact currently-painted state before cancelling the opening rAF.
+    // This makes mouse-out smooth even if the pointer leaves mid-expansion.
+    const from = readTransformState(node);
     cancelOpenMotion();
     cancelCloseMotion();
+
     node.dataset.phase = "close";
-    node.style.transform = "none";
-    node.style.opacity = "1";
+    node.style.transition = "none";
+    node.style.boxShadow = NETFLIX_SHADOW;
+    node.style.willChange = "transform, opacity";
 
-    if (typeof node.animate === "function") {
-      const animation = node.animate(
-        [{ opacity: "1" }, { opacity: "0" }],
-        {
-          duration: CLOSE_FADE_MS,
-          easing: "linear",
-          fill: "both",
-          iterations: 1,
-        }
-      );
-      closeAnimationRef.current = animation;
-    } else {
-      node.style.transition = `opacity ${CLOSE_FADE_MS}ms linear`;
-      requestAnimationFrame(() => {
-        node.style.opacity = "0";
-      });
-    }
+    let startTime: number | null = null;
 
+    const tick = (timestamp: number) => {
+      if (startTime === null) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+      const rawProgress = clamp01(elapsed / CLOSE_MOTION_MS);
+      const reverseProgress = netflixReverseMotionProgress(rawProgress);
+
+      const scale = from.scale + (INITIAL_SCALE - from.scale) * reverseProgress;
+      const translateY = from.translateY + (geometry.startTranslateY - from.translateY) * reverseProgress;
+      const opacity = from.opacity * (1 - rawProgress);
+
+      node.style.transform = `translateX(0px) translateY(${translateY}px) scale(${scale}) translateZ(0px)`;
+      node.style.opacity = String(opacity);
+
+      if (rawProgress < 1) {
+        closeRafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      closeRafRef.current = 0;
+      node.style.transform = `translateX(0px) translateY(${geometry.startTranslateY}px) scale(${INITIAL_SCALE}) translateZ(0px)`;
+      node.style.opacity = "0";
+      node.style.boxShadow = "none";
+    };
+
+    closeRafRef.current = requestAnimationFrame(tick);
     return cancelCloseMotion;
   }, [closing, geometry, cancelOpenMotion, cancelCloseMotion]);
 
