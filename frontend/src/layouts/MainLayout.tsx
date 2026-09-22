@@ -31,6 +31,7 @@ import "src/components/ScHomeViewportTuning.css";
 import "src/components/ScHomeScreenshotExact.css";
 import "src/components/ScHoverFreeze.css";
 import "src/components/NetflixHeroFinal.css";
+import "src/components/NetflixHeroSelections.css";
 
 // Route-specific helpers stay out of the initial shell. This is especially
 // important on mobile: Home, Detail and Watch no longer download each other's
