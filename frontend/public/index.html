@@ -10,39 +10,22 @@
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link rel="preconnect" href="https://image.tmdb.org" />
         <link rel="dns-prefetch" href="https://image.tmdb.org" />
-        <link rel="preconnect" href="https://cdn.streamingunity.vip" crossorigin />
-        <link rel="dns-prefetch" href="https://cdn.streamingunity.vip" />
+        <link rel="preconnect" href="https://cdn.streamingcommunityz.ninja" crossorigin />
+        <link rel="dns-prefetch" href="https://cdn.streamingcommunityz.ninja" />
+        <link rel="preconnect" href="https://cdn.streamingunity-premium.to" crossorigin />
+        <link rel="dns-prefetch" href="https://cdn.streamingunity-premium.to" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Unbounded:wght@200..900&family=Bebas+Neue&display=swap" rel="stylesheet" />
         <title>FlixIT | Streaming</title>
         <script>
-            // Fetch the complete SC artwork manifest before React boots. The
-            // manifest tells us the current CDN too, so domain rotations do not
-            // leave the Home pointing at an obsolete image host.
-            window.__FLIXIT_SC_CATALOG_PROMISE__ = fetch('/sc-artwork-catalog.json', {
-                cache: 'no-cache',
-                headers: { Accept: 'application/json' }
-            }).then(function (response) {
-                if (!response.ok) throw new Error('SC catalog ' + response.status);
-                return response.json();
-            }).then(function (payload) {
-                try {
-                    if (payload && payload.cdn_base_url) {
-                        var origin = new URL(payload.cdn_base_url).origin;
-                        if (!document.querySelector('link[data-flixit-sc-cdn="' + origin + '"]')) {
-                            var link = document.createElement('link');
-                            link.rel = 'preconnect';
-                            link.href = origin;
-                            link.crossOrigin = 'anonymous';
-                            link.setAttribute('data-flixit-sc-cdn', origin);
-                            document.head.appendChild(link);
-                        }
-                    }
-                } catch (_) {}
-                return payload;
-            }).catch(function () { return null; });
+            // The complete SC catalogue is ~6.8 MB and is a backend concern.
+            // Older builds downloaded + JSON-parsed it before React could paint,
+            // making every hard refresh compete with the critical Home request.
+            // Keep the legacy global contract for any old runtime consumer, but
+            // never put the full catalogue on the startup critical path.
+            window.__FLIXIT_SC_CATALOG_PROMISE__ = Promise.resolve(null);
         </script>
         <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
-        <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
+        <script defer src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
     </head>
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
@@ -109,14 +92,32 @@
                     }),
                     (e.__SV = 1));
             })(document, window.posthog || []);
-            posthog.init("phc_xAvL2Iq4tFmANRE7kzbKwaSqp1HJjN7x48s3vr0CMjs", {
-                api_host: "https://us.i.posthog.com",
-                person_profiles: "identified_only",
-                session_recording: {
-                    recordCrossOriginIframes: true,
-                    capturePerformance: false,
-                },
-            });
+
+            // Analytics and session recording are useful, but neither belongs on
+            // the first-paint path. Load them only after the page has rendered and
+            // the browser has idle time, with a timeout fallback for busy devices.
+            (function () {
+                function initPosthog() {
+                    if (!window.posthog || window.__flixitPosthogStarted) return;
+                    window.__flixitPosthogStarted = true;
+                    posthog.init("phc_xAvL2Iq4tFmANRE7kzbKwaSqp1HJjN7x48s3vr0CMjs", {
+                        api_host: "https://us.i.posthog.com",
+                        person_profiles: "identified_only",
+                        session_recording: {
+                            recordCrossOriginIframes: true,
+                            capturePerformance: false,
+                        },
+                    });
+                }
+
+                window.addEventListener("load", function () {
+                    if ("requestIdleCallback" in window) {
+                        window.requestIdleCallback(initPosthog, { timeout: 3500 });
+                    } else {
+                        window.setTimeout(initPosthog, 1800);
+                    }
+                }, { once: true });
+            })();
         </script>
     </body>
 </html>
