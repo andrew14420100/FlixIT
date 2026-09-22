@@ -108,12 +108,16 @@ code {
 .slick-slider .slick-slide:hover {
     z-index: 50 !important;
 }
+/* Hover previews now live in a fixed portal. The old 180px padding/margin hack
+   enlarged every carousel's document box and produced a huge empty gap when a
+   ranked poster failed. Keep the track visually overflowable without adding
+   phantom vertical space. */
 .slick-slider .slick-list {
     overflow: visible !important;
-    padding-bottom: 180px !important;
-    margin-bottom: -180px !important;
-    padding-top: 20px !important;
-    margin-top: -20px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
 }
 .slick-slider .slick-track {
     display: flex !important;
