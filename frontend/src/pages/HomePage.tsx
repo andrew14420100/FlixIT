@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
@@ -19,6 +19,7 @@ const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
 const FIRST_PAINT_ROWS = 8;
 const FIRST_PAINT_ITEMS_PER_ROW = 18;
+const ROW_REVEAL_CHUNK = 4;
 
 function readHomeCache() {
   if (typeof window === "undefined") return null;
@@ -196,6 +197,8 @@ export function Component() {
   const queryClient = useQueryClient();
   const currentMediaType = filterMediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
   const { items: progressItems, username, removeItem } = useContinueWatching();
+  const loadMoreRowsRef = useRef<HTMLDivElement | null>(null);
+  const [visibleRowCount, setVisibleRowCount] = useState(FIRST_PAINT_ROWS);
 
   const continueItems = useMemo(() => {
     return (progressItems || [])
@@ -262,9 +265,6 @@ export function Component() {
   }, [bootstrap]);
 
   useEffect(() => {
-    // A brand-new backend can deliberately return a Hero-only compact payload
-    // while it builds the catalogue in the background. Hydrate even when that
-    // first compact response has zero rows; never force the first paint to wait.
     if (!bootstrap || bootstrap?.compact === false) return;
     let cancelled = false;
     let timer = 0;
@@ -314,6 +314,35 @@ export function Component() {
   const rows = useMemo(
     () => normalizeRows(bootstrap?.rows || [], filterMediaType, continueKeys),
     [bootstrap?.rows, filterMediaType, continueKeys]
+  );
+
+  useEffect(() => {
+    setVisibleRowCount(FIRST_PAINT_ROWS);
+  }, [filterMediaType]);
+
+  useEffect(() => {
+    if (visibleRowCount >= rows.length) return;
+    const sentinel = loadMoreRowsRef.current;
+    if (!sentinel || typeof IntersectionObserver === "undefined") {
+      setVisibleRowCount(rows.length);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setVisibleRowCount((current) => Math.min(rows.length, current + ROW_REVEAL_CHUNK));
+      },
+      // Start mounting the next four rails well before the user reaches them.
+      { rootMargin: "1400px 0px 1400px 0px" }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [rows.length, visibleRowCount]);
+
+  const mountedRows = useMemo(
+    () => rows.slice(0, Math.max(FIRST_PAINT_ROWS, visibleRowCount)),
+    [rows, visibleRowCount]
   );
   const hasHero = !!bootstrap?.hero?.contentId;
   const hasReadyRows = rows.length > 0 || continueItems.length > 0;
@@ -372,7 +401,7 @@ export function Component() {
             />
           ) : null}
 
-          {rows.map((row) =>
+          {mountedRows.map((row) =>
             row.section_type === "top10" ? (
               <Top10Slider key={row.key} title={row.name} items={row.items} />
             ) : (
@@ -384,6 +413,15 @@ export function Component() {
               />
             )
           )}
+
+          {mountedRows.length < rows.length ? (
+            <Box
+              ref={loadMoreRowsRef}
+              aria-hidden="true"
+              data-testid="home-row-loader-sentinel"
+              sx={{ width: "100%", height: 1, pointerEvents: "none" }}
+            />
+          ) : null}
         </Stack>
       )}
     </Box>
