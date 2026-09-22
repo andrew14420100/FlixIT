@@ -2,8 +2,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
-import Stack from "@mui/material/Stack";
-import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import VolumeOffIcon from "@mui/icons-material/VolumeOff";
@@ -17,11 +15,16 @@ import { useContinueWatching } from "src/hooks/useContinueWatching";
 import useAutomaticMediaAssets, { tmdbImageUrl } from "src/hooks/useAutomaticMediaAssets";
 import useResolvedTrailer from "src/hooks/useResolvedTrailer";
 import TrailerPlayer from "./TrailerPlayer";
+import "./NetflixHeroExact.css";
 
 const DEFAULT_FEATURED_ID = 202208;
 const DEFAULT_FEATURED_TYPE = MEDIA_TYPE.Tv;
 const TRAILER_DELAY_MS = 3000;
 const STREAM_CACHE_PREFIX = "watch_stream_cache:";
+
+function firstValue(...values: any[]) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
 
 function cachePrefetchedStream(typeSlug: string, id: number, data: any) {
   if (!data?.success || !data?.stream || typeof window === "undefined") return;
@@ -55,6 +58,121 @@ function initialHeroLogo(hero: any) {
   );
 }
 
+function normalizeGenreNames(detail: any, assets: any) {
+  const candidates = [detail?.genres, assets?.genres, assets?.genre_names, assets?.genreNames];
+  for (const value of candidates) {
+    if (!value) continue;
+    if (Array.isArray(value)) {
+      const names = value
+        .map((entry: any) => typeof entry === "string" ? entry : entry?.name)
+        .filter(Boolean);
+      if (names.length) return names;
+    }
+    if (typeof value === "string") {
+      const names = value.split(/[|,•]/).map((entry) => entry.trim()).filter(Boolean);
+      if (names.length) return names;
+    }
+  }
+  return [];
+}
+
+function yearFromDetail(detail: any) {
+  const raw = firstValue(
+    detail?.first_air_date,
+    detail?.release_date,
+    detail?.air_date,
+    detail?.year
+  );
+  if (!raw) return "";
+  const match = String(raw).match(/\d{4}/);
+  return match?.[0] || "";
+}
+
+function runtimeLabel(detail: any) {
+  const runtime = Number(firstValue(detail?.runtime, detail?.episode_run_time?.[0], 0));
+  if (!runtime) return "";
+  if (runtime < 60) return `${runtime} min`;
+  const hours = Math.floor(runtime / 60);
+  const minutes = runtime % 60;
+  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
+}
+
+function certificationFromDetail(detail: any, hero: any, assets: any) {
+  const direct = firstValue(
+    hero?.certification,
+    hero?.age,
+    hero?.contentRating,
+    detail?.certification,
+    detail?.content_rating,
+    detail?.contentRating,
+    assets?.certification,
+    assets?.content_rating,
+    assets?.contentRating
+  );
+  if (direct) return String(direct);
+
+  const ratings = detail?.content_ratings?.results;
+  if (Array.isArray(ratings)) {
+    const preferred =
+      ratings.find((entry: any) => entry?.iso_3166_1 === "IT") ||
+      ratings.find((entry: any) => entry?.iso_3166_1 === "US") ||
+      ratings.find((entry: any) => entry?.rating);
+    if (preferred?.rating) return String(preferred.rating);
+  }
+
+  const releases = detail?.release_dates?.results;
+  if (Array.isArray(releases)) {
+    const preferred =
+      releases.find((entry: any) => entry?.iso_3166_1 === "IT") ||
+      releases.find((entry: any) => entry?.iso_3166_1 === "US") ||
+      releases[0];
+    const certification = preferred?.release_dates?.find((entry: any) => entry?.certification)?.certification;
+    if (certification) return String(certification);
+  }
+
+  return "";
+}
+
+function normalizeAge(value: string) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^\d{1,2}$/.test(text)) return `${text}+`;
+  return text;
+}
+
+function normalizeCallouts(...values: any[]) {
+  for (const value of values) {
+    if (!value) continue;
+    if (Array.isArray(value)) {
+      const texts = value
+        .map((entry: any) => typeof entry === "string" ? entry : firstValue(entry?.text, entry?.label, entry?.title))
+        .filter(Boolean)
+        .map(String);
+      if (texts.length) return texts.slice(0, 2);
+    }
+    if (typeof value === "string") return [value];
+  }
+  return [];
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M6.2 3.2a1 1 0 0 1 1.51-.86l12.1 8.1a1.86 1.86 0 0 1 0 3.12l-12.1 8.1A1 1 0 0 1 6.2 20.8z" />
+    </svg>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 10.6v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="7.3" r="1.15" fill="currentColor" />
+    </svg>
+  );
+}
+
 export default function HeroSection({ mediaType: _mediaType, initialHero = null }) {
   const navigate = useNavigate();
   const { data: heroSettings, isLoading: heroLoading } = useHeroData(initialHero);
@@ -64,15 +182,16 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
     () => (heroSettings?.contentId ? parseInt(heroSettings.contentId) : DEFAULT_FEATURED_ID),
     [heroSettings?.contentId]
   );
+
   const featuredMediaType = useMemo(() => {
     if (heroSettings?.mediaType) {
       return heroSettings.mediaType === "movie" ? MEDIA_TYPE.Movie : MEDIA_TYPE.Tv;
     }
     return DEFAULT_FEATURED_TYPE;
   }, [heroSettings?.mediaType]);
+
   const typeSlug = featuredMediaType === MEDIA_TYPE.Movie ? "movie" : "tv";
   const skipQueries = heroLoading || !featuredId;
-
   const inlineDetail = heroSettings?.detail?.id === featuredId ? heroSettings.detail : null;
   const inlineAssets = heroSettings?.assets || null;
 
@@ -92,30 +211,22 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
     featuredMediaType,
     !skipQueries
   );
+
   const assets = useMemo(
     () => ({
       ...(automaticAssets || {}),
       ...(inlineAssets || {}),
       logo_path: inlineAssets?.logo_path || automaticAssets?.logo_path || null,
-      fallback_logo_path:
-        inlineAssets?.fallback_logo_path || automaticAssets?.fallback_logo_path || null,
-      backdrop_path:
-        inlineAssets?.backdrop_path || automaticAssets?.backdrop_path || null,
-      titled_backdrop_path:
-        inlineAssets?.titled_backdrop_path || automaticAssets?.titled_backdrop_path || null,
-      hero_backdrop_path:
-        inlineAssets?.hero_backdrop_path || automaticAssets?.hero_backdrop_path || null,
-      detail_backdrop_path:
-        inlineAssets?.detail_backdrop_path || automaticAssets?.detail_backdrop_path || null,
+      fallback_logo_path: inlineAssets?.fallback_logo_path || automaticAssets?.fallback_logo_path || null,
+      backdrop_path: inlineAssets?.backdrop_path || automaticAssets?.backdrop_path || null,
+      titled_backdrop_path: inlineAssets?.titled_backdrop_path || automaticAssets?.titled_backdrop_path || null,
+      hero_backdrop_path: inlineAssets?.hero_backdrop_path || automaticAssets?.hero_backdrop_path || null,
+      detail_backdrop_path: inlineAssets?.detail_backdrop_path || automaticAssets?.detail_backdrop_path || null,
     }),
     [automaticAssets, inlineAssets]
   );
 
-  const resolvedTrailer = useResolvedTrailer(
-    featuredMediaType,
-    featuredId,
-    !skipQueries
-  );
+  const resolvedTrailer = useResolvedTrailer(featuredMediaType, featuredId, !skipQueries);
   const trailerKey = resolvedTrailer.url;
 
   const [muted, setMuted] = useState(true);
@@ -128,7 +239,9 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
   const [heroLogoSrc, setHeroLogoSrc] = useState<string | null>(() => initialHeroLogo(initialHero));
   const [heroLogoFailed, setHeroLogoFailed] = useState(false);
 
-  const isOffset = useOffSetTop(window.innerHeight * 0.6);
+  const isOffset = useOffSetTop(
+    typeof window !== "undefined" ? window.innerHeight * 0.6 : 600
+  );
 
   const logoPath = tmdbImageUrl(assets?.logo_path, "original");
   const fallbackLogoPath = tmdbImageUrl(assets?.fallback_logo_path, "original");
@@ -136,14 +249,18 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
   const backdropUrl = useMemo(() => {
     if (heroSettings?.customBackdrop) return heroSettings.customBackdrop;
     return tmdbImageUrl(
-      assets?.backdrop_path ||
+      assets?.hero_backdrop_path ||
+        assets?.backdrop_path ||
         detailData?.backdrop_path ||
+        assets?.detail_backdrop_path ||
         assets?.titled_backdrop_path,
       "original"
     );
   }, [
     heroSettings?.customBackdrop,
+    assets?.hero_backdrop_path,
     assets?.backdrop_path,
+    assets?.detail_backdrop_path,
     assets?.titled_backdrop_path,
     detailData?.backdrop_path,
   ]);
@@ -159,16 +276,57 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
   }, [backdropUrl]);
 
   useEffect(() => {
-    if (!logoPath) return;
-    setHeroLogoSrc(logoPath);
+    setHeroLogoSrc(logoPath || fallbackLogoPath || null);
     setHeroLogoFailed(false);
-  }, [logoPath]);
+  }, [logoPath, fallbackLogoPath, featuredId]);
 
   const displayTitle =
     heroSettings?.customTitle || detailData?.name || detailData?.title || assets?.title || "";
-  const displayDescription =
-    heroSettings?.customDescription || detailData?.overview || "";
+  const displayDescription = heroSettings?.customDescription || detailData?.overview || "";
   const seasonLabel = heroSettings?.seasonLabel || "";
+
+  const attributes = useMemo(() => {
+    const genres = normalizeGenreNames(detailData, assets);
+    const year = yearFromDetail(detailData);
+    const age = normalizeAge(certificationFromDetail(detailData, heroSettings, assets));
+
+    let duration = seasonLabel;
+    if (!duration && typeSlug === "tv") {
+      const seasons = Number(firstValue(detailData?.number_of_seasons, detailData?.seasons_count, 0));
+      if (seasons) duration = `${seasons} ${seasons === 1 ? "stagione" : "stagioni"}`;
+    }
+    if (!duration && typeSlug === "movie") duration = runtimeLabel(detailData);
+
+    return [
+      { text: typeSlug === "tv" ? "Serie" : "Film" },
+      genres[0] ? { text: genres[0] } : null,
+      year ? { text: year } : null,
+      duration ? { text: duration } : null,
+      age ? { text: age, age: true } : null,
+    ].filter(Boolean);
+  }, [detailData, assets, heroSettings, seasonLabel, typeSlug]);
+
+  const callouts = useMemo(() => {
+    const explicit = normalizeCallouts(
+      heroSettings?.callouts,
+      heroSettings?.heroCallouts,
+      detailData?.callouts,
+      assets?.callouts
+    );
+    if (explicit.length) return explicit;
+
+    const derived: string[] = [];
+    if (detailData?.next_episode_to_air) derived.push("Nuovi episodi in arrivo");
+    const weeks = Number(firstValue(
+      heroSettings?.top10Weeks,
+      detailData?.top10_weeks,
+      detailData?.weeks_in_top10,
+      assets?.top10Weeks,
+      0
+    ));
+    if (weeks > 0) derived.push(`${weeks} ${weeks === 1 ? "settimana" : "settimane"} nella Top 10`);
+    return derived.slice(0, 2);
+  }, [heroSettings, detailData, assets]);
 
   useEffect(() => {
     setTrailerGateOpen(false);
@@ -204,10 +362,9 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
     if (!featuredId || prefetchedRef.current === identity) return;
     prefetchedRef.current = identity;
 
-    const url =
-      typeSlug === "tv"
-        ? `/api/player/tv/${featuredId}/1/1`
-        : `/api/player/movie/${featuredId}`;
+    const url = typeSlug === "tv"
+      ? `/api/player/tv/${featuredId}/1/1`
+      : `/api/player/movie/${featuredId}`;
 
     fetch(url, { cache: "no-store", headers: { Accept: "application/json" } })
       .then(async (response) => {
@@ -223,35 +380,31 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
   const handlePlay = () => {
     const progress = getProgress(featuredId);
     const startTime = progress?.progress ? Math.floor(progress.progress) : 0;
-    navigate(
-      `/${MAIN_PATH.watch}/${typeSlug}/${featuredId}${startTime > 0 ? `?t=${startTime}` : ""}`
-    );
+    navigate(`/${MAIN_PATH.watch}/${typeSlug}/${featuredId}${startTime > 0 ? `?t=${startTime}` : ""}`);
+  };
+
+  const handleMoreInfo = () => {
+    navigate(`/${MAIN_PATH.browse}/${typeSlug}/${featuredId}`);
   };
 
   return (
     <Box
+      component="section"
+      data-uia="billboard"
+      aria-label={`Contenuti consigliati: ${displayTitle}`}
       data-testid="hero-section"
-      className="billboard"
-      sx={{
-        position: "relative",
-        zIndex: 1,
-        width: "100%",
-        height: { xs: "34em", sm: "30em", md: "35em" },
-        overflow: "visible",
-        bgcolor: "#0f0f0f",
-        fontFamily: '\"Netflix Sans\",\"Helvetica Neue\",Helvetica,Arial,sans-serif',
-        fontSize: "1vw",
-        lineHeight: "inherit",
-        color: "#e8e8e8",
-        userSelect: "none",
-        boxSizing: "border-box",
-      }}
+      data-compact={infoTarget ? "true" : "false"}
+      className="netflix-home-billboard"
     >
-      {heroImageSrc && (
+      {heroImageSrc ? (
         <Box
           component="img"
           src={heroImageSrc}
-          alt="Hero backdrop"
+          alt=""
+          aria-hidden="true"
+          data-uia="billboard-background-media+image"
+          data-testid="hero-backdrop"
+          className="netflix-home-backdrop"
           onLoad={() => setImageLoaded(true)}
           onError={() => {
             if (fallbackBackdropUrl && heroImageSrc !== fallbackBackdropUrl) {
@@ -262,38 +415,23 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
             }
           }}
           fetchPriority="high"
+          loading="eager"
           decoding="async"
-          data-testid="hero-backdrop"
           sx={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            width: "100%",
-            height: { xs: "35em", sm: "48em", md: "56.25em" },
-            objectFit: "cover",
-            objectPosition: "top center",
             opacity: imageLoaded ? (videoActive ? 0 : 1) : 0,
-            transition: "opacity 900ms ease-in-out",
-            zIndex: 0,
+            transition: "opacity 650ms ease-in-out",
           }}
         />
-      )}
+      ) : null}
 
-      {showVideo && (
+      {showVideo ? (
         <Box
-          className="hero-video-container"
+          data-uia="billboard-background-media+player"
           data-testid="hero-trailer"
+          className="netflix-home-video-layer"
           sx={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            height: { xs: "35em", sm: "48em", md: "56.25em" },
-            zIndex: 3,
-            overflow: "hidden",
             opacity: videoActive ? 1 : 0,
-            transition: "opacity 900ms ease-in-out",
+            transition: "opacity 650ms ease-in-out",
           }}
         >
           <TrailerPlayer
@@ -301,378 +439,121 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
             muted={muted}
             playing={!isOffset}
             loop={false}
-            zoom={1.38}
+            zoom={1}
             onEnded={handleVideoEnded}
             onPlaying={handleVideoPlaying}
           />
         </Box>
-      )}
+      ) : null}
 
-      <Box
-        sx={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: { xs: "35em", sm: "48em", md: "56.25em" },
-          zIndex: 4,
-          pointerEvents: "none",
-          overflow: "hidden",
-        }}
-      >
-        <Box
-          sx={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            height: "14.7em",
-            backgroundImage:
-              "linear-gradient(to bottom, rgba(0,0,0,.5) 0%, rgba(0,0,0,0) 85%)",
-          }}
-        />
-        <Box
-          sx={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: "26.09%",
-            bottom: 0,
-            display: { xs: "none", sm: "block" },
-            backgroundImage:
-              "linear-gradient(77deg, rgba(0,0,0,.6) 0%, rgba(0,0,0,0) 85%)",
-          }}
-        />
-        <Box
-          sx={{
-            position: "absolute",
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: { xs: "50%", sm: "14.7em" },
-            backgroundImage: {
-              xs: "linear-gradient(to bottom, rgba(15,15,15,0) 0%, rgba(15,15,15,.75) 50%, #0f0f0f 100%)",
-              sm: "linear-gradient(to bottom, rgba(15,15,15,0) 0%, rgba(15,15,15,.15) 15%, rgba(15,15,15,.35) 29%, rgba(15,15,15,.58) 44%, #141414 68%, #0f0f0f 100%)",
-            },
-          }}
-        />
-      </Box>
+      <Box aria-hidden="true" className="netflix-home-shade" />
 
-      <Box sx={{ position: "absolute", inset: 0, zIndex: 10, pointerEvents: "none" }}>
-        <Box
-          className="info-wrap"
-          sx={{
-            position: "absolute",
-            top: 0,
-            bottom: "10%",
-            left: "4%",
-            width: "36%",
-            zIndex: 10,
-            pointerEvents: "none",
-            "@media (min-width:1100px) and (max-width:1399px)": { width: "40%" },
-            "@media (min-width:800px) and (max-width:1099px)": { width: "45%" },
-            "@media (min-width:500px) and (max-width:799px)": { width: "75%" },
-            "@media (max-width:499px)": { width: "92%", bottom: "5%", top: "25%" },
-          }}
-        >
-          <Box
-            className="info"
-            data-testid="hero-content"
-            sx={{
-              position: "absolute",
-              margin: "1em 0",
-              bottom: 0,
-              pointerEvents: "auto",
-              width: { xs: "100%", sm: "auto" },
-            }}
+      {showVideo ? (
+        <Box className="netflix-home-volume-wrap" data-uia="billboard-controls" data-testid="hero-controls">
+          <IconButton
+            aria-label={muted ? "Volume disattivato" : "Volume attivato"}
+            onClick={() => setMuted((value) => !value)}
+            data-testid="hero-audio-toggle"
+            className="netflix-home-volume-button"
           >
-            <Box
-              className="title"
-              sx={{
-                color: "#fff",
-                fontSize: "3em",
-                textShadow: "2px 2px 4px #000",
-                fontWeight: 700,
-                lineHeight: "1em",
-                transformOrigin: "left bottom",
-                transform: infoTarget
-                  ? "scale(0.8) translate3d(0px, 2.5em, 0px)"
-                  : "scale(1) translate3d(0px, 0px, 0px)",
-                transition: "transform 1.05s ease",
-                "@media (max-width:499px)": {
-                  display: "flex",
-                  justifyContent: "center",
-                },
-              }}
-            >
-              {heroLogoSrc ? (
-                <Box
-                  component="img"
-                  src={heroLogoSrc}
-                  alt={displayTitle}
-                  data-testid="hero-logo"
-                  fetchPriority="high"
-                  loading="eager"
-                  onError={() => {
-                    if (fallbackLogoPath && heroLogoSrc !== fallbackLogoPath) {
-                      setHeroLogoSrc(fallbackLogoPath);
-                    } else {
-                      setHeroLogoFailed(true);
-                      setHeroLogoSrc(null);
-                    }
-                  }}
-                  decoding="async"
-                  sx={{
-                    display: "block",
-                    width: "auto",
-                    height: "auto",
-                    maxHeight: "3em",
-                    objectFit: "contain",
-                    objectPosition: "left bottom",
-                    pointerEvents: "none",
-                    "@media (min-width:500px) and (max-width:799px)": {
-                      maxWidth: "60%",
-                      maxHeight: "2.75em",
-                    },
-                    "@media (max-width:499px)": { maxWidth: "70%" },
-                  }}
-                />
-              ) : heroLogoFailed ? (
-                <Typography
-                  data-testid="hero-title-fallback"
-                  sx={{
-                    font: "inherit",
-                    fontFamily: "inherit",
-                    fontSize: "1em",
-                    fontWeight: 700,
-                    lineHeight: "1em",
-                    color: "#fff",
-                    textShadow: "inherit",
-                  }}
-                >
-                  {displayTitle}
-                </Typography>
-              ) : null}
-            </Box>
+            {muted ? <VolumeOffIcon /> : <VolumeUpIcon />}
+          </IconButton>
+        </Box>
+      ) : null}
 
-            {seasonLabel && (
-              <Typography
-                className="supplemental-msg"
-                data-testid="hero-season-label"
-                sx={{
-                  opacity: infoTarget ? 0 : 1,
-                  fontSize: "1.3em",
-                  color: "#fff",
-                  mt: "1em",
-                  mb: "-.75em",
-                  fontWeight: 700,
-                  fontFamily: "inherit",
-                  lineHeight: "inherit",
-                  transition: "opacity .5s ease",
-                  "@media (max-width:499px)": { mb: "-.25em", textAlign: "center" },
-                }}
-              >
-                {seasonLabel}
-              </Typography>
-            )}
-
+      <Box className="netflix-home-content" data-testid="hero-content">
+        <Box className="netflix-home-title-block" data-uia="billboard-title">
+          {heroLogoSrc ? (
             <Box
-              className="genres"
-              sx={{
-                display: "none",
-                "@media (max-width:499px)": {
-                  display: "flex",
-                  width: "fit-content",
-                  maxWidth: "100%",
-                  mt: "1.5em",
-                  mx: "auto",
-                  overflow: "hidden",
-                },
+              component="img"
+              src={heroLogoSrc}
+              alt={displayTitle}
+              data-uia="billboard-logo"
+              data-testid="hero-logo"
+              className="netflix-home-logo"
+              fetchPriority="high"
+              loading="eager"
+              decoding="async"
+              onError={() => {
+                if (fallbackLogoPath && heroLogoSrc !== fallbackLogoPath) {
+                  setHeroLogoSrc(fallbackLogoPath);
+                } else {
+                  setHeroLogoFailed(true);
+                  setHeroLogoSrc(null);
+                }
               }}
             />
+          ) : heroLogoFailed || displayTitle ? (
+            <Box className="netflix-home-title-fallback" data-testid="hero-title-fallback">
+              {displayTitle}
+            </Box>
+          ) : null}
 
-            <Typography
-              className="plot"
-              data-testid="hero-overview"
-              sx={{
-                opacity: infoTarget ? 0 : 1,
-                mt: "1.5em",
-                fontSize: "1.2em",
-                lineHeight: 1.4,
-                fontWeight: 400,
-                fontFamily: "inherit",
-                color: "#fff",
-                textShadow: "2px 2px 4px rgba(0,0,0,.45)",
-                transition: "opacity .5s ease",
-                display: "-webkit-box",
-                WebkitLineClamp: 3,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-                maxWidth: "100%",
-                "@media (max-width:499px)": { display: "none" },
-              }}
-            >
-              {displayDescription}
-            </Typography>
-
-            <Stack
-              className="info-buttons"
-              direction="row"
-              spacing={0}
-              sx={{
-                mt: { xs: "1.25em", sm: "2em" },
-                gap: 0,
-                alignItems: "center",
-                justifyContent: { xs: "center", sm: "flex-start" },
-              }}
-            >
-              <Box
-                component="button"
-                onClick={handlePlay}
-                onMouseEnter={prefetchStream}
-                onFocus={prefetchStream}
-                data-testid="hero-play-button"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 0,
-                  bgcolor: "#fff",
-                  color: "#000",
-                  border: "none",
-                  borderRadius: "3px",
-                  height: "auto",
-                  minWidth: 0,
-                  px: "2em",
-                  py: ".5em",
-                  mr: "1em",
-                  fontFamily: "inherit",
-                  fontSize: "1em",
-                  fontWeight: 700,
-                  lineHeight: "inherit",
-                  cursor: "pointer",
-                  transition: "background-color 0.2s ease",
-                  "&:hover": { bgcolor: "rgba(255,255,255,0.82)" },
-                }}
-              >
-                <Box
-                  component="svg"
-                  viewBox="0 0 384 512"
-                  aria-hidden="true"
-                  className="play-icon"
-                  sx={{
-                    width: ".9em",
-                    height: "1.2em",
-                    mr: ".5em",
-                    flex: "0 0 auto",
-                    fontSize: "1.5em",
-                  }}
-                >
-                  <path
-                    fill="currentColor"
-                    d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80v352c0 17.4 9.4 33.4 24.5 41.9S58.2 482 73 473l288-176c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41z"
-                  />
+          {attributes.length ? (
+            <Box className="netflix-home-attributes" data-uia="attributes-elements">
+              {attributes.map((attribute: any, index: number) => (
+                <Box key={`${attribute.text}-${index}`} sx={{ display: "contents" }}>
+                  {index > 0 ? <span className="netflix-home-attribute-dot" aria-hidden="true">•</span> : null}
+                  <span className={attribute.age ? "netflix-home-attribute netflix-home-age" : "netflix-home-attribute"}>
+                    {attribute.text}
+                  </span>
                 </Box>
-                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>
-                  Riproduci
-                </Box>
-              </Box>
-
-              <Box
-                component="button"
-                onClick={() => navigate(`/browse/${typeSlug}/${featuredId}`)}
-                data-testid="hero-info-button"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 0,
-                  bgcolor: "rgba(109,109,110,0.55)",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "3px",
-                  height: "auto",
-                  minWidth: 0,
-                  px: "2em",
-                  py: ".5em",
-                  mr: "1em",
-                  fontFamily: "inherit",
-                  fontSize: "1em",
-                  fontWeight: 700,
-                  lineHeight: "inherit",
-                  cursor: "pointer",
-                  transition: "background-color 0.2s ease",
-                  "&:hover": { bgcolor: "rgba(109,109,110,0.72)" },
-                }}
-              >
-                <Box
-                  component="svg"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                  className="info-icon"
-                  sx={{
-                    width: "1.2em",
-                    height: "1.2em",
-                    mr: ".5em",
-                    flex: "0 0 auto",
-                    fontSize: "1.7em",
-                  }}
-                >
-                  <path
-                    fill="currentColor"
-                    d="M11 17h2v-6h-2zm1.713-8.287Q13 8.425 13 8t-.288-.712T12 7t-.712.288T11 8t.288.713T12 9t.713-.288M12 22q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9T2 12t.788-3.9t2.137-3.175T8.1 2.788T12 2t3.9.788t3.175 2.137T21.213 8.1T22 12t-.788 3.9t-2.137 3.175t-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12t-2.325-5.675T12 4T6.325 6.325T4 12t2.325 5.675T12 20m0-8"
-                  />
-                </Box>
-                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>
-                  Altre info
-                </Box>
-              </Box>
-            </Stack>
-          </Box>
+              ))}
+            </Box>
+          ) : null}
         </Box>
 
-        <Stack
-          direction="row"
-          spacing={1.5}
-          data-testid="hero-controls"
-          sx={{
-            alignItems: "center",
-            position: "absolute",
-            right: { xs: "18px", md: "2.5vw" },
-            bottom: { xs: "20%", md: "20%" },
-            zIndex: 150,
-            pointerEvents: "auto",
-          }}
+        <Box
+          className="netflix-home-metadata"
+          data-uia="billboard-metadata"
+          data-testid="hero-overview"
         >
-          {showVideo && (
-            <IconButton
-              onClick={() => setMuted((m) => !m)}
-              data-testid="hero-audio-toggle"
-              sx={{
-                border: "2px solid rgba(255,255,255,0.55)",
-                color: "#fff",
-                width: { xs: 46, md: 60 },
-                height: { xs: 46, md: 60 },
-                bgcolor: "rgba(0,0,0,0.35)",
-                backdropFilter: "blur(8px)",
-                transition:
-                  "background-color 200ms ease, border-color 200ms ease, transform 200ms ease",
-                "&:hover": {
-                  borderColor: "#fff",
-                  color: "#fff",
-                  bgcolor: "rgba(255,255,255,0.15)",
-                  transform: "scale(1.06)",
-                },
-              }}
+          {displayDescription}
+        </Box>
+
+        <Box className="netflix-home-actions-row">
+          <Box className="netflix-home-actions" data-uia="billboard-actions">
+            <Box
+              component="button"
+              type="button"
+              aria-label="Riproduci"
+              data-uia="play-video-button"
+              data-testid="hero-play-button"
+              className="netflix-home-action netflix-home-action-play"
+              onClick={handlePlay}
+              onMouseEnter={prefetchStream}
+              onFocus={prefetchStream}
             >
-              {!muted ? (
-                <VolumeUpIcon sx={{ fontSize: { xs: 24, md: 31 } }} />
-              ) : (
-                <VolumeOffIcon sx={{ fontSize: { xs: 24, md: 31 } }} />
-              )}
-            </IconButton>
-          )}
-        </Stack>
+              <PlayIcon />
+              <span>Riproduci</span>
+            </Box>
+
+            <Box
+              component="button"
+              type="button"
+              data-uia="billboard-more-info"
+              data-testid="hero-info-button"
+              className="netflix-home-action netflix-home-action-info"
+              onClick={handleMoreInfo}
+            >
+              <InfoIcon />
+              <span>Altre info</span>
+            </Box>
+          </Box>
+
+          {callouts.length ? (
+            <Box className="netflix-home-callouts" data-uia="billboard-callouts">
+              {callouts.map((text, index) => (
+                <Box className="netflix-home-callout" data-uia="billboard-callout" key={`${text}-${index}`}>
+                  <span className="netflix-home-callout-mark">
+                    {/top\s*10/i.test(text) ? "10" : "★"}
+                  </span>
+                  <span>{text}</span>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
+        </Box>
       </Box>
     </Box>
   );
