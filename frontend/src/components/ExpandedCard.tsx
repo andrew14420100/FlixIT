@@ -53,16 +53,9 @@ function normalizeTextList(...values: any[]) {
       const normalized = value
         .map((entry: any) => {
           if (typeof entry === "string") return entry;
-          return (
-            entry?.name ||
-            entry?.label ||
-            entry?.text ||
-            entry?.value ||
-            ""
-          );
+          return entry?.name || entry?.label || entry?.text || entry?.value || "";
         })
         .filter(Boolean);
-
       if (normalized.length) return normalized;
     }
 
@@ -125,10 +118,47 @@ function genreNamesFromIds(ids: any, type: string) {
   return ids.map((id) => table[Number(id)]).filter(Boolean);
 }
 
+function releaseYear(item: any) {
+  const direct = firstValue(item?.year, item?.release_year, item?.releaseYear);
+  if (direct && /^\d{4}$/.test(String(direct))) return String(direct);
+
+  const value = firstValue(
+    item?.release_date,
+    item?.releaseDate,
+    item?.first_air_date,
+    item?.firstAirDate,
+    item?.date
+  );
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value).slice(0, 4) : String(parsed.getFullYear());
+}
+
+function ratingLabel(item: any) {
+  const raw = firstValue(
+    item?.vote_average,
+    item?.voteAverage,
+    item?.rating,
+    item?.score,
+    item?.tmdb_rating,
+    item?.tmdbRating
+  );
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  return value.toFixed(1);
+}
+
+function ageLabel(value: any) {
+  if (!value) return "";
+  const text = String(value).trim();
+  if (/^\d{1,2}$/.test(text)) return `${text}+`;
+  return text;
+}
+
 function IconPlay() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" d="M5 2.7a1 1 0 0 1 1.48-.88l16.93 9.3a1 1 0 0 1 0 1.76l-16.93 9.3A1 1 0 0 1 5 21.31z" />
+      <path fill="currentColor" d="M7 4.6a1 1 0 0 1 1.52-.85l10.4 6.9a1.6 1.6 0 0 1 0 2.7l-10.4 6.9A1 1 0 0 1 7 19.4z" />
     </svg>
   );
 }
@@ -136,7 +166,7 @@ function IconPlay() {
 function IconPlus() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M11 11V2h2v9h9v2h-9v9h-2v-9H2v-2z" />
+      <path fill="currentColor" fillRule="evenodd" d="M11 3h2v8h8v2h-8v8h-2v-8H3v-2h8z" clipRule="evenodd" />
     </svg>
   );
 }
@@ -144,23 +174,21 @@ function IconPlus() {
 function IconCheck() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="m9.55 17.48-5.4-5.4 1.41-1.42 3.99 3.99 8.89-8.9 1.42 1.42z" />
+      <path fill="currentColor" fillRule="evenodd" d="m9.55 17.48-5.4-5.4 1.41-1.42 3.99 3.99 8.89-8.9 1.42 1.42z" clipRule="evenodd" />
     </svg>
   );
 }
 
-function IconThumb() {
+function IconStar({ filled = false }: any) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M10.696 8.773A2 2 0 0 0 11 7.713V4h.838c.877 0 1.59.553 1.77 1.311C13.822 6.228 14 7.227 14 8a7 7 0 0 1-.246 1.75L13.432 11H17.5a1.5 1.5 0 0 1 1.476 1.77l-.08.445.28.354c.203.256.324.578.324.931s-.12.675-.324.93l-.28.355.08.445q.024.13.024.27c0 .49-.234.925-.6 1.2l-.4.3v.5a1.5 1.5 0 0 1-1.5 1.5h-3.877a9 9 0 0 1-2.846-.462l-1.493-.497A10.5 10.5 0 0 0 5 18.5v-4.747l2.036-.581a3 3 0 0 0 1.72-1.295zM10.5 2A1.5 1.5 0 0 0 9 3.5v4.213l-1.94 3.105a1 1 0 0 1-.574.432l-2.035.581A2 2 0 0 0 3 13.754v4.793c0 1.078.874 1.953 1.953 1.953.917 0 1.828.148 2.698.438l1.493.498a11 11 0 0 0 3.479.564H16.5a3.5 3.5 0 0 0 3.467-3.017 3.5 3.5 0 0 0 1.028-2.671c.32-.529.505-1.15.505-1.812s-.185-1.283-.505-1.812Q21 12.595 21 12.5A3.5 3.5 0 0 0 17.5 9h-1.566c.041-.325.066-.66.066-1 0-1.011-.221-2.194-.446-3.148C15.14 3.097 13.543 2 11.838 2z" />
-    </svg>
-  );
-}
-
-function IconRemove() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="M5.293 5.293a1 1 0 0 1 1.414 0L12 10.586l5.293-5.293a1 1 0 1 1 1.414 1.414L13.414 12l5.293 5.293a1 1 0 0 1-1.414 1.414L12 13.414l-5.293 5.293a1 1 0 0 1-1.414-1.414L10.586 12 5.293 6.707a1 1 0 0 1 0-1.414Z" />
+      <path
+        d="m12 2.8 2.78 5.63 6.22.9-4.5 4.39 1.06 6.2L12 17l-5.56 2.92 1.06-6.2L3 9.33l6.22-.9L12 2.8Z"
+        fill={filled ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -168,46 +196,34 @@ function IconRemove() {
 function IconChevron() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path fill="currentColor" fillRule="evenodd" clipRule="evenodd" d="m12 15.586 7.293-7.293 1.414 1.414-8 8a1 1 0 0 1-1.414 0l-8-8 1.414-1.414z" />
+      <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="m5 9 7 7 7-7" />
     </svg>
   );
 }
 
-function SpatialAudioMark() {
-  return (
-    <div className="spatial-audio spatial-audio-icon-it" aria-label="Audio spaziale">
-      <svg viewBox="0 0 72 18" aria-hidden="true">
-        <path d="M10 9c0-3.6 2.4-6.3 5.8-6.3S22 5.4 22 9s-2.7 6.3-6.2 6.3S10 12.6 10 9Z" fill="none" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M6.8 4.3a7.4 7.4 0 0 0 0 9.4M3.7 1.7a11.3 11.3 0 0 0 0 14.6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-        <text x="29" y="12.5" fill="currentColor" fontSize="9.5" fontFamily="inherit">SPATIAL</text>
-      </svg>
-    </div>
-  );
-}
-
-function MiniButton({ primary = false, label, onClick, selected = false, children }: any) {
+function ScHoverButton({ primary = false, label, onClick, selected = false, children, end = false }: any) {
   return (
     <button
+      type="button"
       aria-label={label}
       title={label}
-      className={`nflx-mini-control ${primary ? "color-primary" : "color-supplementary"} hasIcon round${selected ? " is-selected" : ""}`}
-      type="button"
+      className={`sc-hover-action${primary ? " is-primary" : ""}${selected ? " is-selected" : ""}${end ? " is-end" : ""}`}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
         onClick?.(event);
       }}
     >
-      <span className="small" role="presentation">{children}</span>
+      {children}
     </button>
   );
 }
 
-export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch }: any) {
+export default function ExpandedCard({ item, mediaType, onPlay, onDetail }: any) {
   const [inList, setInList] = useState(
     !!firstValue(item?.isInPlaylist, item?.in_playlist, item?.inList, item?.in_list, false)
   );
-  const [liked, setLiked] = useState(!!firstValue(item?.liked, item?.thumb_up, false));
+  const [liked, setLiked] = useState(!!firstValue(item?.liked, item?.thumb_up, item?.favorite, false));
 
   const type = item?.type || item?.media_type || (mediaType === MEDIA_TYPE.Tv ? "tv" : "movie");
   const title = item?.title || item?.name || "";
@@ -228,11 +244,7 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
     "original"
   );
 
-  const logo = mediaUrl(
-    firstValue(item?.logo_path, item?.logo, item?.title_logo_path),
-    "original"
-  );
-
+  const logo = mediaUrl(firstValue(item?.logo_path, item?.logo, item?.title_logo_path), "original");
   const previewVideo = firstValue(
     item?.preview_video_url,
     item?.previewVideoUrl,
@@ -241,7 +253,7 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
     ""
   );
 
-  const age = firstValue(
+  const age = ageLabel(firstValue(
     item?.certificationValue,
     item?.age,
     item?.content_rating,
@@ -251,7 +263,7 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
     item?.maturity_rating,
     item?.maturityRating,
     item?.maturity
-  );
+  ));
 
   const seasons = firstValue(
     item?.numSeasonsLabel,
@@ -272,53 +284,30 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
     item?.runtimeMinutes
   );
 
-  const quality = firstValue(
-    item?.playback_badge,
-    item?.playbackBadge,
-    item?.hdr || item?.is_hdr ? "HDR" : undefined,
-    item?.quality,
-    "HD"
-  );
-
-  const hasSpatialAudio = !!firstValue(
-    item?.hasAudioSpatial,
-    item?.spatial_audio,
-    item?.spatialAudio,
-    item?.delivery?.hasAudioSpatial,
-    false
-  );
-
-  const evidence = useMemo(() => {
+  const genres = useMemo(() => {
     const explicit = normalizeTextList(
-      item?.evidence,
-      item?.evidence_tags,
-      item?.tags,
       item?.genre_names,
       item?.genreNames,
-      item?.genres
+      item?.genres,
+      item?.evidence,
+      item?.evidence_tags,
+      item?.tags
     );
-    const fallbackGenres = genreNamesFromIds(item?.genre_ids || item?.genreIds, type);
-    return (explicit.length ? explicit : fallbackGenres).slice(0, 4);
+    const fallback = genreNamesFromIds(item?.genre_ids || item?.genreIds, type);
+    return (explicit.length ? explicit : fallback).slice(0, 2);
   }, [item, type]);
 
-  const supplementalMessage = firstValue(
-    item?.supplemental_message,
-    item?.supplementalMessage,
-    item?.availability_message,
-    item?.availabilityMessage
-  );
-  const contentWarning = firstValue(item?.content_warning, item?.contentWarning?.message, item?.contentWarning);
-  const mostLiked = firstValue(item?.most_liked_message, item?.mostLikedMessage, item?.most_liked);
-  const description = firstValue(
-    item?.overview,
-    item?.plot,
-    item?.description,
-    item?.synopsis,
-    item?.summary,
-    item?.short_description,
-    item?.shortDescription
-  );
-  const watchPercent = Math.max(0, Math.min(100, Number(watch?.percent || item?.progress_percent || 0)));
+  const rating = ratingLabel(item);
+  const year = releaseYear(item);
+
+  let durationLabel = "";
+  if (type === "tv" && seasons) {
+    durationLabel = typeof seasons === "string" && /stagion/i.test(seasons)
+      ? seasons
+      : `${seasons} ${Number(seasons) === 1 ? "stagione" : "stagioni"}`;
+  } else if (runtime) {
+    durationLabel = String(runtime).match(/min|h|ora/i) ? String(runtime) : `${runtime} min`;
+  }
 
   const toggleList = (event: any) => {
     const next = !inList;
@@ -326,13 +315,11 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
     item?.onToggleMyList?.(next, event);
   };
 
-  const toggleLike = (event: any) => {
+  const toggleFavorite = (event: any) => {
     const next = !liked;
     setLiked(next);
     item?.onRate?.(next ? "like" : null, event);
   };
-
-  const detailHref = "#";
 
   return (
     <>
@@ -347,10 +334,14 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
 
         <div className="videoMerchPlayer--boxart-wrapper">
           {cover ? (
-            <>
-              <img alt={title} src={cover} className="previewModal--boxart" aria-hidden="true" decoding="async" style={{ opacity: previewVideo ? 0 : 1 }} />
-              <img alt="" src={cover} aria-hidden="true" decoding="async" className="previewModal--auxiliary-boxart" />
-            </>
+            <img
+              alt={title}
+              src={cover}
+              className="previewModal--boxart"
+              aria-hidden="true"
+              decoding="async"
+              style={{ opacity: previewVideo ? 0 : 1 }}
+            />
           ) : null}
         </div>
 
@@ -361,157 +352,57 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch 
             </div>
           </div>
         ) : null}
-
-        <div className="previewModal-audioToggle has-smaller-buttons mini-modal" style={{ display: "none" }} />
       </div>
 
-      <div className="previewModal-close">
-        <span role="button" aria-label="close" tabIndex={0} title="close" />
-      </div>
+      <div className="previewModal--info sc-hover-info">
+        <div className="sc-hover-panel" data-uia="previewModal--info-container">
+          <div className="sc-hover-controls">
+            <ScHoverButton primary label="Riproduci" onClick={onPlay}>
+              <IconPlay />
+            </ScHoverButton>
 
-      <div className="previewModal--info">
-        <a
-          href={detailHref}
-          className="previewModal--info-link"
-          onClick={(event) => {
-            event.preventDefault();
-            onDetail?.(event);
-          }}
-        >
-          <div className="mini-modal-container">
-            <div className="previewModal--info-container" data-uia="previewModal--info-container">
-              <div className="previewModal--metadatAndControls has-smaller-buttons mini-modal" data-uia="previewModal--metadatAndControls">
-                <div className="previewModal--metadatAndControls-container">
-                  <div className="buttonControls--container has-smaller-buttons mini-modal" data-uia="mini-modal-controls">
-                    <div className="nflx-control-wrap">
-                      <MiniButton primary label="Riproduci" onClick={onPlay}><IconPlay /></MiniButton>
-                    </div>
+            <ScHoverButton
+              label={inList ? "Rimuovi dalla mia lista" : "Aggiungi alla mia lista"}
+              onClick={toggleList}
+              selected={inList}
+            >
+              {inList ? <IconCheck /> : <IconPlus />}
+            </ScHoverButton>
 
-                    <div className="nflx-control-wrap">
-                      <MiniButton label={inList ? "Rimuovi dalla mia lista" : "La mia lista"} onClick={toggleList} selected={inList}>
-                        {inList ? <IconCheck /> : <IconPlus />}
-                      </MiniButton>
-                    </div>
+            <ScHoverButton label="Preferito" onClick={toggleFavorite} selected={liked}>
+              <IconStar filled={liked} />
+            </ScHoverButton>
 
-                    <div className="nflx-control-wrap">
-                      <MiniButton label={liked ? "Mi piace" : "Valuta"} onClick={toggleLike} selected={liked}>
-                        <IconThumb />
-                      </MiniButton>
-                    </div>
+            <div className="sc-hover-controls-spacer" />
 
-                    {typeof watch?.onRemove === "function" ? (
-                      <div className="nflx-control-wrap">
-                        <MiniButton label="Rimuovi da Continua a guardare" onClick={() => watch.onRemove()}>
-                          <IconRemove />
-                        </MiniButton>
-                      </div>
-                    ) : null}
-
-                    <div className="buttonControls--expand-button">
-                      <MiniButton label="Altre info" onClick={onDetail}><IconChevron /></MiniButton>
-                    </div>
-                  </div>
-
-                  {watchPercent > 0 ? (
-                    <div className="previewModal-progress">
-                      <div className="previewModal-progress-track">
-                        <div className="previewModal-progress-value" style={{ width: `${watchPercent}%` }} />
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {supplementalMessage ? (
-                    <div className="previewModal-supplemental-message">{String(supplementalMessage)}</div>
-                  ) : null}
-
-                  <div className="previewModal--metadatAndControls-info">
-                    <div>
-                      <div>
-                        <div data-uia="videoMetadata--container" className="videoMetadata--container">
-                          <div className="videoMetadata--line">
-                            <span className="content-type">{type === "tv" ? "Serie" : "Film"}</span>
-
-                            {age ? (
-                              <div className="maturity-rating" data-uia="maturity-rating">
-                                <span className="maturity-number">{String(age)}</span>
-                              </div>
-                            ) : null}
-
-                            {type === "tv" && seasons ? (
-                              <span className="duration">
-                                {typeof seasons === "string" && /stagion/i.test(seasons)
-                                  ? seasons
-                                  : `${seasons} ${Number(seasons) === 1 ? "stagione" : "stagioni"}`}
-                              </span>
-                            ) : runtime ? (
-                              <span className="duration">
-                                {String(runtime).match(/min|h|ora/i) ? String(runtime) : `${runtime} min`}
-                              </span>
-                            ) : null}
-
-                            {quality ? (
-                              <span className="player-feature-badge" data-uia={`player-feature-badge-${String(quality).toLowerCase()}`}>
-                                {String(quality)}
-                              </span>
-                            ) : null}
-
-                            {hasSpatialAudio ? <SpatialAudioMark /> : null}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {description ? (
-                    <div
-                      className="previewModal-description"
-                      style={{
-                        color: "#d2d2d2",
-                        fontSize: "13px",
-                        lineHeight: "18px",
-                        margin: "8px 0 0",
-                        display: "-webkit-box",
-                        WebkitBoxOrient: "vertical",
-                        WebkitLineClamp: 3,
-                        overflow: "hidden",
-                      }}
-                    >
-                      {String(description)}
-                    </div>
-                  ) : null}
-
-                  {evidence.length > 0 ? (
-                    <div className="previewModal--metadatAndControls-tags-container">
-                      <div className="evidence-tags">
-                        <div className="evidence-list">
-                          {evidence.map((value: string, index: number) => (
-                            <div className="evidence-item" key={`${value}-${index}`}>
-                              {index === 0 ? null : <span className="evidence-separator" />}
-                              <span className="evidence-text">{value}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {contentWarning ? (
-                    <div data-uia="preview-modal-content-warning" className="previewModal-contentWarning">
-                      <span className="content-warning-icon">!</span>
-                      <span>{String(contentWarning)}</span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              {mostLiked ? (
-                <div className="previewModal-most-liked">
-                  {typeof mostLiked === "string" ? mostLiked : "Tra i più apprezzati"}
-                </div>
-              ) : null}
-            </div>
+            <ScHoverButton label="Altre info" onClick={onDetail} end>
+              <IconChevron />
+            </ScHoverButton>
           </div>
-        </a>
+
+          <div className="sc-hover-meta-line">
+            {rating ? <span className="sc-hover-rating">Valutazione {rating}</span> : null}
+            {year ? <span className="sc-hover-year">{year}</span> : null}
+            {durationLabel ? (
+              <>
+                {year ? <span className="sc-hover-dash">-</span> : null}
+                <span className="sc-hover-duration">{durationLabel}</span>
+              </>
+            ) : null}
+            {age ? <span className="sc-hover-age">{age}</span> : null}
+          </div>
+
+          {genres.length ? (
+            <div className="sc-hover-genres">
+              {genres.map((genre: string, index: number) => (
+                <span key={`${genre}-${index}`} className="sc-hover-genre">
+                  {index > 0 ? <span className="sc-hover-genre-separator">•</span> : null}
+                  {genre}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
     </>
   );
