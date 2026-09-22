@@ -4,6 +4,7 @@ Omni resolver: TMDB id -> IMDb id -> embedded/remote Omni -> best HTTP(S) stream
 The stable resolver id remains `stremio_addon` for backward compatibility with
 existing Admin settings and saved resolver order.
 """
+import asyncio
 import logging
 from typing import Optional
 
@@ -17,7 +18,6 @@ logger = logging.getLogger("player.omni")
 class StremioAddonResolver(BaseResolver):
     id = "stremio_addon"
     label = "Omni"
-    # Omni is the primary network/source layer immediately after AdminSource.
     always_active = True
     configurable = True
 
@@ -44,13 +44,17 @@ class StremioAddonResolver(BaseResolver):
             return None
 
         if cfg.get("source") == "embedded":
-            streams = omni_embedded.resolve_streams(
+            # omni_embedded uses synchronous PyMongo. It is a very fast lookup,
+            # but running it in a worker keeps concurrent Home/player requests
+            # responsive even if Mongo briefly stalls.
+            streams = await asyncio.to_thread(
+                omni_embedded.resolve_streams,
                 self._db,
                 imdb_id,
                 media_type,
                 season,
                 episode,
-                tmdb_id=tmdb_id,
+                tmdb_id,
             )
         else:
             try:
