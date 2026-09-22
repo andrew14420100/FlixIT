@@ -110,6 +110,7 @@ export default function NetflixRankedCardWithHover({
     position,
     onEnter,
     onLeave,
+    onOverlayEnter,
     onOverlayLeave,
   } = useHoverExpand(ref);
 
@@ -190,9 +191,6 @@ export default function NetflixRankedCardWithHover({
     image.src = logoUrl;
   }, [nearViewport, logoUrl]);
 
-  // The row resolves SC artwork before mounting this card. Keep that exact
-  // poster first, but retain a separate TMDB fallback so a failed SC CDN image
-  // cannot make the whole ranked tile (including its number) disappear.
   const posterCandidates = useMemo(
     () => unique([
       item?.__resolved_top10_poster,
@@ -318,6 +316,7 @@ export default function NetflixRankedCardWithHover({
         <ExpandOverlay
           position={position}
           closing={closing}
+          onMouseEnter={onOverlayEnter}
           onMouseLeave={onOverlayLeave}
           onClick={goDetail}
           testId={`hover-overlay-top10-${normalizedId}`}
