@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { lazy, Suspense, useEffect } from "react";
-import { Outlet, useLocation, useNavigation } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import Box from "@mui/material/Box";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
@@ -9,13 +9,8 @@ import PortalProvider from "src/providers/PortalProvider";
 import DetailModalProvider from "src/providers/DetailModalProvider";
 import { MAIN_PATH } from "src/constant";
 import { Footer, MainHeader } from "src/components/layouts";
-import MainLoadingScreen from "src/components/MainLoadingScreen";
 import AuthModal from "src/components/auth/AuthModal";
 import SessionGuards from "src/components/auth/SessionGuards";
-import MobileSCExperience from "src/components/mobile/MobileSCExperience";
-import MobileSCExactAssets from "src/components/mobile/MobileSCExactAssets";
-import MobileHomeReferenceRuntime from "src/components/mobile/MobileHomeReferenceRuntime";
-import MobileHomeSectionRecovery from "src/components/mobile/MobileHomeSectionRecovery";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
@@ -29,8 +24,13 @@ import "src/components/detail-interactions.css";
 import "src/components/detail/detail-episode-polish.css";
 import "src/components/site-polish.css";
 
-// Detail imports pull trailer/player and episode helpers into the bundle. Keep
-// them out of Home/Cinema/Search until a detail route is actually opened.
+// Route-specific helpers stay out of the initial shell. This is especially
+// important on mobile: Home, Detail and Watch no longer download each other's
+// DOM runtimes before the user actually opens those routes.
+const MobileSCExperience = lazy(() => import("src/components/mobile/MobileSCExperience"));
+const MobileSCExactAssets = lazy(() => import("src/components/mobile/MobileSCExactAssets"));
+const MobileHomeReferenceRuntime = lazy(() => import("src/components/mobile/MobileHomeReferenceRuntime"));
+const MobileHomeSectionRecovery = lazy(() => import("src/components/mobile/MobileHomeSectionRecovery"));
 const MobileDetailExperience = lazy(() => import("src/components/mobile/MobileDetailExperience"));
 const DetailEpisodeEnhancer = lazy(() => import("src/components/DetailEpisodeEnhancer"));
 const DetailResumeCardPolish = lazy(() => import("src/components/DetailResumeCardPolish"));
@@ -42,7 +42,6 @@ const WatchEpisodeAdvanceTracker = lazy(() => import("src/components/watch/Watch
 
 export default function MainLayout() {
   const location = useLocation();
-  const navigation = useNavigation();
   const isMobile = useMediaQuery("(max-width:899px)");
   const isHome = location.pathname === "/" || location.pathname === "/browse";
   const isWatch = location.pathname.startsWith(`/${MAIN_PATH.watch}`) || location.pathname.startsWith("/watch");
@@ -55,10 +54,20 @@ export default function MainLayout() {
   }, [location.pathname]);
 
   useEffect(() => {
-    const update = () => document.documentElement.style.setProperty("--page-w", `${document.documentElement.clientWidth}px`);
+    let raf = 0;
+    const update = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        document.documentElement.style.setProperty("--page-w", `${document.documentElement.clientWidth}px`);
+      });
+    };
     update();
     window.addEventListener("resize", update, { passive: true });
-    return () => window.removeEventListener("resize", update);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("resize", update);
+    };
   }, []);
 
   return (
@@ -66,13 +75,13 @@ export default function MainLayout() {
       <ScCdnRecovery />
       <GlobalPlayGlyphNormalizer />
       <MainHeader />
-      {isMobile ? <MobileSCExperience /> : null}
-      {isMobile && !isWatch ? <MobileSCExactAssets /> : null}
-      {isMobile && isHome ? <MobileHomeReferenceRuntime /> : null}
-      {isMobile && isHome ? <MobileHomeSectionRecovery /> : null}
       <MobileGlobalBottomNav />
 
       <Suspense fallback={null}>
+        {isMobile && !isWatch ? <MobileSCExperience /> : null}
+        {isMobile && !isWatch ? <MobileSCExactAssets /> : null}
+        {isMobile && isHome ? <MobileHomeReferenceRuntime /> : null}
+        {isMobile && isHome ? <MobileHomeSectionRecovery /> : null}
         {isDetail ? <DetailEpisodeEnhancer /> : null}
         {isDetail ? <DetailResumeCardPolish /> : null}
         {isDetail ? <DetailDescriptionExpander /> : null}
@@ -85,7 +94,6 @@ export default function MainLayout() {
 
       <AuthModal />
       <SessionGuards />
-      {!isMobile && navigation.state !== "idle" && <MainLoadingScreen />}
       <DetailModalProvider>
         <PortalProvider>
           {!isMobileDetail ? (
