@@ -115,9 +115,10 @@
 
   /* Keep the existing buttons exactly as implemented by HeroSection. */
 
-  /* First existing section enters only the lower part of the Hero fade. */
+  /* SC keeps a clear breathing space after the Hero controls before the first
+     rail begins. Move the whole rows block only; row-to-row rhythm stays intact. */
   [data-testid="home-page"] [data-testid="home-rows"] {
-    margin-top: -4.2vw !important;
+    margin-top: clamp(10px, .8vw, 16px) !important;
     padding-top: 0 !important;
     position: relative !important;
     z-index: 20 !important;
