@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "direct-it-official-second-pass-v7";
+const TRAILER_QUERY_VERSION = "direct-it-official-second-pass-v8-light-poll";
 
 function directTrailerUrl(data: any) {
   for (const value of [data?.trailer_url, data?.manifest_url, data?.trailer_key]) {
@@ -28,11 +28,7 @@ export function browserSupportsHdr() {
 }
 
 /** Shared public trailer cache for Hero, hover cards and DetailPage. */
-export default function useResolvedTrailer(
-  mediaType: any,
-  id: any,
-  enabled = true
-) {
+export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
   const hdr = useMemo(() => browserSupportsHdr(), []);
 
@@ -42,17 +38,13 @@ export default function useResolvedTrailer(
       if (!id) return {};
       const response = await fetch(
         `/api/public/trailer/${typeSlug}/${id}?hdr=${hdr ? "true" : "false"}`,
-        {
-          signal,
-          cache: "no-store",
-          headers: { Accept: "application/json" },
-        }
+        { signal, cache: "no-store", headers: { Accept: "application/json" } }
       );
       return response.ok ? response.json() : {};
     },
     enabled: !!id && !!enabled,
-    staleTime: 15 * 60 * 1000,
-    gcTime: 2 * 60 * 60 * 1000,
+    staleTime: 30 * 60 * 1000,
+    gcTime: 4 * 60 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
@@ -60,17 +52,15 @@ export default function useResolvedTrailer(
       const data = query?.state?.data || {};
       const candidate = directTrailerUrl(data);
       if (!enabled || data?.enabled === false) return false;
-
-      // An English trailer remains playable immediately, but the backend is
-      // allowed a short second-pass window to replace it with an official
-      // Italian trailer/teaser. Italian candidates stop polling at once.
       if (candidate && isItalianLanguage(data?.language || data?.candidate?.audio_language)) return false;
 
       const updates = Number(query?.state?.dataUpdateCount || 0);
       const backendRefreshing = data?.refresh_pending === true;
-      if (!candidate) return updates < 10 ? 2000 : false;
+      // A short second pass is enough for the backend worker. The previous
+      // 2-second loop could create 8-10 requests from every mounted consumer.
+      if (!candidate) return updates < 4 ? 3500 : false;
       if (backendRefreshing || !isItalianLanguage(data?.language || data?.candidate?.audio_language)) {
-        return updates < 8 ? 2500 : false;
+        return updates < 3 ? 5000 : false;
       }
       return false;
     },
