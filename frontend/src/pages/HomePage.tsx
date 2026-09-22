@@ -109,27 +109,34 @@ function fetchHomeBootstrap(_signal?: AbortSignal) {
     return data;
   });
 
-  const shared = request.finally(() => {
-    window.setTimeout(() => {
+  let shared: Promise<any>;
+  shared = request
+    .catch((error) => {
       if (sharedHomeBootstrapPromise === shared) {
         sharedHomeBootstrapPromise = null;
       }
-    }, 1500);
-  });
+      throw error;
+    })
+    .finally(() => {
+      window.setTimeout(() => {
+        if (sharedHomeBootstrapPromise === shared) {
+          sharedHomeBootstrapPromise = null;
+        }
+      }, 1500);
+    });
+
   sharedHomeBootstrapPromise = shared;
   return shared;
 }
 
-// Re-visits: warm the cached Hero before the component tree mounts.
 const MODULE_HOME_CACHE = typeof window !== "undefined" ? readHomeCache() : null;
 if (MODULE_HOME_CACHE?.data?.hero) warmCriticalHero(MODULE_HOME_CACHE.data.hero);
 
-// First visits: start the single Home request as soon as this route module is
-// evaluated. React Query reuses the same promise, so there is no duplicate call.
 const EARLY_HOME_BOOTSTRAP_PROMISE =
   typeof window !== "undefined"
     ? fetchHomeBootstrap().catch(() => null)
     : null;
+let earlyHomeBootstrapConsumed = false;
 
 export async function loader() {
   return null;
@@ -189,10 +196,11 @@ export function Component() {
   const { data: bootstrap } = useQuery({
     queryKey: ["home-bootstrap-v4-fuller"],
     queryFn: async ({ signal }: any) => {
-      const early = EARLY_HOME_BOOTSTRAP_PROMISE
-        ? await EARLY_HOME_BOOTSTRAP_PROMISE
-        : null;
-      if (early?.rows) return early;
+      if (!earlyHomeBootstrapConsumed && EARLY_HOME_BOOTSTRAP_PROMISE) {
+        earlyHomeBootstrapConsumed = true;
+        const early = await EARLY_HOME_BOOTSTRAP_PROMISE;
+        if (early?.rows) return early;
+      }
       return fetchHomeBootstrap(signal);
     },
     initialData: initialCache?.data,
