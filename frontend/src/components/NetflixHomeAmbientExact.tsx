@@ -239,12 +239,46 @@ export default function NetflixHomeAmbientExact() {
     const abort = new AbortController();
     let ambientRaf = 0;
     let scrollRaf = 0;
+    let idleHandle: any = null;
+    let idleTimer = 0;
     let generation = 0;
     let lastSrc = "";
     let boundHero: HTMLElement | null = null;
     let heroObserver: MutationObserver | null = null;
     let waitObserver: MutationObserver | null = null;
     let resizeObserver: ResizeObserver | null = null;
+
+    const cancelIdleSampling = () => {
+      if (idleHandle != null && "cancelIdleCallback" in window) {
+        (window as any).cancelIdleCallback(idleHandle);
+      }
+      if (idleTimer) window.clearTimeout(idleTimer);
+      idleHandle = null;
+      idleTimer = 0;
+    };
+
+    const scheduleColorSampling = (src: string, myGeneration: number) => {
+      cancelIdleSampling();
+      const sample = () => {
+        idleHandle = null;
+        idleTimer = 0;
+        if (abort.signal.aborted || myGeneration !== generation) return;
+        dominantAmbientColor(src, abort.signal)
+          .then((color) => {
+            if (!abort.signal.aborted && myGeneration === generation) applyColor(color);
+          })
+          .catch(() => {});
+      };
+
+      // The deterministic fallback gives the same visual immediately. Actual
+      // image decoding/color extraction is cosmetic and therefore waits until
+      // the critical Hero/cards have painted.
+      if ("requestIdleCallback" in window) {
+        idleHandle = (window as any).requestIdleCallback(sample, { timeout: 2400 });
+      } else {
+        idleTimer = window.setTimeout(sample, 1400);
+      }
+    };
 
     const syncAmbient = () => {
       ambientRaf = 0;
@@ -256,13 +290,8 @@ export default function NetflixHomeAmbientExact() {
       if (!src || src === lastSrc) return;
       lastSrc = src;
       const myGeneration = ++generation;
-      applyColor(fallbackColor(src));
-
-      dominantAmbientColor(src, abort.signal)
-        .then((color) => {
-          if (!abort.signal.aborted && myGeneration === generation) applyColor(color);
-        })
-        .catch(() => {});
+      applyColor(COLOR_CACHE.get(src) || fallbackColor(src));
+      if (!COLOR_CACHE.has(src)) scheduleColorSampling(src, myGeneration);
     };
 
     const scheduleAmbient = () => {
@@ -295,8 +324,6 @@ export default function NetflixHomeAmbientExact() {
     if (hero) {
       bindHero(hero);
     } else {
-      // Only use a document observer while waiting for the Hero to mount; it is
-      // disconnected immediately afterwards so carousel DOM churn is ignored.
       waitObserver = new MutationObserver(() => {
         const nextHero = document.querySelector(HERO_SELECTOR) as HTMLElement | null;
         if (nextHero) bindHero(nextHero);
@@ -317,6 +344,7 @@ export default function NetflixHomeAmbientExact() {
 
     return () => {
       abort.abort();
+      cancelIdleSampling();
       waitObserver?.disconnect();
       heroObserver?.disconnect();
       resizeObserver?.disconnect();
