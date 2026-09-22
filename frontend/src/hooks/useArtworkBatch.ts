@@ -102,17 +102,18 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     return map;
   }, [data]);
 
-  // Seed the single-title query cache so opening a Detail/Hero for an artwork
-  // already seen in a row does not immediately repeat the artwork request.
+  // Seed every title resolved by the batch, including explicit misses. Without
+  // the miss seed, each visible card that had no SC match immediately repeated
+  // the same work through /official-artwork, creating dozens of redundant GETs.
   useEffect(() => {
     if (!data.length) return;
     normalized.forEach((entry) => {
       const official = byKey.get(entry.key);
-      if (!official?.active) return;
+      if (!official) return;
       const fallback = buildMediaAssetFallback(entry.item, entry.type);
       queryClient.setQueryData(
         ["media-assets", MEDIA_ASSET_QUALITY_VERSION, entry.type, entry.id],
-        mergeOfficialArtwork(fallback, official)
+        official?.active ? mergeOfficialArtwork(fallback, official) : fallback
       );
     });
   }, [data, byKey, normalized, queryClient]);
