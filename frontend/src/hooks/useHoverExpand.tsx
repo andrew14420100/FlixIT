@@ -35,11 +35,6 @@ function isDomElement(value: any): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
 }
 
-function pointInsideRect(x: number, y: number, rect?: DOMRect | null) {
-  if (!rect) return false;
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
 function findRow(element: HTMLElement | null) {
   return element?.closest("[data-sc-row], .slider-row, .site-slider-row") as HTMLElement | null;
 }
@@ -97,9 +92,9 @@ function measureEdges(element: HTMLElement, rect: DOMRect) {
 
 /**
  * SC-style hover expansion shared by all public rails.
- * First/last behaviour is based on the cards actually visible in the current
- * carousel viewport, not on the content index. This keeps edge hovers correct
- * after horizontal navigation too.
+ * The card/row geometry is captured once, when the hover opens. The preview
+ * then lives in a fixed portal and must not follow the source card when the
+ * page scrolls vertically.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -206,23 +201,15 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
 export function ExpandOverlay({ position, closing = false, onMouseLeave, onClick, children, testId }: any) {
   const modalRef = useRef<HTMLDivElement | null>(null);
-  const pointerRef = useRef({ x: -1, y: -1 });
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
-  useEffect(() => {
-    if (!position) return;
-    pointerRef.current = {
-      x: Number.isFinite(position.pointerX) ? Number(position.pointerX) : -1,
-      y: Number.isFinite(position.pointerY) ? Number(position.pointerY) : -1,
-    };
-  }, [position]);
-
-  const currentCardRect = useCallback(() => {
-    const anchor = position?.anchor as HTMLElement | null | undefined;
-    if (anchor?.isConnected) return anchor.getBoundingClientRect();
-    return position?.cardRect as DOMRect | undefined;
-  }, [position]);
+  // IMPORTANT: use only the snapshot captured at open time. Reading
+  // anchor.getBoundingClientRect() here would make the preview follow the page.
+  const currentCardRect = useCallback(
+    () => position?.cardRect as DOMRect | undefined,
+    [position]
+  );
 
   const calculateGeometry = useCallback(() => {
     const node = modalRef.current;
@@ -263,10 +250,13 @@ export function ExpandOverlay({ position, closing = false, onMouseLeave, onClick
     };
   }, [currentCardRect, position]);
 
+  // Calculate the final viewport position once per hover opening. No scroll,
+  // pointermove, resize or visualViewport listener is allowed to rewrite it.
   useLayoutEffect(() => {
     if (!position || !modalRef.current || typeof window === "undefined") return;
     setGeometry(null);
     setPhase("measure");
+
     let frame1 = requestAnimationFrame(() => {
       const next = calculateGeometry();
       if (!next) return;
@@ -274,61 +264,9 @@ export function ExpandOverlay({ position, closing = false, onMouseLeave, onClick
       setPhase("reset");
       frame1 = requestAnimationFrame(() => setPhase("open"));
     });
+
     return () => cancelAnimationFrame(frame1);
   }, [position, calculateGeometry]);
-
-  useEffect(() => {
-    if (!position || typeof window === "undefined") return;
-    let frame = 0;
-
-    const onPointerMove = (event: PointerEvent) => {
-      pointerRef.current = { x: event.clientX, y: event.clientY };
-    };
-
-    const closeIfSourceLeftPointer = () => {
-      if (frame || phase === "measure" || phase === "reset" || phase === "close") return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        const card = currentCardRect();
-        const pointer = pointerRef.current;
-        if (!card || pointer.x < 0 || pointer.y < 0 || pointInsideRect(pointer.x, pointer.y, card)) return;
-        const target = document.elementFromPoint(pointer.x, pointer.y);
-        onMouseLeave?.({ relatedTarget: target, type: "scroll-anchor-leave" });
-      });
-    };
-
-    const onResize = () => {
-      if (frame || phase === "measure" || phase === "reset" || phase === "close") return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        const anchor = position?.anchor as HTMLElement | null;
-        if (anchor?.isConnected) {
-          const cardRect = anchor.getBoundingClientRect();
-          const measured = measureEdges(anchor, cardRect);
-          position.rowStart = measured.rowStart;
-          position.rowEnd = measured.rowEnd;
-          position.edge = measured.edge;
-        }
-        const next = calculateGeometry();
-        if (next) setGeometry(next);
-      });
-    };
-
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    window.addEventListener("scroll", closeIfSourceLeftPointer, true);
-    window.addEventListener("resize", onResize);
-    window.visualViewport?.addEventListener?.("scroll", closeIfSourceLeftPointer);
-    window.visualViewport?.addEventListener?.("resize", onResize);
-
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("scroll", closeIfSourceLeftPointer, true);
-      window.removeEventListener("resize", onResize);
-      window.visualViewport?.removeEventListener?.("scroll", closeIfSourceLeftPointer);
-      window.visualViewport?.removeEventListener?.("resize", onResize);
-      if (frame) cancelAnimationFrame(frame);
-    };
-  }, [position, phase, calculateGeometry, currentCardRect, onMouseLeave]);
 
   useEffect(() => {
     if (closing && geometry) setPhase("close");
