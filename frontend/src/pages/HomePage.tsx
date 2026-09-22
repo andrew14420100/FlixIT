@@ -130,12 +130,26 @@ async function fetchBootstrapUrl(url: string, signal?: AbortSignal) {
 let sharedFastPromise: Promise<any> | null = null;
 function fetchFastHomeBootstrap(signal?: AbortSignal) {
   if (sharedFastPromise) return sharedFastPromise;
+
+  const headPromise = typeof window !== "undefined"
+    ? (window as any).__FLIXIT_HOME_FAST_PROMISE__
+    : null;
+
+  const firstRequest = headPromise
+    ? Promise.resolve(headPromise).then(async (data: any) => {
+        try { (window as any).__FLIXIT_HOME_FAST_PROMISE__ = null; } catch {}
+        if (data?.rows) {
+          warmCriticalHero(data?.hero);
+          return data;
+        }
+        const full = await fetchBootstrapUrl(HOME_BOOTSTRAP_FULL_URL, signal);
+        return { ...full, compact: false };
+      })
+    : fetchBootstrapUrl(HOME_BOOTSTRAP_FAST_URL, signal);
+
   let shared: Promise<any>;
-  shared = fetchBootstrapUrl(HOME_BOOTSTRAP_FAST_URL, signal)
+  shared = firstRequest
     .catch(async (error) => {
-      // Rolling deploy / old backend: fall back transparently to the canonical
-      // endpoint instead of breaking Home while frontend/backend restart order
-      // differs.
       if (signal?.aborted) throw error;
       const full = await fetchBootstrapUrl(HOME_BOOTSTRAP_FULL_URL, signal);
       return { ...full, compact: false };
@@ -247,10 +261,6 @@ export function Component() {
     if (bootstrap?.rows?.length) writeHomeCache(bootstrap);
   }, [bootstrap]);
 
-  // First-paint payload stops after a handful of rows. Hydrate the complete Home
-  // only after the browser has painted and gets idle time. This is the same basic
-  // scheduling idea used by large streaming UIs: critical frame first, catalogue
-  // depth second.
   useEffect(() => {
     if (!bootstrap?.rows?.length || bootstrap?.compact === false) return;
     let cancelled = false;
