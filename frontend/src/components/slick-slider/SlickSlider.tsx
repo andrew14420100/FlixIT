@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useRef } from "react";
+import { useCallback, useLayoutEffect, useState, useRef } from "react";
 import Slider, { Settings } from "react-slick";
 import { motion } from "framer-motion";
 
@@ -30,7 +30,6 @@ const StyledSlider = styled(Slider)(
     "& > .slick-list": {
       overflow: "visible",
     },
-    // ✅ Smooth animations for all slides
     "& .slick-slide": {
       transition: "z-index 0s 0.3s",
       position: "relative",
@@ -46,10 +45,6 @@ const StyledSlider = styled(Slider)(
       "& .slick-list > .slick-track": {
         margin: "0px !important",
       },
-      "& .slick-list > .slick-track > .slick-current > div > .NetflixBox-root > .NetflixPaper-root:hover":
-        {
-          transformOrigin: "0% 50% !important",
-        },
     },
     [theme.breakpoints.down("sm")]: {
       "& > .slick-list": {
@@ -78,12 +73,50 @@ interface SlickSliderProps {
   handleNext: (page: number) => void;
   mediaType?: MEDIA_TYPE;
 }
+
 export default function SlickSlider({ data, genre, mediaType = MEDIA_TYPE.Movie }: SlickSliderProps) {
   const sliderRef = useRef<Slider>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [showExplore, setShowExplore] = useState(false);
   const [isEnd, setIsEnd] = useState(false);
   const theme = useTheme();
+
+  const syncRowAxis = useCallback(() => {
+    const row = rowRef.current;
+    if (!row || typeof window === "undefined") return;
+    const firstCard = (
+      row.querySelector(".slick-slide.slick-active .netflix-standard-card-root") ||
+      row.querySelector(".netflix-standard-card-root")
+    ) as HTMLElement | null;
+    if (!firstCard) return;
+
+    const rowRect = row.getBoundingClientRect();
+    const cardRect = firstCard.getBoundingClientRect();
+    const axis = Math.max(0, Math.round((cardRect.left - rowRect.left) * 100) / 100);
+    row.style.setProperty("--flix-row-axis", `${axis}px`);
+  }, []);
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row || !data?.results?.length || typeof window === "undefined") return;
+
+    let frame = window.requestAnimationFrame(syncRowAxis);
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(syncRowAxis);
+    };
+
+    window.addEventListener("resize", schedule);
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    observer?.observe(row);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedule);
+      observer?.disconnect();
+    };
+  }, [syncRowAxis, data?.results?.length, activeSlideIndex]);
 
   const beforeChange = async (currentIndex: number, nextIndex: number) => {
     if (currentIndex < nextIndex) {
@@ -101,58 +134,30 @@ export default function SlickSlider({ data, genre, mediaType = MEDIA_TYPE.Movie 
     lazyLoad: "ondemand",
     slidesToShow: 6,
     slidesToScroll: 6,
-    // afterChange: (current) => {
-    //   console.log("After Change", current);
-    // },
     beforeChange,
-    // onEdge: (direction) => {
-    //   console.log("Edge: ", direction);
-    // },
+    afterChange: () => window.requestAnimationFrame(syncRowAxis),
     responsive: [
-      {
-        breakpoint: 1536,
-        settings: {
-          slidesToShow: 5,
-          slidesToScroll: 5,
-        },
-      },
-      {
-        breakpoint: 1200,
-        settings: {
-          slidesToShow: 4,
-          slidesToScroll: 4,
-        },
-      },
-      {
-        breakpoint: 900,
-        settings: {
-          slidesToShow: 3,
-          slidesToScroll: 3,
-        },
-      },
-      {
-        breakpoint: 600,
-        settings: {
-          slidesToShow: 2,
-          slidesToScroll: 2,
-        },
-      },
+      { breakpoint: 1536, settings: { slidesToShow: 5, slidesToScroll: 5 } },
+      { breakpoint: 1200, settings: { slidesToShow: 4, slidesToScroll: 4 } },
+      { breakpoint: 900, settings: { slidesToShow: 3, slidesToScroll: 3 } },
+      { breakpoint: 600, settings: { slidesToShow: 2, slidesToScroll: 2 } },
     ],
   };
 
-  const handlePrevious = () => {
-    sliderRef.current?.slickPrev();
-  };
-
-  const handleNext = () => {
-    sliderRef.current?.slickNext();
-  };
+  const handlePrevious = () => sliderRef.current?.slickPrev();
+  const handleNext = () => sliderRef.current?.slickNext();
 
   return (
-    <Box sx={{ overflow: "visible", height: "100%", zIndex: 1, position: "relative", "&:hover": { zIndex: 20 } }}>
+    <Box
+      ref={rowRef}
+      className="site-slider-row"
+      data-sc-row="true"
+      sx={{ overflow: "visible", height: "100%", zIndex: 1, position: "relative", "&:hover": { zIndex: 20 } }}
+    >
       {data.results.length > 0 && (
         <>
           <Stack
+            className="row-header"
             spacing={2}
             direction="row"
             alignItems="center"
@@ -160,19 +165,10 @@ export default function SlickSlider({ data, genre, mediaType = MEDIA_TYPE.Movie 
           >
             <NetflixNavigationLink
               variant="h5"
-              to={`/genre/${
-                genre.id || genre.name.toLowerCase().replace(" ", "_")
-              }`}
-              sx={{
-                display: "inline-block",
-                fontWeight: 700,
-              }}
-              onMouseOver={() => {
-                setShowExplore(true);
-              }}
-              onMouseLeave={() => {
-                setShowExplore(false);
-              }}
+              to={`/genre/${genre.id || genre.name.toLowerCase().replace(" ", "_")}`}
+              sx={{ display: "inline-block", fontWeight: 700 }}
+              onMouseOver={() => setShowExplore(true)}
+              onMouseLeave={() => setShowExplore(false)}
             >
               {`${genre.name} Movies `}
               <MotionContainer
@@ -181,9 +177,7 @@ export default function SlickSlider({ data, genre, mediaType = MEDIA_TYPE.Movie 
                 sx={{ display: "inline", color: "success.main" }}
               >
                 {"Explore All".split("").map((letter, index) => (
-                  <motion.span key={index} variants={varFadeIn}>
-                    {letter}
-                  </motion.span>
+                  <motion.span key={index} variants={varFadeIn}>{letter}</motion.span>
                 ))}
               </MotionContainer>
             </NetflixNavigationLink>

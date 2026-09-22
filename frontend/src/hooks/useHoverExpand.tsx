@@ -40,18 +40,70 @@ function pointInsideRect(x: number, y: number, rect?: DOMRect | null) {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
 }
 
+function findRow(element: HTMLElement | null) {
+  return element?.closest("[data-sc-row], .slider-row, .site-slider-row") as HTMLElement | null;
+}
+
+function visibleCardRects(row: HTMLElement | null, source: HTMLElement) {
+  if (!row || typeof window === "undefined") return [];
+
+  const clip = (
+    row.querySelector(".slick-list") ||
+    row.querySelector("[data-sc-track]") ||
+    row
+  ) as HTMLElement;
+  const clipRect = clip.getBoundingClientRect();
+  const minX = Math.max(0, clipRect.left);
+  const maxX = Math.min(window.innerWidth, clipRect.right);
+
+  const nodes = Array.from(
+    row.querySelectorAll(".netflix-standard-card-root, .netflix-ranked-card-root")
+  ) as HTMLElement[];
+
+  if (!nodes.includes(source)) nodes.push(source);
+
+  return nodes
+    .filter((node) => node.isConnected)
+    .map((node) => ({ node, rect: node.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.width > 0 && rect.right > minX + 2 && rect.left < maxX - 2)
+    .sort((a, b) => a.rect.left - b.rect.left);
+}
+
+function measureEdges(element: HTMLElement, rect: DOMRect) {
+  const row = findRow(element);
+  const visible = visibleCardRects(row, element);
+  const first = visible[0];
+  const last = visible[visible.length - 1];
+  const tolerance = Math.max(4, Math.min(18, rect.width * 0.08));
+
+  const isFirst = !!first && (first.node === element || Math.abs(first.rect.left - rect.left) <= tolerance);
+  const isLast = !!last && (last.node === element || Math.abs(last.rect.right - rect.right) <= tolerance);
+
+  let edge: HoverEdge = "center";
+  if (isFirst && !isLast) edge = "left";
+  else if (isLast && !isFirst) edge = "right";
+  else if (isFirst && isLast) {
+    const center = rect.left + rect.width / 2;
+    edge = center <= window.innerWidth / 2 ? "left" : "right";
+  }
+
+  const fallbackGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
+  return {
+    edge,
+    rowStart: first?.rect.left ?? rect.left ?? fallbackGutter,
+    rowEnd: last?.rect.right ?? rect.right ?? window.innerWidth - fallbackGutter,
+  };
+}
+
 /**
- * SC-style hover intent + expansion.
- * Once opened, the preview is visually locked in the viewport. Page/ancestor
- * scrolling never drags the preview along with the card. Scroll only checks
- * whether the pointer still intersects the source card; once it does not, the
- * preview closes. The first visible card uses the real row-title x-axis as its
- * expansion origin, so title, card and hover remain perfectly aligned.
+ * SC-style hover expansion shared by all public rails.
+ * First/last behaviour is based on the cards actually visible in the current
+ * carousel viewport, not on the content index. This keeps edge hovers correct
+ * after horizontal navigation too.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
   const closeTimerRef = useRef<any>(null);
-
   const [intent, setIntent] = useState(false);
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -92,74 +144,47 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     closeTimerRef.current = setTimeout(finishClose, CLOSE_DURATION_MS + 20);
   }, [open, closing, clearOpenTimer, clearCloseTimer, finishClose]);
 
-  const openFrom = useCallback(
-    (element: HTMLElement | null, event?: any) => {
-      if (!element || typeof window === "undefined") return;
-      clearTimers();
-      setIntent(true);
-      setClosing(false);
+  const openFrom = useCallback((element: HTMLElement | null, event?: any) => {
+    if (!element || typeof window === "undefined") return;
+    clearTimers();
+    setIntent(true);
+    setClosing(false);
 
-      const pointerX = Number.isFinite(event?.clientX) ? Number(event.clientX) : undefined;
-      const pointerY = Number.isFinite(event?.clientY) ? Number(event.clientY) : undefined;
+    const pointerX = Number.isFinite(event?.clientX) ? Number(event.clientX) : undefined;
+    const pointerY = Number.isFinite(event?.clientY) ? Number(event.clientY) : undefined;
 
-      openTimerRef.current = setTimeout(() => {
-        if (!element.isConnected) return;
-        const rect = element.getBoundingClientRect();
-        const row = element.closest(".slider-row") as HTMLElement | null;
-        const header = row?.querySelector(".row-header") as HTMLElement | null;
-        const headerRect = header?.getBoundingClientRect();
-        const rowRect = row?.getBoundingClientRect();
-        const rowStart = headerRect?.left ?? rect.left;
-        const rowEnd = rowRect?.right ?? window.innerWidth - rowStart;
-        const edgeTolerance = Math.max(18, Math.round(rect.width * 0.16));
-        const edge: HoverEdge =
-          Math.abs(rect.left - rowStart) <= edgeTolerance
-            ? "left"
-            : Math.abs(rowEnd - rect.right) <= edgeTolerance
-              ? "right"
-              : "center";
+    openTimerRef.current = setTimeout(() => {
+      if (!element.isConnected) return;
+      const rect = element.getBoundingClientRect();
+      const measured = measureEdges(element, rect);
+      setPosition({
+        cardRect: rect,
+        modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
+        anchor: element,
+        pointerX,
+        pointerY,
+        ...measured,
+      });
+      setOpen(true);
+    }, OPEN_DELAY_MS);
+  }, [clearTimers]);
 
-        setPosition({
-          cardRect: rect,
-          modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
-          anchor: element,
-          pointerX,
-          pointerY,
-          rowStart,
-          rowEnd,
-          edge,
-        });
-        setOpen(true);
-      }, OPEN_DELAY_MS);
-    },
-    [clearTimers]
-  );
+  const onEnter = useCallback((event?: any) => {
+    openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
+  }, [openFrom, ref]);
 
-  const onEnter = useCallback(
-    (event?: any) => {
-      openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
-    },
-    [openFrom, ref]
-  );
+  const onLeave = useCallback((event?: any) => {
+    clearOpenTimer();
+    const related = event?.relatedTarget;
+    if (isDomElement(related) && related.closest(".previewModal--container")) return;
+    requestClose();
+  }, [clearOpenTimer, requestClose]);
 
-  const onLeave = useCallback(
-    (event?: any) => {
-      clearOpenTimer();
-      const related = event?.relatedTarget;
-      if (isDomElement(related) && related.closest(".previewModal--container")) return;
-      requestClose();
-    },
-    [clearOpenTimer, requestClose]
-  );
-
-  const onOverlayLeave = useCallback(
-    (event?: any) => {
-      const related = event?.relatedTarget;
-      if (isDomNode(related) && ref.current?.contains(related)) return;
-      requestClose();
-    },
-    [requestClose, ref]
-  );
+  const onOverlayLeave = useCallback((event?: any) => {
+    const related = event?.relatedTarget;
+    if (isDomNode(related) && ref.current?.contains(related)) return;
+    requestClose();
+  }, [requestClose, ref]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
@@ -179,14 +204,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   };
 }
 
-export function ExpandOverlay({
-  position,
-  closing = false,
-  onMouseLeave,
-  onClick,
-  children,
-  testId,
-}: any) {
+export function ExpandOverlay({ position, closing = false, onMouseLeave, onClick, children, testId }: any) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const pointerRef = useRef({ x: -1, y: -1 });
   const [geometry, setGeometry] = useState<any>(null);
@@ -213,78 +231,54 @@ export function ExpandOverlay({
 
     const modalRect = node.getBoundingClientRect();
     const scale = 1 / SCALE_FACTOR;
-    const fallbackRowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
-    const rowStart = Number.isFinite(position?.rowStart)
-      ? Number(position.rowStart)
-      : fallbackRowGutter;
-    const rowEnd = Number.isFinite(position?.rowEnd)
-      ? Number(position.rowEnd)
-      : window.innerWidth - fallbackRowGutter;
+    const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
+    const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
+    const rowEnd = Number.isFinite(position?.rowEnd) ? Number(position.rowEnd) : window.innerWidth - fallback;
     const edge = (position?.edge || "center") as HoverEdge;
 
-    const centeredLeft = card.left + card.width / 2 - modalRect.width / 2;
-    let desiredLeft = centeredLeft;
-
-    // The first card is pinned to the exact x-axis of the row title. Its modal
-    // grows only inward/rightward. The last card mirrors the same behaviour.
-    if (edge === "left") {
-      desiredLeft = rowStart;
-    } else if (edge === "right") {
-      desiredLeft = rowEnd - modalRect.width;
-    }
+    let desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
+    if (edge === "left") desiredLeft = rowStart;
+    if (edge === "right") desiredLeft = rowEnd - modalRect.width;
 
     const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
     const minLeft = edge === "left" ? rowStart : VIEWPORT_GUTTER;
     const maxRightGutter = edge === "right" ? Math.max(0, window.innerWidth - rowEnd) : VIEWPORT_GUTTER;
-    const maxLeft = Math.max(
-      minLeft,
-      window.innerWidth - modalRect.width - maxRightGutter
-    );
-    const maxTop = Math.max(
-      VIEWPORT_GUTTER,
-      window.innerHeight - modalRect.height - VIEWPORT_GUTTER
-    );
+    const maxLeft = Math.max(minLeft, window.innerWidth - modalRect.width - maxRightGutter);
+    const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - modalRect.height - VIEWPORT_GUTTER);
 
     const left = Math.round(Math.min(Math.max(desiredLeft, minLeft), maxLeft));
-    const top = Math.round(
-      Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
-    );
+    const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
 
     let scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
     if (edge === "left") scaledLeft = left;
     if (edge === "right") scaledLeft = left + modalRect.width - modalRect.width * scale;
     const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
-    const resetX = Math.round(card.left - scaledLeft);
-    const resetY = Math.round(card.top - scaledTop);
 
-    return { left, top, resetX, resetY, edge };
+    return {
+      left,
+      top,
+      resetX: Math.round(card.left - scaledLeft),
+      resetY: Math.round(card.top - scaledTop),
+      edge,
+    };
   }, [currentCardRect, position]);
 
   useLayoutEffect(() => {
     if (!position || !modalRef.current || typeof window === "undefined") return;
-
     setGeometry(null);
     setPhase("measure");
-    let frame1 = 0;
-    let frame2 = 0;
-
-    frame1 = requestAnimationFrame(() => {
+    let frame1 = requestAnimationFrame(() => {
       const next = calculateGeometry();
       if (!next) return;
       setGeometry(next);
       setPhase("reset");
-      frame2 = requestAnimationFrame(() => setPhase("open"));
+      frame1 = requestAnimationFrame(() => setPhase("open"));
     });
-
-    return () => {
-      if (frame1) cancelAnimationFrame(frame1);
-      if (frame2) cancelAnimationFrame(frame2);
-    };
+    return () => cancelAnimationFrame(frame1);
   }, [position, calculateGeometry]);
 
   useEffect(() => {
     if (!position || typeof window === "undefined") return;
-
     let frame = 0;
 
     const onPointerMove = (event: PointerEvent) => {
@@ -297,8 +291,7 @@ export function ExpandOverlay({
         frame = 0;
         const card = currentCardRect();
         const pointer = pointerRef.current;
-        if (!card || pointer.x < 0 || pointer.y < 0) return;
-        if (pointInsideRect(pointer.x, pointer.y, card)) return;
+        if (!card || pointer.x < 0 || pointer.y < 0 || pointInsideRect(pointer.x, pointer.y, card)) return;
         const target = document.elementFromPoint(pointer.x, pointer.y);
         onMouseLeave?.({ relatedTarget: target, type: "scroll-anchor-leave" });
       });
@@ -308,6 +301,14 @@ export function ExpandOverlay({
       if (frame || phase === "measure" || phase === "reset" || phase === "close") return;
       frame = requestAnimationFrame(() => {
         frame = 0;
+        const anchor = position?.anchor as HTMLElement | null;
+        if (anchor?.isConnected) {
+          const cardRect = anchor.getBoundingClientRect();
+          const measured = measureEdges(anchor, cardRect);
+          position.rowStart = measured.rowStart;
+          position.rowEnd = measured.rowEnd;
+          position.edge = measured.edge;
+        }
         const next = calculateGeometry();
         if (next) setGeometry(next);
       });
@@ -337,13 +338,9 @@ export function ExpandOverlay({
 
   const card = currentCardRect() || (position.cardRect as DOMRect);
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
-  const fallbackRowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
-  const rowStart = Number.isFinite(position?.rowStart)
-    ? Number(position.rowStart)
-    : fallbackRowGutter;
-  const rowEnd = Number.isFinite(position?.rowEnd)
-    ? Number(position.rowEnd)
-    : window.innerWidth - fallbackRowGutter;
+  const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
+  const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
+  const rowEnd = Number.isFinite(position?.rowEnd) ? Number(position.rowEnd) : window.innerWidth - fallback;
   const edge = (position?.edge || "center") as HoverEdge;
   const fallbackLeft = edge === "left"
     ? rowStart
@@ -353,9 +350,9 @@ export function ExpandOverlay({
           Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
           Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
         );
+
   const left = geometry?.left ?? fallbackLeft;
   const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
-
   let transform = "translate3d(0,0,0) scale(1)";
   let opacity = 0;
   let transition = "none";
@@ -363,12 +360,10 @@ export function ExpandOverlay({
   if (phase === "reset" && geometry) {
     transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
   } else if (phase === "open" && geometry) {
-    transform = "translate3d(0,0,0) scale(1)";
     opacity = 1;
     transition = `transform ${OPEN_DURATION_MS}ms ${EASE}, opacity ${OPACITY_OPEN_MS}ms linear`;
   } else if (phase === "close" && geometry) {
     transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
-    opacity = 0;
     transition = `transform ${CLOSE_DURATION_MS}ms ${EASE}, opacity ${OPACITY_CLOSE_MS}ms linear`;
   }
 
