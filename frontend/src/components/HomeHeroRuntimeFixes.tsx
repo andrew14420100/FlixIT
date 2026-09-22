@@ -6,6 +6,7 @@ import { useHeroData } from "src/hooks/useHeroData";
 const HERO_SELECTOR = '[data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard';
 const VIDEO_SELECTOR = '[data-testid="hero-trailer"] video';
 const CALLOUT_SELECTOR = '.netflix-home-callouts .netflix-home-callout';
+const LEGACY_HIDDEN_ATTR = 'data-legacy-hero-label-hidden';
 const DESCRIPTION_HIDE_MS = 4000;
 
 function firstValue(...values: any[]) {
@@ -101,6 +102,37 @@ function setBadge(callout: HTMLElement, badge: { kind: string; mark: string; tex
   }
 }
 
+function restoreLegacyMetadata(hero: Element) {
+  hero.querySelectorAll(`[${LEGACY_HIDDEN_ATTR}]`).forEach((element: HTMLElement) => {
+    element.style.removeProperty('display');
+    element.removeAttribute(LEGACY_HIDDEN_ATTR);
+  });
+}
+
+function hideLegacyAdminLabel(hero: Element, legacyLabel: string) {
+  restoreLegacyMetadata(hero);
+  const clean = String(legacyLabel || '').trim().toLocaleLowerCase();
+  if (!clean) return;
+
+  const attributes = Array.from(
+    hero.querySelectorAll('.netflix-home-attributes .netflix-home-attribute')
+  ) as HTMLElement[];
+
+  const match = attributes.find(
+    (element) => String(element.textContent || '').trim().toLocaleLowerCase() === clean
+  );
+  if (!match) return;
+
+  match.style.setProperty('display', 'none', 'important');
+  match.setAttribute(LEGACY_HIDDEN_ATTR, 'true');
+
+  const previous = match.previousElementSibling as HTMLElement | null;
+  if (previous?.classList.contains('netflix-home-attribute-dot')) {
+    previous.style.setProperty('display', 'none', 'important');
+    previous.setAttribute(LEGACY_HIDDEN_ATTR, 'true');
+  }
+}
+
 /**
  * Desktop Home-only runtime behavior for the billboard.
  *
@@ -115,6 +147,7 @@ export default function HomeHeroRuntimeFixes() {
   const isHome = location.pathname === "/" || location.pathname === "/browse";
   const { data: heroSettings } = useHeroData();
   const heroIdentity = `${heroSettings?.contentId || ""}:${heroSettings?.mediaType || ""}:${heroSettings?.updatedAt || ""}`;
+  const legacyLabel = String(heroSettings?.seasonLabel || '').trim();
 
   useEffect(() => {
     if (!isHome || typeof window === "undefined" || window.innerWidth < 900) return;
@@ -178,6 +211,7 @@ export default function HomeHeroRuntimeFixes() {
 
       const hero = document.querySelector(HERO_SELECTOR);
       if (!hero) return;
+      hideLegacyAdminLabel(hero, legacyLabel);
       syncBadge(hero);
     };
 
@@ -207,9 +241,12 @@ export default function HomeHeroRuntimeFixes() {
         );
       }
       const currentHero = document.querySelector(HERO_SELECTOR);
-      currentHero?.classList.remove("flixit-hero-video-playing", "flixit-hero-copy-collapsed");
+      if (currentHero) {
+        currentHero.classList.remove("flixit-hero-video-playing", "flixit-hero-copy-collapsed");
+        restoreLegacyMetadata(currentHero);
+      }
     };
-  }, [isHome, heroIdentity]);
+  }, [isHome, heroIdentity, legacyLabel]);
 
   return null;
 }
