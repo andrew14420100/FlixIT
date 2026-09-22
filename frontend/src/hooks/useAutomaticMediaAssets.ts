@@ -139,9 +139,6 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
   );
 
   const cardBackdrop = mappedBackdrop || null;
-  // The old mapping intentionally stored the same SC cover in both backdrop and
-  // poster. That is fine for legacy landscape cards but it is NOT a Top 10
-  // poster. Only expose a mapped poster when it is genuinely distinct.
   const cardPoster = mappedPoster && mappedPoster !== mappedBackdrop ? mappedPoster : null;
   const cardBackdropEmbedded = !!cardBackdrop;
   const cardPosterEmbedded = !!cardPoster;
@@ -195,17 +192,10 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
   );
   const rawOfficialLogo = firstNonTmdbArtwork(official?.logo_url);
 
-  // A Top 10 entry must use a true vertical poster. SC's previous resolver used
-  // the landscape cover as poster fallback, which produced horizontal covers in
-  // the ranked row. Treat an identical backdrop/poster URL as no poster.
   const officialPoster = rawOfficialPoster && rawOfficialPoster !== officialLandscape
     ? rawOfficialPoster
     : null;
 
-  // Protect Hero/hover from parent-series matches. Example: when the selected
-  // identity is "Stranger Things: Storie dal 1985", an approximate SC hit named
-  // only "Stranger Things" must never donate the parent show's logo. In that
-  // case the UI falls back to the full selected title until an exact logo exists.
   const rejectGenericParentLogo = hasGenericParentMatch(official);
   const officialLogo = rejectGenericParentLogo ? null : rawOfficialLogo;
 
@@ -297,6 +287,12 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
   };
 }
 
+function embeddedArtwork(item: any) {
+  const raw = item?.__artwork;
+  if (!raw || typeof raw !== "object" || raw?.active === false) return null;
+  return raw?.active ? raw : null;
+}
+
 export default function useAutomaticMediaAssets(
   item: any,
   mediaType: any,
@@ -308,29 +304,38 @@ export default function useAutomaticMediaAssets(
     () => buildMediaAssetFallback(item, mediaType),
     [item, mediaType]
   );
+  const embedded = useMemo(() => embeddedArtwork(item), [item?.__artwork]);
+  const immediate = useMemo(
+    () => embedded ? mergeOfficialArtwork(fallback, embedded) : fallback,
+    [fallback, embedded]
+  );
 
   const query = useQuery({
     queryKey: ["media-assets", MEDIA_ASSET_QUALITY_VERSION, typeSlug, id],
     queryFn: async ({ signal }: any) => {
-      if (!id) return fallback;
+      if (!id) return immediate;
       const response = await fetch(`/api/public/official-artwork/${typeSlug}/${id}`, {
         signal,
         cache: "no-store",
         headers: { Accept: "application/json" },
       });
       const official = response.ok ? await response.json() : {};
-      return mergeOfficialArtwork(fallback, official);
+      return mergeOfficialArtwork(immediate, official);
     },
-    enabled: !!id && !!enabled,
-    placeholderData: fallback,
+    // Home bootstrap and SC artwork batches already carry the exact artwork for
+    // each published card. Re-querying official-artwork for every near-viewport
+    // card created a large request fan-out on refresh. Only titles without an
+    // embedded server bundle need the individual resolver.
+    enabled: !!id && !!enabled && !embedded,
+    placeholderData: immediate,
     staleTime: DAILY_ARTWORK_REFRESH_MS,
     gcTime: DAILY_ARTWORK_REFRESH_MS * 7,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: false,
-    retry: 2,
+    retry: 1,
   });
 
-  return { ...fallback, ...(query.data || {}) };
+  return { ...immediate, ...(query.data || {}) };
 }
