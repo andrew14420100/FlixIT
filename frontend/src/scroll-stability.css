@@ -1,19 +1,43 @@
-/* Keep the public app on one vertical scroll surface. */
+/* Keep the public app on exactly one vertical scroll surface: the document. */
 html {
   min-height: 100%;
+  width: 100%;
+  max-width: 100%;
   overflow-x: clip !important;
-  overflow-y: scroll !important;
+  overflow-y: auto !important;
   scrollbar-gutter: stable;
+  overscroll-behavior-x: none;
   overscroll-behavior-y: none;
 }
 
 body,
-#root {
+#root,
+#root > div,
+.flixit-route-stage {
   min-height: 100%;
   height: auto !important;
   max-height: none !important;
+  width: 100%;
+  max-width: 100% !important;
   overflow-x: clip !important;
   overflow-y: visible !important;
+  overscroll-behavior-x: none;
+}
+
+body {
+  position: relative;
+}
+
+/* Prevent wheel/trackpad vertical scrolling from acquiring a tiny horizontal
+   scroll range when an expanded rail or 100vw child is present. */
+html,
+body,
+#root,
+#root > div,
+.flixit-route-stage,
+.sliders,
+.slider-row {
+  box-sizing: border-box;
 }
 
 /* Keep the Episodes heading + season dropdown anchored while the episode list
