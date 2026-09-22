@@ -14,6 +14,7 @@ import SessionGuards from "src/components/auth/SessionGuards";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
 import HomeHeroRuntimeFixes from "src/components/HomeHeroRuntimeFixes";
+import NetflixHomeAmbientExact from "src/components/NetflixHomeAmbientExact";
 import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
@@ -86,6 +87,7 @@ export default function MainLayout() {
       <GlobalPlayGlyphNormalizer />
       <MainHeader />
       <HomeHeroRuntimeFixes />
+      <NetflixHomeAmbientExact />
       <MobileGlobalBottomNav />
 
       <Suspense fallback={null}>
