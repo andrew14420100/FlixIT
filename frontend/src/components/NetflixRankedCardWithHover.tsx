@@ -14,6 +14,8 @@ import "./NetflixMiniModalExact.css";
 import NetflixTop10RankSvg from "./NetflixTop10RankSvg";
 import StreamingCommunityTop10RankSvg from "./StreamingCommunityTop10RankSvg";
 
+const TRAILER_HOVER_DELAY_MS = 2000;
+
 function unique(values: Array<string | null | undefined>) {
   const seen = new Set<string>();
   return values.filter((value): value is string => {
@@ -51,6 +53,16 @@ function firstNonTmdbArtwork(...values: any[]) {
   return null;
 }
 
+function firstLogo(...values: any[]) {
+  for (const value of values) {
+    const raw = firstArtwork(value);
+    if (!raw) continue;
+    const text = String(raw).trim();
+    if (/^https?:\/\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) return text;
+  }
+  return null;
+}
+
 export default function NetflixRankedCardWithHover({
   item,
   rank,
@@ -61,6 +73,7 @@ export default function NetflixRankedCardWithHover({
   const navigate = useNavigate();
   const isMobile = useMediaQuery("(max-width:899px)");
   const ref = useRef<HTMLDivElement>(null);
+  const hoverStartedAtRef = useRef(0);
   const [nearViewport, setNearViewport] = useState(false);
   const [posterIndex, setPosterIndex] = useState(0);
 
@@ -106,7 +119,7 @@ export default function NetflixRankedCardWithHover({
   const deferredAssets = useDeferredMediaAssets(
     { ...item, id: normalizedId },
     mType,
-    intent || open
+    nearViewport || intent || open
   );
   const assets = useMemo(
     () => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }),
@@ -158,13 +171,13 @@ export default function NetflixRankedCardWithHover({
     automaticBackdrop,
     mappedBackdrop
   );
-  const logoUrl = firstNonTmdbArtwork(
+  const scLogoUrl = firstNonTmdbArtwork(
     automaticAssets?.logo_path,
-    assets?.logo_path,
     item?.netflix_logo_url,
     item?.logo_path,
     item?.logo
   );
+  const logoUrl = scLogoUrl || firstLogo(deferredAssets?.logo_path, deferredAssets?.fallback_logo_path);
 
   const posterCandidates = useMemo(
     () => unique([
@@ -215,7 +228,10 @@ export default function NetflixRankedCardWithHover({
 
   const handleEnter = useCallback(
     (event?: any) => {
-      if (!suppressHover) onEnter(event);
+      if (!suppressHover) {
+        hoverStartedAtRef.current = Date.now();
+        onEnter(event);
+      }
     }, [suppressHover, onEnter]
   );
 
@@ -225,6 +241,11 @@ export default function NetflixRankedCardWithHover({
        assets?.resolved_trailer?.manifest_url ||
        assets?.preview_video_url)
     : null;
+
+  const trailerDelay = useMemo(() => {
+    if (!open || !hoverStartedAtRef.current) return TRAILER_HOVER_DELAY_MS;
+    return Math.max(0, TRAILER_HOVER_DELAY_MS - (Date.now() - hoverStartedAtRef.current));
+  }, [open, trailerUrl]);
 
   useEffect(() => {
     if (!intent || open || !trailerUrl || !/\.m3u8(?:$|\?)/i.test(String(trailerUrl))) return;
@@ -323,7 +344,7 @@ export default function NetflixRankedCardWithHover({
             onDetail={goDetail}
             watch={watch}
           />
-          <HoverTrailerOverlay url={trailerUrl} logoUrl={logoUrl} onOpen={goDetail} />
+          <HoverTrailerOverlay url={trailerUrl} logoUrl={logoUrl} delay={trailerDelay} onOpen={goDetail} />
         </ExpandOverlay>
       ) : null}
     </>
