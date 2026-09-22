@@ -23,6 +23,8 @@ import "src/components/mobile/mobile-detail-runtime-fixes.css";
 import "src/components/detail-interactions.css";
 import "src/components/detail/detail-episode-polish.css";
 import "src/components/site-polish.css";
+import "src/components/ScRowAxis.css";
+import "src/components/ScHomeLayoutFinal.css";
 
 // Route-specific helpers stay out of the initial shell. This is especially
 // important on mobile: Home, Detail and Watch no longer download each other's
