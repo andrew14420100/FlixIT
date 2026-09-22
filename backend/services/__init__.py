@@ -47,6 +47,20 @@ def _install_trailer_registration_hook():
             log_admin_action,
             fetch_tmdb_data,
         )
+
+        # Performance services are mounted here because premium.register runs
+        # only after server_core has created the FastAPI app and registered its
+        # public catalogue routes. Both installers are idempotent.
+        try:
+            from services.performance_api import install_performance_api
+            install_performance_api(app)
+        except Exception:
+            pass
+        try:
+            from services.home_bootstrap import install_home_bootstrap
+            install_home_bootstrap(app)
+        except Exception:
+            pass
         return result
 
     register_with_trailers._flixit_trailer_hook = True

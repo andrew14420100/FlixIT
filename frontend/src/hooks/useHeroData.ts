@@ -22,15 +22,20 @@ function heroViewport() {
   return window.innerWidth < 700 ? 'mobile' : 'desktop';
 }
 
+function bootstrappedHero() {
+  if (typeof window === 'undefined') return null;
+  const value = (window as any).__flixitHomeHero;
+  return value?.contentId ? value : null;
+}
+
 /**
- * Hero identity/detail/custom editorial fields come from /api/public/hero.
- * Visual assets deliberately do not: HeroSection must use the exact same unified
- * non-TMDB resolver as cards, Top 10 and Detail so provider choice/logo quality
- * never diverges between surfaces.
+ * The Home bootstrap hydrates the hero inline so opening Home does not start a
+ * second request. Detail/navigation pages can still use this hook standalone.
  */
-export function useHeroData() {
+export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
+  const hydrated = initialHero?.contentId ? initialHero : bootstrappedHero();
 
   return useQuery<HeroSettings | null>({
     queryKey: ['hero-settings-v2', profile, viewport],
@@ -53,6 +58,13 @@ export function useHeroData() {
         return null;
       }
     },
+    initialData: hydrated?.contentId
+      ? {
+          ...hydrated,
+          mediaType: hydrated.mediaType || 'tv',
+        }
+      : undefined,
+    initialDataUpdatedAt: hydrated?.contentId ? Date.now() : undefined,
     staleTime: 5 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     refetchOnWindowFocus: false,
