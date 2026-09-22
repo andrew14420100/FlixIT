@@ -5,6 +5,7 @@ Admin > Contenuti (or a bulk CSV import) and stored in Mongo `stream_sources`.
 Always active and always first in the chain: internally-managed streams have
 absolute priority over any other provider.
 """
+import asyncio
 from typing import Optional
 
 from .base import BaseResolver, stream_type_for
@@ -25,13 +26,16 @@ class AdminSourceResolver(BaseResolver):
     ) -> Optional[dict]:
         if self._db is None:
             return None
-        # TV sources are keyed per episode; movies use season/episode = None
         q_season = season if media_type == "tv" else None
         q_episode = episode if media_type == "tv" else None
-        doc = self._db["stream_sources"].find_one(
-            {"tmdbId": tmdb_id, "media_type": media_type, "season": q_season, "episode": q_episode},
-            {"_id": 0},
-        )
+
+        def find_source():
+            return self._db["stream_sources"].find_one(
+                {"tmdbId": tmdb_id, "media_type": media_type, "season": q_season, "episode": q_episode},
+                {"_id": 0},
+            )
+
+        doc = await asyncio.to_thread(find_source)
         if not doc:
             return None
         return {
