@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Slider from "react-slick";
 import { styled, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -51,6 +51,7 @@ function top10Key(item: any) {
 
 export default function Top10Slider({ title, items }) {
   const sliderRef = useRef<Slider>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const theme = useTheme();
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isSliding, setIsSliding] = useState(false);
@@ -80,6 +81,49 @@ export default function Top10Slider({ title, items }) {
     () => candidates.filter((item) => artworkBatch.isReady(item, "poster")).slice(0, 10),
     [candidates, artworkBatch.data]
   );
+
+  const syncRowAxis = useCallback(() => {
+    const row = rowRef.current;
+    if (!row || typeof window === "undefined") return;
+
+    const firstCard = (
+      row.querySelector(".slick-slide.slick-active .netflix-ranked-card-root") ||
+      row.querySelector(".netflix-ranked-card-root")
+    ) as HTMLElement | null;
+    if (!firstCard) return;
+
+    const rowRect = row.getBoundingClientRect();
+    const cardRect = firstCard.getBoundingClientRect();
+    const axis = Math.max(0, Math.round((cardRect.left - rowRect.left) * 100) / 100);
+    row.style.setProperty("--flix-row-axis", `${axis}px`);
+  }, []);
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row || !published.length || typeof window === "undefined") return;
+
+    let frame = window.requestAnimationFrame(syncRowAxis);
+    const schedule = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(syncRowAxis);
+    };
+
+    window.addEventListener("resize", schedule);
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+    observer?.observe(row);
+
+    const firstCard = (
+      row.querySelector(".slick-slide.slick-active .netflix-ranked-card-root") ||
+      row.querySelector(".netflix-ranked-card-root")
+    ) as HTMLElement | null;
+    if (firstCard) observer?.observe(firstCard);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedule);
+      observer?.disconnect();
+    };
+  }, [syncRowAxis, published.length, activeSlideIndex, tiles]);
 
   if (!candidates.length) return null;
 
@@ -120,6 +164,7 @@ export default function Top10Slider({ title, items }) {
 
   return (
     <Box
+      ref={rowRef}
       data-testid="top10-slider"
       className="slider-row top10-row"
       data-sliding={isSliding ? "true" : "false"}
