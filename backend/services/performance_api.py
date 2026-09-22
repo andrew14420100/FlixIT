@@ -93,8 +93,6 @@ def _bundle_uncached(raw: dict) -> dict | None:
         }
 
     images = record.get("images") or {}
-    # Never use cover_mobile as a ranked poster: Top 10 and mobile poster rows
-    # require a real vertical poster asset.
     landscape = _first_url(images, ("cover", "cover_desktop", "landscape", "card"))
     poster = _first_url(images, ("poster", "poster_mobile"))
     background = _first_url(images, ("background", "backdrop", "hero", "wallpaper")) or landscape or poster
@@ -163,14 +161,7 @@ def _bundle(raw: dict) -> dict | None:
 
 
 def _install_nonblocking_enrichment(app) -> None:
-    """Do not hold catalogue/list responses while 20-60 TMDB asset calls finish.
-
-    The old ``server_core.enrich_items`` awaited ``get_media_assets`` for every
-    row item. On a cold cache that turned one Home request into dozens of TMDB
-    requests before the browser got any JSON. Card artwork is already resolved by
-    the SC batch endpoint, so list APIs can attach assets already present in Mongo
-    immediately and warm a small number of misses in the background.
-    """
+    """Return list/catalogue JSON without waiting for cold per-title asset calls."""
     if getattr(app.state, "flixit_nonblocking_enrichment_registered", False):
         return
     try:
@@ -178,7 +169,20 @@ def _install_nonblocking_enrichment(app) -> None:
     except Exception:
         return
 
-    fields = tuple(getattr(core, "ASSET_FIELDS", ("titled_backdrop_path", "logo_path", "trailer_key", "runtime", "number_of_seasons", "certification")))
+    fields = tuple(
+        getattr(
+            core,
+            "ASSET_FIELDS",
+            (
+                "titled_backdrop_path",
+                "logo_path",
+                "trailer_key",
+                "runtime",
+                "number_of_seasons",
+                "certification",
+            ),
+        )
+    )
     media_assets = getattr(core, "media_assets", None)
     resolver = getattr(core, "get_media_assets", None)
     if media_assets is None or not callable(resolver):
@@ -195,8 +199,8 @@ def _install_nonblocking_enrichment(app) -> None:
             _asset_warm_inflight.discard(key)
 
     def schedule_warm(keys: list[tuple[str, int]]) -> None:
-        # At most twelve new cold titles per API response are warmed. This makes
-        # future hovers/details richer without recreating the old request storm.
+        # Warm a small number of misses without rebuilding the old TMDB request
+        # storm. The SC artwork endpoint already supplies card artwork instantly.
         for key in keys[:12]:
             if key in _asset_warm_inflight:
                 continue
@@ -209,10 +213,9 @@ def _install_nonblocking_enrichment(app) -> None:
         if not items:
             return items
 
-        keys: list[tuple[str, int]] = []
-        seen = set()
         movie_ids: list[int] = []
         tv_ids: list[int] = []
+        seen: set[tuple[str, int]] = set()
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -224,7 +227,6 @@ def _install_nonblocking_enrichment(app) -> None:
             if key in seen:
                 continue
             seen.add(key)
-            keys.append(key)
             (tv_ids if media_type == "tv" else movie_ids).append(tmdb_id)
 
         clauses = []
@@ -249,74 +251,6 @@ def _install_nonblocking_enrichment(app) -> None:
         }
         missing: list[tuple[str, int]] = []
 
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            tmdb_id = _tmdb_id(item)
-            if not tmdb_id:
-                continue
-            key = (_media_type(item), tmdb_id)
-            assets = cached.get(key)
-            for field in fields:
-                if item.get(field) is None:
-                    item[field] = (assets or {}).get(field)
-            if not item.get("backdrop_path") and assets?.get("backdrop_path"):
-                item["backdrop_path"] = assets.get("backdrop_path")
-            if assets is None:
-                missing.append(key)
-
-        if missing:
-            schedule_warm(missing)
-        return items
-
-    # Python has no optional chaining; keep the hot loop above intentionally
-    # simple while preserving a conventional dict access.
-    source = enrich_items_fast.__code__.co_consts
-    del source  # silence linters; function replacement follows below
-
-    # Replace a tiny syntax convenience that cannot be expressed in older Python
-    # versions used by some deployments.
-    async def compatible_enrich_items_fast(items: list) -> list:
-        if not items:
-            return items
-
-        keys: list[tuple[str, int]] = []
-        seen = set()
-        movie_ids: list[int] = []
-        tv_ids: list[int] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            tmdb_id = _tmdb_id(item)
-            if not tmdb_id:
-                continue
-            media_type = _media_type(item)
-            key = (media_type, tmdb_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            keys.append(key)
-            (tv_ids if media_type == "tv" else movie_ids).append(tmdb_id)
-
-        clauses = []
-        if movie_ids:
-            clauses.append({"type": "movie", "tmdbId": {"$in": movie_ids}})
-        if tv_ids:
-            clauses.append({"type": "tv", "tmdbId": {"$in": tv_ids}})
-        cached_rows = []
-        if clauses:
-            projection = {"_id": 0, "type": 1, "tmdbId": 1, "backdrop_path": 1}
-            projection.update({field: 1 for field in fields})
-            try:
-                cached_rows = list(media_assets.find({"$or": clauses}, projection))
-            except Exception:
-                cached_rows = []
-        cached = {
-            (str(row.get("type") or "movie"), int(row.get("tmdbId") or 0)): row
-            for row in cached_rows
-            if row.get("tmdbId")
-        }
-        missing: list[tuple[str, int]] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -332,11 +266,12 @@ def _install_nonblocking_enrichment(app) -> None:
                 item["backdrop_path"] = assets.get("backdrop_path")
             if assets is None:
                 missing.append(key)
+
         if missing:
             schedule_warm(missing)
         return items
 
-    core.enrich_items = compatible_enrich_items_fast
+    core.enrich_items = enrich_items_fast
     app.state.flixit_nonblocking_enrichment_registered = True
 
 
