@@ -1,8 +1,8 @@
 /*
- * Desktop hover freeze.
- * Once a preview is shown it must remain visually locked in place: no
- * micro-translation, no hover scaling and no transform animation while the
- * pointer moves inside the preview.
+ * Desktop hover behaviour.
+ * The preview must animate from the source card to the enlarged SC-style card,
+ * then stay visually locked in that final position while the pointer moves
+ * anywhere inside it.
  */
 
 @media (min-width: 900px) {
@@ -12,14 +12,18 @@
     transform-style: flat !important;
   }
 
-  /* The visible hover is always rendered at its final geometry. */
+  /* Keep the original scale-up motion: reset phase starts at 1/1.5 scale and
+     the open phase animates to the final enlarged geometry. */
   .flix-netflix-preview-portal > .previewModal--container[data-phase="open"] {
     transform: translate3d(0, 0, 0) scale(1) !important;
-    transition: opacity 70ms linear !important;
-    will-change: opacity !important;
+    transition:
+      transform 280ms cubic-bezier(.21,0,.07,1),
+      opacity 70ms linear !important;
+    will-change: transform, opacity !important;
   }
 
-  /* Moving the pointer over any part of the open preview must never move it. */
+  /* Once open, pointer movement/focus inside the preview never changes its
+     final transform. This does not cancel the initial transition above. */
   .flix-netflix-preview-portal > .previewModal--container[data-phase="open"]:hover,
   .flix-netflix-preview-portal > .previewModal--container[data-phase="open"]:focus,
   .flix-netflix-preview-portal > .previewModal--container[data-phase="open"]:focus-within {
@@ -28,7 +32,7 @@
     scale: 1 !important;
   }
 
-  /* The source tile also stays completely locked while its portal is active. */
+  /* The source tile stays still; only the fixed preview performs the grow. */
   [data-testid="home-page"] .netflix-standard-card-root,
   [data-testid="home-page"] .netflix-ranked-card-root,
   [data-testid="home-page"] .netflix-standard-card-root:hover,
@@ -40,7 +44,8 @@
     scale: 1 !important;
   }
 
-  /* Media inside the preview must not introduce a transform when it starts. */
+  /* Media inside the already-open preview cannot introduce a second transform
+     when poster/video content changes. */
   .flix-netflix-preview-portal .flixit-hover-trailer,
   .flix-netflix-preview-portal .flixit-hover-trailer > img,
   .flix-netflix-preview-portal .flixit-hover-trailer > div,
