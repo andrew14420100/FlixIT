@@ -17,7 +17,9 @@ import services.artwork_card_policy as card_policy
 from services.sc_artwork_catalog import CATALOG, _url_for
 
 MAX_BATCH_ITEMS = 120
-API_VERSION = "sc-artwork-batch-v1"
+API_VERSION = "sc-artwork-batch-v2-memoized"
+BUNDLE_CACHE_MAX = 30000
+_bundle_cache: dict[tuple, dict] = {}
 
 
 def _media_type(raw: dict) -> str:
@@ -42,7 +44,7 @@ def _first_url(images: dict, keys: tuple[str, ...]):
     return None
 
 
-def _bundle(raw: dict) -> dict | None:
+def _bundle_uncached(raw: dict) -> dict | None:
     tmdb_id = _tmdb_id(raw)
     if not tmdb_id:
         return None
@@ -130,6 +132,39 @@ def _bundle(raw: dict) -> dict | None:
         "sc_confidence": round(min(confidence, 1.0), 4),
         "version": API_VERSION,
     }
+
+
+def _bundle(raw: dict) -> dict | None:
+    """Memoize expensive title matching for the static committed catalogue.
+
+    Home rows repeatedly ask for the same titles across reloads and routes. The
+    old code rescored catalogue candidates on every batch request. The catalogue
+    is immutable for the lifetime of the backend process, so a bounded in-memory
+    result cache is safe and removes that repeated CPU work.
+    """
+    tmdb_id = _tmdb_id(raw)
+    if not tmdb_id:
+        return None
+    key = (
+        _media_type(raw),
+        tmdb_id,
+        str(raw.get("title") or raw.get("name") or "").strip(),
+        str(raw.get("original_title") or raw.get("original_name") or "").strip(),
+        str(raw.get("year") or raw.get("release_date") or raw.get("first_air_date") or ""),
+    )
+    cached = _bundle_cache.get(key)
+    if cached is not None:
+        return dict(cached)
+
+    result = _bundle_uncached(raw)
+    if result is not None:
+        if len(_bundle_cache) >= BUNDLE_CACHE_MAX:
+            # Simple bounded reset is intentionally cheaper than maintaining a
+            # per-request LRU list for a catalogue that changes only on restart.
+            _bundle_cache.clear()
+        _bundle_cache[key] = dict(result)
+        return dict(result)
+    return None
 
 
 def _install_startup_load_shed(app) -> None:
