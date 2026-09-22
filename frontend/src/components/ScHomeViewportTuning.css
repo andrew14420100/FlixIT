@@ -10,12 +10,6 @@
     --sc-row-title: clamp(18px, 1.22vw, 22px);
   }
 
-  /*
-   * HERO — restore the original SC billboard geometry.
-   * The visible billboard is 35em high while artwork/video keep a 16:9
-   * 56.25em canvas behind it. This is what creates the characteristic SC
-   * crop and allows the lower artwork/fade to continue behind the first row.
-   */
   [data-testid="home-page"] [data-testid="hero-section"] {
     position: relative !important;
     width: 100% !important;
@@ -43,18 +37,34 @@
     object-position: top center !important;
   }
 
-  /* Do not stack a second artificial fade over the gradients already rendered
-     by HeroSection: SC uses the billboard's own top/side/bottom gradient layers. */
+  /* SC-style lower blend: the first existing row enters a real fade instead of
+     sitting directly on the raw frame. This is decorative only. */
   [data-testid="home-page"] [data-testid="hero-section"]::after {
-    content: none !important;
-    display: none !important;
+    content: "" !important;
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: -1px !important;
+    height: 16.5em !important;
+    z-index: 5 !important;
+    pointer-events: none !important;
+    background: linear-gradient(
+      to bottom,
+      rgba(20,20,20,0) 0%,
+      rgba(20,20,20,.05) 28%,
+      rgba(20,20,20,.18) 48%,
+      rgba(20,20,20,.46) 68%,
+      rgba(20,20,20,.80) 86%,
+      #141414 100%
+    ) !important;
   }
 
   /* SC information block geometry. */
   [data-testid="home-page"] [data-testid="hero-section"] .info-wrap {
     position: absolute !important;
     top: 0 !important;
-    bottom: 10% !important;
+    bottom: 14% !important;
     left: 4% !important;
     width: 36% !important;
     max-width: none !important;
@@ -78,33 +88,39 @@
     display: block !important;
     width: auto !important;
     height: auto !important;
-    max-width: none !important;
-    max-height: 3em !important;
+    max-width: 29vw !important;
+    max-height: 2.65em !important;
     margin: 0 !important;
     object-fit: contain !important;
     object-position: left bottom !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-season-label"] {
-    margin-top: 1em !important;
-    margin-bottom: -.75em !important;
-    font-size: 1.3em !important;
-    line-height: inherit !important;
+    margin-top: .72em !important;
+    margin-bottom: -.55em !important;
+    font-size: 1.2em !important;
+    line-height: 1.18 !important;
     font-weight: 700 !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-overview"] {
-    margin-top: 1.5em !important;
+    margin-top: 1.15em !important;
     max-width: 100% !important;
-    font-size: 1.2em !important;
-    line-height: 1.4 !important;
+    font-size: 1.14em !important;
+    line-height: 1.38 !important;
     font-weight: 400 !important;
   }
 
-  /* Do not override .info-buttons or either Hero button here. */
+  /* Keep the existing buttons exactly as implemented by HeroSection. */
 
-  /* Section typography/card stability remain SC-aligned, but section content
-     and order are untouched. */
+  /* The first existing section enters only the lower part of the Hero fade. */
+  [data-testid="home-page"] [data-testid="home-rows"] {
+    margin-top: -4.2vw !important;
+    padding-top: 0 !important;
+    position: relative !important;
+    z-index: 20 !important;
+  }
+
   [data-testid="home-page"] .slider-row .row-header,
   [data-testid="home-page"] .top10-row .row-header {
     min-height: 24px !important;
