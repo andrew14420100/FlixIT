@@ -86,29 +86,16 @@ export default function ScCdnRecovery() {
       img.src = candidate(name, nextAttempt);
     };
 
-    // New image/source nodes are enough: React normally creates a node with its
-    // src already set. Watching every src/srcset attribute change on a page with
-    // dozens of lazy images caused a large MutationObserver workload. If a
-    // dynamic legacy URL appears later, the capture-phase error handler below
-    // still repairs it on the first failure.
-    const observer = new MutationObserver((records) => {
-      for (const record of records) {
-        record.addedNodes.forEach((node) => {
-          if (node instanceof Element) scan(node);
-        });
-      }
-    });
-
+    // One initial pass repairs legacy URLs already present at shell mount. For
+    // images created later we do not need a document-wide MutationObserver:
+    // the capture-phase error event identifies both legacy and current SC CDN
+    // URLs and switches to the next healthy CDN only when a request actually
+    // fails. This removes work from every card insertion/slider movement.
     scan(document);
     document.addEventListener("error", onError, true);
-    observer.observe(document.documentElement, {
-      subtree: true,
-      childList: true,
-    });
 
     return () => {
       document.removeEventListener("error", onError, true);
-      observer.disconnect();
     };
   }, []);
 
