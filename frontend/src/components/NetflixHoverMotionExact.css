@@ -1,14 +1,8 @@
-/* Netflix mini-modal motion overrides based on live DOM/animation captures. */
+/* Hover geometry + lower panel tuned from the supplied SC reference screenshot. */
 
 .previewModal--container[data-motion="netflix"] {
+  --sc-hover-scale: var(--flix-mini-scale, 1);
   box-shadow: var(--flix-netflix-shadow, none) !important;
-
-  /*
-   * 366 x 374.557 is the captured Netflix reference, not a fixed size.
-   * useHoverExpand now derives these variables from the LIVE card width:
-   * hover width = card width * 1.5, with height/player/info scaled by the
-   * same Netflix reference proportions.
-   */
   width: var(--flix-mini-modal-width) !important;
   height: var(--flix-mini-modal-height) !important;
   min-width: var(--flix-mini-modal-width) !important;
@@ -16,6 +10,8 @@
   min-height: var(--flix-mini-modal-height) !important;
   max-height: var(--flix-mini-modal-height) !important;
   overflow: hidden !important;
+  border-radius: calc(5px * var(--sc-hover-scale)) !important;
+  background: #141414 !important;
 }
 
 .previewModal--container[data-motion="netflix"] .previewModal--player_container {
@@ -27,51 +23,193 @@
   overflow: hidden !important;
 }
 
-.previewModal--container[data-motion="netflix"] .previewModal--info {
+.previewModal--container[data-motion="netflix"] .previewModal--info.sc-hover-info {
   width: 100% !important;
   height: var(--flix-mini-info-height) !important;
   min-height: var(--flix-mini-info-height) !important;
   max-height: var(--flix-mini-info-height) !important;
+  margin: 0 !important;
+  padding: 0 !important;
   overflow: hidden !important;
+  background: #141414 !important;
+  color: #fff !important;
+  opacity: 1 !important;
+  transform: none !important;
   transition: none !important;
 }
 
-.previewModal--container[data-motion="netflix"] .previewModal--info-link,
-.previewModal--container[data-motion="netflix"] .mini-modal-container,
-.previewModal--container[data-motion="netflix"] .previewModal--info-container {
-  height: 100% !important;
-  min-height: 0 !important;
-  max-height: var(--flix-mini-info-height) !important;
-  overflow: hidden !important;
+.previewModal--container[data-motion="netflix"] .sc-hover-panel {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding:
+    calc(16px * var(--sc-hover-scale))
+    calc(16px * var(--sc-hover-scale))
+    calc(14px * var(--sc-hover-scale));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
+  background: #141414;
+  font-family: "Netflix Sans", "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, sans-serif;
+  box-sizing: border-box;
 }
 
-/* Keep the description present without allowing content to change modal height. */
-.previewModal--container[data-motion="netflix"] .previewModal-description {
-  margin-top: 6px !important;
-  line-height: 18px !important;
-  max-height: 18px !important;
-  -webkit-line-clamp: 1 !important;
-  overflow: hidden !important;
+/* SC reference: play, plus, favourite on the left; details chevron on the right. */
+.previewModal--container[data-motion="netflix"] .sc-hover-controls {
+  width: 100%;
+  height: calc(43px * var(--sc-hover-scale));
+  min-height: calc(43px * var(--sc-hover-scale));
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--sc-hover-scale));
+  margin: 0 0 calc(12px * var(--sc-hover-scale));
+  padding: 0;
 }
 
-.previewModal--container[data-motion="netflix"] .previewModal--metadatAndControls-tags-container {
-  margin-top: 6px !important;
-  max-height: 18px !important;
-  overflow: hidden !important;
+.previewModal--container[data-motion="netflix"] .sc-hover-controls-spacer {
+  flex: 1 1 auto;
+  min-width: calc(8px * var(--sc-hover-scale));
 }
 
-.previewModal--container[data-motion="netflix"] .evidence-list {
-  flex-wrap: nowrap !important;
-  line-height: 18px !important;
-  white-space: nowrap !important;
-  overflow: hidden !important;
+.previewModal--container[data-motion="netflix"] .sc-hover-action {
+  appearance: none;
+  width: calc(42px * var(--sc-hover-scale));
+  height: calc(42px * var(--sc-hover-scale));
+  min-width: calc(42px * var(--sc-hover-scale));
+  min-height: calc(42px * var(--sc-hover-scale));
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  border: calc(2px * var(--sc-hover-scale)) solid rgba(255,255,255,.52);
+  background: #242424;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  outline: none;
+  line-height: 1;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  transition: border-color 120ms linear, background-color 120ms linear;
 }
 
-.previewModal--container[data-motion="netflix"] .previewModal--info,
-.previewModal--container[data-motion="netflix"] .previewModal--metadatAndControls-info,
-.previewModal--container[data-motion="netflix"] .previewModal--metadatAndControls-tags-container {
-  opacity: 1 !important;
-  transform: none !important;
+.previewModal--container[data-motion="netflix"] .sc-hover-action:hover,
+.previewModal--container[data-motion="netflix"] .sc-hover-action.is-selected {
+  border-color: #fff;
+  background: #303030;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-action.is-primary {
+  background: #fff;
+  border-color: #fff;
+  color: #090909;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-action.is-primary:hover {
+  background: #e6e6e6;
+  border-color: #e6e6e6;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-action svg {
+  width: calc(21px * var(--sc-hover-scale));
+  height: calc(21px * var(--sc-hover-scale));
+  display: block;
+  overflow: visible;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-action.is-primary svg {
+  width: calc(20px * var(--sc-hover-scale));
+  height: calc(20px * var(--sc-hover-scale));
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-action.is-end {
+  background: #242424;
+}
+
+/* First information row from the screenshot: green score · year - seasons · age. */
+.previewModal--container[data-motion="netflix"] .sc-hover-meta-line {
+  min-height: calc(20px * var(--sc-hover-scale));
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: calc(6px * var(--sc-hover-scale));
+  color: #f2f2f2;
+  font-size: calc(14px * var(--sc-hover-scale));
+  line-height: calc(20px * var(--sc-hover-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-rating {
+  color: #00d277;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-year,
+.previewModal--container[data-motion="netflix"] .sc-hover-dash,
+.previewModal--container[data-motion="netflix"] .sc-hover-duration {
+  color: #f2f2f2;
+  font-weight: 400;
+  flex: 0 0 auto;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-age {
+  height: calc(18px * var(--sc-hover-scale));
+  min-width: calc(25px * var(--sc-hover-scale));
+  padding: 0 calc(4px * var(--sc-hover-scale));
+  border: 1px solid rgba(255,255,255,.42);
+  border-radius: calc(2px * var(--sc-hover-scale));
+  color: #d8d8d8;
+  font-size: calc(11px * var(--sc-hover-scale));
+  line-height: calc(16px * var(--sc-hover-scale));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+/* Second row: only genres, separated by the same small bullet visible in SC. */
+.previewModal--container[data-motion="netflix"] .sc-hover-genres {
+  margin-top: calc(9px * var(--sc-hover-scale));
+  min-height: calc(20px * var(--sc-hover-scale));
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  color: #ededed;
+  font-size: calc(14px * var(--sc-hover-scale));
+  line-height: calc(20px * var(--sc-hover-scale));
+  white-space: nowrap;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-genre {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.previewModal--container[data-motion="netflix"] .sc-hover-genre-separator {
+  margin: 0 calc(7px * var(--sc-hover-scale));
+  color: #8d8d8d;
+  font-size: calc(12px * var(--sc-hover-scale));
+}
+
+/* The lower area is intentionally just the SC controls + two metadata rows. */
+.previewModal--container[data-motion="netflix"] .previewModal-progress,
+.previewModal--container[data-motion="netflix"] .previewModal-supplemental-message,
+.previewModal--container[data-motion="netflix"] .previewModal-description,
+.previewModal--container[data-motion="netflix"] .previewModal--metadatAndControls-tags-container,
+.previewModal--container[data-motion="netflix"] .previewModal-contentWarning,
+.previewModal--container[data-motion="netflix"] .previewModal-most-liked,
+.previewModal--container[data-motion="netflix"] .buttonControls--container,
+.previewModal--container[data-motion="netflix"] .videoMetadata--container {
+  display: none !important;
 }
 
 .previewModal--container[data-motion="netflix"][data-phase="opening"] .previewModal--info,
