@@ -7,7 +7,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
-import useAutomaticMediaAssets, { isEmbeddedCardArtwork } from "src/hooks/useAutomaticMediaAssets";
+import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
 import NetflixStandardCard from "./NetflixStandardCard";
@@ -32,33 +32,36 @@ function firstArtwork(...values: any[]) {
   return null;
 }
 
-function nonTmdbArtwork(value: any) {
+function usableArtwork(value: any) {
   const raw = firstArtwork(value);
   if (!raw) return null;
   const text = String(raw).trim();
   if (!text) return null;
-  if (text.startsWith("data:") || text.startsWith("blob:")) return text;
+  if (text.startsWith("/") || text.startsWith("data:") || text.startsWith("blob:")) return text;
   if (!/^https?:\/\//i.test(text)) return null;
-  if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return null;
   return text;
 }
 
-function firstNonTmdbArtwork(...values: any[]) {
+function firstUsableArtwork(...values: any[]) {
   for (const value of values) {
-    const resolved = nonTmdbArtwork(value);
+    const resolved = usableArtwork(value);
     if (resolved) return resolved;
   }
   return null;
 }
 
-function firstLogo(...values: any[]) {
+function firstNonTmdbArtwork(...values: any[]) {
   for (const value of values) {
-    const raw = firstArtwork(value);
+    const raw = usableArtwork(value);
     if (!raw) continue;
-    const text = String(raw).trim();
-    if (/^https?:\/\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) return text;
+    if (/^https?:\/\/image\.tmdb\.org\//i.test(raw)) continue;
+    return raw;
   }
   return null;
+}
+
+function firstLogo(...values: any[]) {
+  return firstUsableArtwork(...values);
 }
 
 function unique(values: Array<string | null | undefined>) {
@@ -83,64 +86,122 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
 
   useEffect(() => {
     const node = ref.current;
-    if (!node || typeof IntersectionObserver === "undefined") { setNearViewport(true); return; }
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setNearViewport(true);
+      return;
+    }
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) { setNearViewport(true); observer.disconnect(); }
-    }, { rootMargin: "260px 420px" });
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setNearViewport(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "320px 480px" });
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
 
   const { open, intent, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
 
-  const automaticAssets = useAutomaticMediaAssets({ ...video, id }, mType, nearViewport || intent || open || isMobile);
-  const deferredAssets = useDeferredMediaAssets({ ...video, id }, mType, nearViewport || intent || open);
-  const assets = useMemo(() => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }), [automaticAssets, deferredAssets]);
-
-  const mappedBackdrop = id ? getCDNImageUrl(Number(id), "backdrop") : null;
-  const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
-
-  const legacyLandscape = firstNonTmdbArtwork(
-    video?.netflix_artwork_url, video?.netflixArtworkUrl, video?.netflix_cover_url,
-    video?.contextualArtwork?.artwork, video?.titled_backdrop_path, video?.titledBackdropPath,
-    video?.backdrop_path, video?.artwork, video?.image, video?.cover_path, video?.cover,
-    video?.image_url, video?.thumbnail_url
+  const automaticAssets = useAutomaticMediaAssets(
+    { ...video, id },
+    mType,
+    nearViewport || intent || open || isMobile
   );
-  const legacyLandscapeEmbedded = !!(
-    video?.backdrop_embedded_title_treatment || video?.embedded_title_treatment ||
-    video?.has_embedded_title_treatment || isEmbeddedCardArtwork(legacyLandscape)
+  const deferredAssets = useDeferredMediaAssets(
+    { ...video, id },
+    mType,
+    nearViewport || intent || open
+  );
+  const assets = useMemo(
+    () => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }),
+    [automaticAssets, deferredAssets]
   );
 
-  const automaticLandscape = firstNonTmdbArtwork(automaticAssets?.backdrop_path, automaticAssets?.titled_backdrop_path);
-  const automaticLandscapeEmbedded = !!automaticAssets?.backdrop_embedded_title_treatment;
-  const heroLandscape = firstNonTmdbArtwork(automaticAssets?.hero_backdrop_path, automaticAssets?.detail_backdrop_path, automaticLandscape);
-  const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path, automaticAssets?.poster);
-  const explicitScPoster = firstNonTmdbArtwork(video?.mobile_sc_poster_url);
+  const mappedBackdrop = id ? usableArtwork(getCDNImageUrl(Number(id), "backdrop")) : null;
+  const mappedPoster = id ? usableArtwork(getCDNImageUrl(Number(id), "poster")) : null;
 
-  const landscapeCandidates = useMemo(() => unique([
-    automaticLandscapeEmbedded ? automaticLandscape : null,
-    mappedBackdrop,
-    legacyLandscapeEmbedded ? legacyLandscape : null,
-  ]), [automaticLandscape, automaticLandscapeEmbedded, mappedBackdrop, legacyLandscape, legacyLandscapeEmbedded]);
-
-  const exactScPoster = explicitScPoster || (
-    automaticAssets?.poster_source === "streamingcommunity" ? automaticPoster : null
+  const embeddedScLandscape = firstUsableArtwork(
+    video?.__artwork?.backdrop_url,
+    video?.__artwork?.titled_backdrop_url
   );
-  const posterCandidates = useMemo(() => unique([exactScPoster]), [exactScPoster]);
+  const embeddedScPoster = firstUsableArtwork(video?.__artwork?.poster_url);
 
-  const usePosterCard = isMobile;
-  const imageCandidates = usePosterCard ? posterCandidates : landscapeCandidates;
+  const legacyLandscape = firstUsableArtwork(
+    video?.netflix_artwork_url,
+    video?.netflixArtworkUrl,
+    video?.netflix_cover_url,
+    video?.contextualArtwork?.artwork,
+    video?.titled_backdrop_path,
+    video?.titledBackdropPath,
+    video?.backdrop_path,
+    video?.artwork,
+    video?.image,
+    video?.cover_path,
+    video?.cover,
+    video?.image_url,
+    video?.thumbnail_url
+  );
+
+  const automaticLandscape = firstUsableArtwork(
+    automaticAssets?.backdrop_path,
+    automaticAssets?.titled_backdrop_path
+  );
+  const heroLandscape = firstUsableArtwork(
+    automaticAssets?.hero_backdrop_path,
+    automaticAssets?.detail_backdrop_path,
+    automaticLandscape,
+    embeddedScLandscape
+  );
+  const automaticPoster = firstUsableArtwork(
+    automaticAssets?.poster_path,
+    automaticAssets?.poster
+  );
+  const explicitScPoster = firstUsableArtwork(video?.mobile_sc_poster_url);
+  const automaticScPoster = automaticAssets?.poster_source === "streamingcommunity"
+    ? automaticPoster
+    : null;
+
+  const landscapeCandidates = useMemo(
+    () => unique([
+      embeddedScLandscape,
+      automaticLandscape,
+      mappedBackdrop,
+      legacyLandscape,
+    ]),
+    [embeddedScLandscape, automaticLandscape, mappedBackdrop, legacyLandscape]
+  );
+
+  // SC mobile uses vertical posters. Prefer the exact SC poster embedded by the
+  // bootstrap/catalog, then SC resolver output; only use the mapped poster as a
+  // visual fallback so a valid title never becomes an empty mobile slot.
+  const posterCandidates = useMemo(
+    () => unique([
+      embeddedScPoster,
+      explicitScPoster,
+      automaticScPoster,
+      mappedPoster,
+      automaticPoster,
+    ]),
+    [embeddedScPoster, explicitScPoster, automaticScPoster, mappedPoster, automaticPoster]
+  );
+
+  const imageCandidates = isMobile ? posterCandidates : landscapeCandidates;
   const title = automaticAssets?.title || video?.title || video?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${id}`;
 
   const goPlay = useCallback((event?: any) => {
-    event?.preventDefault?.(); event?.stopPropagation?.(); window.scrollTo(0, 0);
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    window.scrollTo(0, 0);
     const ep = watch && typeSlug === "tv" ? `?s=${watch.season || 1}&e=${watch.episode || 1}` : "";
     navigate(`/${MAIN_PATH.watch}/${typeSlug}/${id}${ep}`);
   }, [navigate, typeSlug, id, watch]);
 
   const goDetail = useCallback((event?: any) => {
-    event?.preventDefault?.(); event?.stopPropagation?.(); window.scrollTo(0, 0); navigate(detailHref);
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    window.scrollTo(0, 0);
+    navigate(detailHref);
   }, [navigate, detailHref]);
 
   const handleEnter = useCallback((event?: any) => {
@@ -151,7 +212,10 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   }, [suppressHover, isMobile, onEnter]);
 
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
-    ? (assets?.resolved_trailer?.trailer_url || assets?.resolved_trailer?.trailer_key || assets?.resolved_trailer?.manifest_url || assets?.preview_video_url)
+    ? (assets?.resolved_trailer?.trailer_url ||
+       assets?.resolved_trailer?.trailer_key ||
+       assets?.resolved_trailer?.manifest_url ||
+       assets?.preview_video_url)
     : null;
 
   const trailerDelay = useMemo(() => {
@@ -162,20 +226,28 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   useEffect(() => {
     if (!intent || open || !trailerUrl || !/\.m3u8(?:$|\?)/i.test(String(trailerUrl))) return;
     const controller = new AbortController();
-    fetch(String(trailerUrl), { signal: controller.signal, cache: "no-store", headers: { Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*" } }).catch(() => {});
+    fetch(String(trailerUrl), {
+      signal: controller.signal,
+      cache: "no-store",
+      headers: { Accept: "application/vnd.apple.mpegurl, application/x-mpegURL, */*" },
+    }).catch(() => {});
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
   const scHoverLogo = firstNonTmdbArtwork(
     automaticAssets?.logo_path,
+    video?.__artwork?.logo_url,
     video?.netflix_logo_url,
     video?.logo_path,
     video?.logo
   );
-  const hoverLogoUrl = scHoverLogo || firstLogo(deferredAssets?.logo_path, deferredAssets?.fallback_logo_path);
-  const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
-  const hoverCoverUrl = automaticLandscape || mappedBackdrop || (legacyLandscapeEmbedded ? legacyLandscape : null) || hoverArtwork;
-  const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
+  const hoverLogoUrl = scHoverLogo || firstLogo(
+    deferredAssets?.logo_path,
+    deferredAssets?.fallback_logo_path
+  );
+  const hoverArtwork = heroLandscape || automaticLandscape || embeddedScLandscape || mappedBackdrop || legacyLandscape;
+  const hoverCoverUrl = embeddedScLandscape || automaticLandscape || mappedBackdrop || legacyLandscape || hoverArtwork;
+  const hoverPoster = embeddedScPoster || automaticPoster || mappedPoster || hoverArtwork;
 
   useEffect(() => {
     if (!nearViewport || !hoverLogoUrl || typeof Image === "undefined") return;
@@ -185,10 +257,9 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     image.src = hoverLogoUrl;
   }, [nearViewport, hoverLogoUrl]);
 
-  const staticReady = usePosterCard
-    ? !!exactScPoster
-    : imageCandidates.length > 0 && !!automaticAssets?.card_ready;
-
+  const staticReady = isMobile
+    ? posterCandidates.length > 0
+    : landscapeCandidates.length > 0 && !!automaticAssets?.card_ready;
   if (!staticReady) return null;
 
   return (
@@ -209,15 +280,36 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
       />
 
       {open && !suppressHover && !isMobile ? (
-        <ExpandOverlay position={position} closing={closing} onMouseLeave={onOverlayLeave} onClick={goDetail} testId={`hover-overlay-${id}`}>
+        <ExpandOverlay
+          position={position}
+          closing={closing}
+          onMouseLeave={onOverlayLeave}
+          onClick={goDetail}
+          testId={`hover-overlay-${id}`}
+        >
           <ExpandedCard
             item={{
-              ...video, ...assets, id, preview_video_url: "",
+              ...video,
+              ...assets,
+              id,
+              preview_video_url: "",
               netflix_artwork_url: hoverArtwork || undefined,
-              netflixArtworkUrl: undefined, netflix_cover_url: undefined, contextualArtwork: undefined,
-              artwork: undefined, image: undefined, image_url: undefined, thumbnail_url: undefined,
-              backdrop_path: hoverArtwork || null, titled_backdrop_path: null, cover_path: null, cover: null,
-              poster_path: hoverPoster || null, poster: null, logo_path: hoverLogoUrl || null, logo: null, title_logo_path: null,
+              netflixArtworkUrl: undefined,
+              netflix_cover_url: undefined,
+              contextualArtwork: undefined,
+              artwork: undefined,
+              image: undefined,
+              image_url: undefined,
+              thumbnail_url: undefined,
+              backdrop_path: hoverArtwork || null,
+              titled_backdrop_path: null,
+              cover_path: null,
+              cover: null,
+              poster_path: hoverPoster || null,
+              poster: null,
+              logo_path: hoverLogoUrl || null,
+              logo: null,
+              title_logo_path: null,
             }}
             mediaType={mType}
             onPlay={goPlay}

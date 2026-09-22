@@ -18,6 +18,8 @@ type AnchorData = {
   cardRect: DOMRect;
   modalWidth: number;
   anchor: HTMLElement | null;
+  pointerX?: number;
+  pointerY?: number;
 };
 
 function isDomNode(value: any): value is Node {
@@ -34,11 +36,11 @@ function pointInsideRect(x: number, y: number, rect?: DOMRect | null) {
 }
 
 /**
- * Netflix-style hover intent + expansion.
- * The preview remains geometrically attached to its source card. During page
- * scroll it closes as soon as the pointer no longer intersects the original
- * card footprint, preventing a stale preview from following the user down the
- * page. Card entry uses a short, consistent intent delay across the full card.
+ * SC-style hover intent + expansion.
+ * Once opened, the preview is visually locked in the viewport. Page/ancestor
+ * scrolling never drags the preview along with the card. Scroll only checks
+ * whether the pointer still intersects the source card; once it does not, the
+ * preview closes. Edge cards expand inward, matching SC carousel behaviour.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -85,11 +87,14 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   }, [open, closing, clearOpenTimer, clearCloseTimer, finishClose]);
 
   const openFrom = useCallback(
-    (element: HTMLElement | null) => {
+    (element: HTMLElement | null, event?: any) => {
       if (!element || typeof window === "undefined") return;
       clearTimers();
       setIntent(true);
       setClosing(false);
+
+      const pointerX = Number.isFinite(event?.clientX) ? Number(event.clientX) : undefined;
+      const pointerY = Number.isFinite(event?.clientY) ? Number(event.clientY) : undefined;
 
       openTimerRef.current = setTimeout(() => {
         if (!element.isConnected) return;
@@ -98,6 +103,8 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
           cardRect: rect,
           modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
           anchor: element,
+          pointerX,
+          pointerY,
         });
         setOpen(true);
       }, OPEN_DELAY_MS);
@@ -107,7 +114,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const onEnter = useCallback(
     (event?: any) => {
-      openFrom((event?.currentTarget || ref.current) as HTMLElement | null);
+      openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
     },
     [openFrom, ref]
   );
@@ -162,6 +169,14 @@ export function ExpandOverlay({
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
+  useEffect(() => {
+    if (!position) return;
+    pointerRef.current = {
+      x: Number.isFinite(position.pointerX) ? Number(position.pointerX) : -1,
+      y: Number.isFinite(position.pointerY) ? Number(position.pointerY) : -1,
+    };
+  }, [position]);
+
   const currentCardRect = useCallback(() => {
     const anchor = position?.anchor as HTMLElement | null | undefined;
     if (anchor?.isConnected) return anchor.getBoundingClientRect();
@@ -175,22 +190,37 @@ export function ExpandOverlay({
 
     const modalRect = node.getBoundingClientRect();
     const scale = 1 / SCALE_FACTOR;
+    const rowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
+    const edgeThreshold = rowGutter + 22;
 
-    const desiredLeft = card.left + card.width / 2 - modalRect.width / 2;
+    const centeredLeft = card.left + card.width / 2 - modalRect.width / 2;
+    let desiredLeft = centeredLeft;
+
+    // First card: keep the left edge near the catalogue gutter so expansion
+    // happens mostly toward the right, like SC. Mirror it on the far right.
+    if (card.left <= edgeThreshold) {
+      desiredLeft = Math.max(rowGutter, card.left);
+    } else if (card.right >= window.innerWidth - edgeThreshold) {
+      desiredLeft = Math.min(
+        card.right - modalRect.width,
+        window.innerWidth - rowGutter - modalRect.width
+      );
+    }
+
     const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
 
+    const minLeft = card.left <= edgeThreshold ? rowGutter : VIEWPORT_GUTTER;
     const maxLeft = Math.max(
-      VIEWPORT_GUTTER,
-      window.innerWidth - modalRect.width - VIEWPORT_GUTTER
+      minLeft,
+      window.innerWidth - modalRect.width -
+        (card.right >= window.innerWidth - edgeThreshold ? rowGutter : VIEWPORT_GUTTER)
     );
     const maxTop = Math.max(
       VIEWPORT_GUTTER,
       window.innerHeight - modalRect.height - VIEWPORT_GUTTER
     );
 
-    const left = Math.round(
-      Math.min(Math.max(desiredLeft, VIEWPORT_GUTTER), maxLeft)
-    );
+    const left = Math.round(Math.min(Math.max(desiredLeft, minLeft), maxLeft));
     const top = Math.round(
       Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
     );
@@ -229,59 +259,45 @@ export function ExpandOverlay({
     if (!position || typeof window === "undefined") return;
 
     let frame = 0;
+
     const onPointerMove = (event: PointerEvent) => {
       pointerRef.current = { x: event.clientX, y: event.clientY };
     };
 
-    const sync = (event?: Event) => {
+    const closeIfSourceLeftPointer = () => {
       if (frame || phase === "measure" || phase === "reset" || phase === "close") return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         const card = currentCardRect();
         const pointer = pointerRef.current;
-        const isScrollEvent = event?.type === "scroll";
+        if (!card || pointer.x < 0 || pointer.y < 0) return;
+        if (pointInsideRect(pointer.x, pointer.y, card)) return;
+        const target = document.elementFromPoint(pointer.x, pointer.y);
+        onMouseLeave?.({ relatedTarget: target, type: "scroll-anchor-leave" });
+      });
+    };
 
-        if (
-          isScrollEvent &&
-          pointer.x >= 0 &&
-          pointer.y >= 0 &&
-          card &&
-          !pointInsideRect(pointer.x, pointer.y, card)
-        ) {
-          const target = document.elementFromPoint(pointer.x, pointer.y);
-          onMouseLeave?.({ relatedTarget: target, type: "scroll-anchor-leave" });
-          return;
-        }
-
+    const onResize = () => {
+      if (frame || phase === "measure" || phase === "reset" || phase === "close") return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
         const next = calculateGeometry();
-        if (!next) return;
-        setGeometry((previous: any) => {
-          if (
-            previous &&
-            previous.left === next.left &&
-            previous.top === next.top &&
-            previous.resetX === next.resetX &&
-            previous.resetY === next.resetY
-          ) {
-            return previous;
-          }
-          return next;
-        });
+        if (next) setGeometry(next);
       });
     };
 
     window.addEventListener("pointermove", onPointerMove, { passive: true });
-    window.addEventListener("scroll", sync, true);
-    window.addEventListener("resize", sync);
-    window.visualViewport?.addEventListener?.("scroll", sync);
-    window.visualViewport?.addEventListener?.("resize", sync);
+    window.addEventListener("scroll", closeIfSourceLeftPointer, true);
+    window.addEventListener("resize", onResize);
+    window.visualViewport?.addEventListener?.("scroll", closeIfSourceLeftPointer);
+    window.visualViewport?.addEventListener?.("resize", onResize);
 
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("scroll", sync, true);
-      window.removeEventListener("resize", sync);
-      window.visualViewport?.removeEventListener?.("scroll", sync);
-      window.visualViewport?.removeEventListener?.("resize", sync);
+      window.removeEventListener("scroll", closeIfSourceLeftPointer, true);
+      window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener?.("scroll", closeIfSourceLeftPointer);
+      window.visualViewport?.removeEventListener?.("resize", onResize);
       if (frame) cancelAnimationFrame(frame);
     };
   }, [position, phase, calculateGeometry, currentCardRect, onMouseLeave]);
@@ -294,10 +310,13 @@ export function ExpandOverlay({
 
   const card = currentCardRect() || (position.cardRect as DOMRect);
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
-  const fallbackLeft = Math.min(
-    Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
-    Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
-  );
+  const rowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
+  const fallbackLeft = card.left <= rowGutter + 22
+    ? Math.max(rowGutter, card.left)
+    : Math.min(
+        Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
+        Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
+      );
   const left = geometry?.left ?? fallbackLeft;
   const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
 

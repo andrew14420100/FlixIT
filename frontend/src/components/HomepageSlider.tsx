@@ -1,67 +1,54 @@
 // @ts-nocheck
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Slider, { Settings } from "react-slick";
 import { styled, Theme, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
 import CustomNavigation from "./slick-slider/CustomNavigation";
 import VideoItemWithHover from "src/components/VideoItemWithHover";
-import NetflixRankedCardWithHover from "src/components/NetflixRankedCardWithHover";
-import { ARROW_MAX_WIDTH } from "src/constant";
 import NetflixNavigationLink from "src/components/NetflixNavigationLink";
+import { ARROW_MAX_WIDTH } from "src/constant";
 import { MEDIA_TYPE } from "src/types/Common";
 import useArtworkBatch from "src/hooks/useArtworkBatch";
 
 const TARGET_ROW_ITEMS = 50;
-const ARTWORK_CANDIDATE_LIMIT = 240;
 
 const RootStyle = styled("div")(() => ({
   position: "relative",
   overflow: "visible",
 }));
 
-const StyledSlider = styled(Slider)(
-  ({ theme }: { theme: Theme }) => ({
-    display: "flex !important",
-    justifyContent: "flex-start",
+const StyledSlider = styled(Slider)(({ theme }: { theme: Theme }) => ({
+  display: "flex !important",
+  justifyContent: "flex-start",
+  overflow: "visible !important",
+  transform: "translate3d(0,0,0)",
+  "& > .slick-list": {
+    width: "100%",
     overflow: "visible !important",
     transform: "translate3d(0,0,0)",
-
-    "& > .slick-list": {
-      width: "100%",
-      overflow: "visible !important",
-      transform: "translate3d(0,0,0)",
-      backfaceVisibility: "hidden",
-      WebkitBackfaceVisibility: "hidden",
-    },
-    "& .slick-track": {
-      marginLeft: "0 !important",
-      marginRight: "0 !important",
-      willChange: "transform",
-      backfaceVisibility: "hidden",
-      WebkitBackfaceVisibility: "hidden",
-    },
-    "& .slick-slide": {
-      position: "relative",
-      zIndex: 1,
-      transition: "z-index 0s .28s",
-      backfaceVisibility: "hidden",
-      WebkitBackfaceVisibility: "hidden",
-    },
-    "& .slick-slide:hover": {
-      zIndex: "2 !important",
-      transition: "z-index 0s 0s",
-    },
-    "& .slick-slide:hover > div": {
-      position: "relative",
-      zIndex: "2",
-    },
-    "& .slick-slide > div": {
-      height: "100%",
-    },
-    [theme.breakpoints.up("sm")]: {},
-  })
-);
+    backfaceVisibility: "hidden",
+    WebkitBackfaceVisibility: "hidden",
+  },
+  "& .slick-track": {
+    marginLeft: "0 !important",
+    marginRight: "0 !important",
+    willChange: "transform",
+    backfaceVisibility: "hidden",
+    WebkitBackfaceVisibility: "hidden",
+  },
+  "& .slick-slide": {
+    position: "relative",
+    zIndex: 1,
+    backfaceVisibility: "hidden",
+    WebkitBackfaceVisibility: "hidden",
+  },
+  "& .slick-slide:hover": { zIndex: "2 !important" },
+  "& .slick-slide > div": { height: "100%" },
+  [theme.breakpoints.down("md")]: {
+    "& .slick-list": { touchAction: "pan-y pinch-zoom" },
+  },
+}));
 
 interface HomepageSliderProps {
   title: string;
@@ -71,63 +58,21 @@ interface HomepageSliderProps {
   rowId?: string;
 }
 
-function sliderItemKey(item: any) {
+function itemKey(item: any) {
   const id = item?.tmdbId || item?.tmdb_id || item?.id;
+  if (!id) return "";
   const type = item?.type === "tv" || item?.media_type === "tv" ? "tv" : "movie";
-  return id ? `${type}-${id}` : "";
+  return `${type}-${id}`;
 }
 
-function titleFamilyKey(item: any) {
-  const title = String(item?.title || item?.name || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-  if (!title) return "";
-  const words = title.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return title;
-  return `${words[0]} ${words[1]}`;
-}
-
-function diversifyRepeatedFranchises(list: any[], maxPerFamily = 2) {
-  const familyTotals = new Map<string, number>();
-  list.forEach((item) => {
-    const family = titleFamilyKey(item);
-    if (family) familyTotals.set(family, (familyTotals.get(family) || 0) + 1);
+function uniqueItems(items: any[]) {
+  const seen = new Set<string>();
+  return (items || []).filter((item) => {
+    const key = itemKey(item);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
-
-  const primary: any[] = [];
-  const overflow: any[] = [];
-  const used = new Map<string, number>();
-
-  list.forEach((item) => {
-    const family = titleFamilyKey(item);
-    const repeated = family && (familyTotals.get(family) || 0) >= 3;
-    if (!repeated) {
-      primary.push(item);
-      return;
-    }
-
-    const count = used.get(family) || 0;
-    if (count < maxPerFamily) {
-      used.set(family, count + 1);
-      primary.push(item);
-    } else {
-      overflow.push(item);
-    }
-  });
-
-  return [...primary, ...overflow];
-}
-
-function payloadItems(payload: any) {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.items)) return payload.items;
-  if (Array.isArray(payload?.results)) return payload.results;
-  if (Array.isArray(payload?.data?.items)) return payload.data.items;
-  if (Array.isArray(payload?.data?.results)) return payload.data.results;
-  return [];
 }
 
 export default function HomepageSlider({
@@ -139,185 +84,52 @@ export default function HomepageSlider({
 }: HomepageSliderProps) {
   const sliderRef = useRef<Slider>(null);
   const theme = useTheme();
-
   const isMobile = useMediaQuery("(max-width:899px)");
-  const up1400 = useMediaQuery("(min-width:1400px)");
+  const up600 = useMediaQuery("(min-width:600px)");
+  const up900 = useMediaQuery("(min-width:900px)");
   const up1100 = useMediaQuery("(min-width:1100px)");
-  const up800 = useMediaQuery("(min-width:800px)");
-  const up500 = useMediaQuery("(min-width:500px)");
+  const up1400 = useMediaQuery("(min-width:1400px)");
 
-  const tiles = up1400 ? 6 : up1100 ? 5 : up800 ? 4 : up500 ? 3 : 2;
-  const visibleTiles = isMobile ? 2.6 : up1400 ? 6.38 : up1100 ? 5.35 : tiles;
+  const visibleTiles = isMobile
+    ? (up600 ? 4.15 : 3.15)
+    : up1400 ? 6.35 : up1100 ? 5.35 : up900 ? 4.25 : 3.15;
+  const scrollTiles = isMobile ? 1 : up1400 ? 6 : up1100 ? 5 : up900 ? 4 : 3;
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isSliding, setIsSliding] = useState(false);
   const [showExplore, setShowExplore] = useState(false);
-  const [upcomingFallback, setUpcomingFallback] = useState<any[]>([]);
 
-  const isUpcomingRow = /(^|\s)in\s+arrivo(\s|$)/i.test(title);
-  const shouldDiversify = /aggiunti\s+di\s+recente|novit[aà]\s+per\s+te/i.test(title);
-
-  useEffect(() => {
-    if (!isUpcomingRow) {
-      setUpcomingFallback([]);
-      return;
-    }
-
-    let cancelled = false;
-    const urls = [
-      "/api/public/tmdb/upcoming?page=5",
-      "/api/public/tmdb/upcoming?page=6",
-      "/api/public/tmdb/now_playing?page=1",
-      "/api/public/tmdb/now_playing?page=2",
-      "/api/public/new-releases/movie",
-    ];
-
-    Promise.all(
-      urls.map(async (url) => {
-        try {
-          const response = await fetch(url, {
-            cache: "no-store",
-            headers: { Accept: "application/json", "Cache-Control": "no-cache" },
-          });
-          return response.ok ? payloadItems(await response.json()) : [];
-        } catch {
-          return [];
-        }
-      })
-    ).then((groups) => {
-      if (cancelled) return;
-      const seen = new Set<string>();
-      const merged = groups.flat().filter((item) => {
-        const key = sliderItemKey(item);
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      setUpcomingFallback(merged);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isUpcomingRow]);
-
-  const visibleItems = useMemo(() => {
-    const seen = new Set();
-    const source = isUpcomingRow ? [...(items || []), ...upcomingFallback] : (items || []);
-    const unique = source.filter((item) => {
-      if (!item) return false;
-      const key = sliderItemKey(item);
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    return shouldDiversify ? diversifyRepeatedFranchises(unique, 2) : unique;
-  }, [items, upcomingFallback, isUpcomingRow, shouldDiversify]);
-
-  const isTop10 = /top\s*10/i.test(title);
-
-  const artworkCandidates = useMemo(
-    () => visibleItems.slice(0, isTop10 ? 10 : ARTWORK_CANDIDATE_LIMIT),
-    [visibleItems, isTop10]
-  );
-  const artworkBatch = useArtworkBatch(artworkCandidates, artworkCandidates.length > 0);
+  const visibleItems = useMemo(() => uniqueItems(items).slice(0, TARGET_ROW_ITEMS), [items]);
+  const artworkBatch = useArtworkBatch(visibleItems, visibleItems.length > 0);
   const readyItems = useMemo(
-    () =>
-      artworkCandidates
-        .filter((item) =>
-          artworkBatch.isReady(item, isTop10 || isMobile ? "poster" : "landscape")
-        )
-        .slice(0, isTop10 ? 10 : TARGET_ROW_ITEMS),
-    [artworkCandidates, artworkBatch.data, isTop10, isMobile]
+    () => visibleItems.filter((item) => artworkBatch.isReady(item, isMobile ? "poster" : "landscape")),
+    [visibleItems, artworkBatch.data, isMobile]
   );
 
-  // On mobile the cards are simple poster tiles: publish the full validated row
-  // immediately so native horizontal scrolling exposes the whole ~50-title pool.
-  const minimumBatch = isMobile
-    ? readyItems.length
-    : Math.min(readyItems.length, Math.max(tiles * 2 + 2, 14));
-  const [renderedCount, setRenderedCount] = useState(minimumBatch);
-
-  useEffect(() => {
-    setRenderedCount((current) => {
-      const bounded = Math.min(current || 0, readyItems.length);
-      return Math.max(bounded, minimumBatch);
-    });
-  }, [readyItems.length, minimumBatch]);
-
-  useEffect(() => {
-    if (isMobile || renderedCount >= readyItems.length) return;
-
-    let cancelled = false;
-    let idleId: any = null;
-    let timeoutId: any = null;
-    const grow = () => {
-      if (cancelled) return;
-      setRenderedCount((current) =>
-        Math.min(readyItems.length, current + Math.max(8, tiles * 2))
-      );
-    };
-
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      idleId = (window as any).requestIdleCallback(grow, { timeout: 450 });
-    } else if (typeof window !== "undefined") {
-      timeoutId = window.setTimeout(grow, 160);
-    }
-
-    return () => {
-      cancelled = true;
-      if (idleId !== null && typeof (window as any).cancelIdleCallback === "function") {
-        (window as any).cancelIdleCallback(idleId);
-      }
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
-    };
-  }, [isMobile, renderedCount, readyItems.length, tiles]);
-
-  const ensureRenderedThrough = useCallback(
-    (startIndex: number) => {
-      setRenderedCount((current) =>
-        Math.min(
-          readyItems.length,
-          Math.max(current, Math.max(minimumBatch, startIndex + tiles * 4))
-        )
-      );
-    },
-    [readyItems.length, minimumBatch, tiles]
-  );
-
-  const publishedItems = useMemo(
-    () => readyItems.slice(0, renderedCount),
-    [readyItems, renderedCount]
-  );
-
-  const pageCount = Math.max(1, Math.ceil(readyItems.length / tiles));
-  const activePage = Math.min(
-    pageCount - 1,
-    Math.floor(activeSlideIndex / Math.max(1, tiles))
-  );
+  const pageCount = Math.max(1, Math.ceil(readyItems.length / Math.max(1, scrollTiles)));
+  const activePage = Math.min(pageCount - 1, Math.floor(activeSlideIndex / Math.max(1, scrollTiles)));
   const isEnd =
-    readyItems.length <= tiles ||
-    activeSlideIndex >= Math.max(0, readyItems.length - tiles);
+    readyItems.length <= visibleTiles ||
+    activeSlideIndex >= Math.max(0, readyItems.length - Math.ceil(visibleTiles));
 
   const settings: Settings = {
-    speed: 750,
-    cssEase: "cubic-bezier(.5,0,.1,1)",
+    speed: 620,
+    cssEase: "cubic-bezier(.21,0,.07,1)",
     arrows: false,
     dots: false,
     infinite: false,
-    lazyLoad: isMobile ? undefined : "ondemand",
-    swipeToSlide: true,
     swipe: true,
+    swipeToSlide: true,
     draggable: true,
     touchMove: true,
     waitForAnimate: true,
     useCSS: true,
-    useTransform: !isMobile,
+    useTransform: true,
     adaptiveHeight: false,
+    lazyLoad: isMobile ? undefined : "ondemand",
     slidesToShow: visibleTiles,
-    slidesToScroll: isMobile ? 1 : tiles,
+    slidesToScroll: scrollTiles,
     beforeChange: (_current, next) => {
-      ensureRenderedThrough(next);
       setIsSliding(true);
       setActiveSlideIndex(next);
     },
@@ -325,53 +137,30 @@ export default function HomepageSlider({
       setActiveSlideIndex(current);
       setIsSliding(false);
     },
-    responsive: isMobile ? [] : [
-      { breakpoint: 1400, settings: { slidesToShow: 5.35, slidesToScroll: 5 } },
-      { breakpoint: 1100, settings: { slidesToShow: 4.25, slidesToScroll: 4 } },
-      { breakpoint: 800, settings: { slidesToShow: 3, slidesToScroll: 3 } },
-      { breakpoint: 500, settings: { slidesToShow: 2, slidesToScroll: 2 } },
-    ],
   };
+
+  const handleNext = useCallback(() => sliderRef.current?.slickNext(), []);
+  const handlePrevious = useCallback(() => sliderRef.current?.slickPrev(), []);
 
   if (!visibleItems.length) return null;
-
-  const handleNext = () => {
-    ensureRenderedThrough(activeSlideIndex + tiles);
-    window.setTimeout(() => sliderRef.current?.slickNext(), 0);
-  };
 
   const waitingForFirstCards = readyItems.length === 0 && artworkBatch.isFetching;
 
   return (
     <Box
       id={rowId}
-      className={`slider-row${isTop10 ? " top10-row" : ""}${compactSpacing ? " compact-row" : ""}`}
+      className={`slider-row${compactSpacing ? " compact-row" : ""}`}
       data-testid={`homepage-slider-${title.toLowerCase().replace(/\s+/g, "-")}`}
       data-sliding={isSliding ? "true" : "false"}
       sx={{
         position: "relative",
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
         width: "100%",
-        height: { xs: "auto", md: "237.241px" },
-        mt: compactSpacing
-          ? { xs: "10px", md: "16px" }
-          : { xs: "32px", md: "57.3007px" },
-        mb: compactSpacing
-          ? { xs: "14px", md: "20px" }
-          : { xs: "32px", md: "57.3007px" },
         boxSizing: "border-box",
         userSelect: "none",
         overflow: "visible",
         zIndex: 1,
-        fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
-        fontSize: { md: "19.1002px" },
-        lineHeight: { md: "28.6503px" },
+        fontFamily: '\"Netflix Sans\",\"Helvetica Neue\",Helvetica,Arial,sans-serif',
         color: "#e8e8e8",
-        contain: "layout style",
-        "&:hover": { zIndex: 100 },
       }}
     >
       <Box
@@ -379,10 +168,6 @@ export default function HomepageSlider({
         sx={{
           position: "relative",
           zIndex: 2,
-          pl: { xs: 2, sm: 3, md: "4%" },
-          pr: { xs: 2, sm: 3, md: "4%" },
-          mb: { xs: "7px", md: "10px" },
-          minHeight: { xs: 25, md: 34 },
           display: "flex",
           alignItems: "center",
         }}
@@ -398,55 +183,30 @@ export default function HomepageSlider({
           onMouseEnter={() => setShowExplore(true)}
           onMouseLeave={() => setShowExplore(false)}
         >
-          <Box
-            className="header-wrap"
-            sx={{ display: "inline-flex", alignItems: "baseline", whiteSpace: "nowrap" }}
-          >
-            <Box
-              className="label"
-              sx={{
-                fontFamily: '"Netflix Sans","Helvetica Neue",Helvetica,Arial,sans-serif',
-                fontWeight: 700,
-                fontSize: { xs: "18px", sm: "22px", md: "27px" },
-                lineHeight: 1.18,
-                letterSpacing: "-0.018em",
-                textShadow: "0 1px 2px rgba(0,0,0,.35)",
-              }}
-            >
-              {title}
-            </Box>
-
-            {linkTo && (
+          <Box className="header-wrap" sx={{ display: "inline-flex", alignItems: "baseline", whiteSpace: "nowrap" }}>
+            <Box className="label">{title}</Box>
+            {linkTo ? (
               <Box
                 className="browse"
                 sx={{
-                  ml: "9px",
+                  ml: "8px",
                   overflow: "hidden",
                   opacity: showExplore ? 1 : 0,
-                  maxWidth: showExplore ? "150px" : "18px",
-                  transform: showExplore ? "translateX(0)" : "translateX(-8px)",
-                  transition:
-                    "opacity .22s ease, max-width .28s ease, transform .28s ease",
+                  maxWidth: showExplore ? "150px" : "0px",
+                  transform: showExplore ? "translateX(0)" : "translateX(-6px)",
+                  transition: "opacity .2s ease, max-width .25s ease, transform .25s ease",
                   color: "#54b9c5",
-                  fontSize: { xs: "12px", md: "14px" },
+                  fontSize: "13px",
                   fontWeight: 700,
                 }}
               >
-                <Box
-                  className="browse-container"
-                  sx={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
-                >
-                  <span>Sfoglia tutti</span>
-                  <Box component="span" sx={{ fontSize: "1.45em", lineHeight: 0.8 }}>
-                    ›
-                  </Box>
-                </Box>
+                Sfoglia tutti ›
               </Box>
-            )}
+            ) : null}
           </Box>
         </NetflixNavigationLink>
 
-        {pageCount > 1 && (
+        {pageCount > 1 ? (
           <Box
             className="tab-indicator"
             sx={{
@@ -454,7 +214,7 @@ export default function HomepageSlider({
               display: { xs: "none", md: "flex" },
               gap: "2px",
               alignItems: "center",
-              opacity: 0.9,
+              opacity: .9,
             }}
           >
             {Array.from({ length: pageCount }).map((_, index) => (
@@ -463,49 +223,28 @@ export default function HomepageSlider({
                 sx={{
                   width: "12px",
                   height: "2px",
-                  bgcolor:
-                    index === activePage
-                      ? "rgba(255,255,255,.95)"
-                      : "rgba(255,255,255,.28)",
-                  transition: "background-color .2s ease",
+                  bgcolor: index === activePage ? "rgba(255,255,255,.95)" : "rgba(255,255,255,.28)",
                 }}
               />
             ))}
           </Box>
-        )}
+        ) : null}
       </Box>
 
       <Box className="slider" sx={{ position: "relative", zIndex: 3, width: "100%", overflow: "visible" }}>
-        <Box
-          className="show-peek"
-          sx={{
-            width: "100%",
-            pl: { xs: 2, sm: 3, md: "4%" },
-            pr: 0,
-            boxSizing: "border-box",
-            overflow: "visible",
-          }}
-        >
+        <Box className="show-peek" sx={{ width: "100%", pr: 0, boxSizing: "border-box", overflow: "visible" }}>
           {waitingForFirstCards ? (
-            <Box
-              aria-hidden="true"
-              sx={{
-                display: "flex",
-                gap: { xs: "4px", md: "7.64px" },
-                overflow: "hidden",
-                width: "100%",
-              }}
-            >
-              {Array.from({ length: Math.max(7, Math.ceil(visibleTiles) + 1) }).map((_, index) => (
+            <Box sx={{ display: "flex", gap: { xs: "4px", md: "7.64px" }, overflow: "hidden", width: "100%" }}>
+              {Array.from({ length: Math.ceil(visibleTiles) + 1 }).map((_, index) => (
                 <Box
                   key={index}
                   sx={{
-                    flex: `0 0 ${100 / Math.max(2, visibleTiles)}%`,
-                    maxWidth: `calc(${100 / Math.max(2, visibleTiles)}% - 7px)`,
-                    aspectRatio: isMobile ? "2 / 3" : isTop10 ? "1.7 / 1" : "342 / 192",
-                    borderRadius: "4px",
+                    flex: `0 0 ${100 / visibleTiles}%`,
+                    maxWidth: `calc(${100 / visibleTiles}% - 4px)`,
+                    aspectRatio: isMobile ? "2 / 3" : "342 / 192",
+                    borderRadius: { xs: "5px", md: "4px" },
                     bgcolor: "#222",
-                    opacity: 0.72,
+                    opacity: .72,
                     animation: "flixPulse 1.15s ease-in-out infinite",
                   }}
                 />
@@ -517,56 +256,37 @@ export default function HomepageSlider({
                 isEnd={isEnd}
                 arrowWidth={ARROW_MAX_WIDTH}
                 onNext={handleNext}
-                onPrevious={() => sliderRef.current?.slickPrev()}
+                onPrevious={handlePrevious}
                 activeSlideIndex={activeSlideIndex}
               >
                 <StyledSlider ref={sliderRef} {...settings} theme={theme}>
-                  {publishedItems.map((item, index) => {
-                    const key = sliderItemKey(item) || `item-${index}`;
-                    const suppressHover = isSliding;
-                    const originalRank = Math.max(1, readyItems.indexOf(item) + 1);
-
+                  {readyItems.map((item, index) => {
+                    const id = item?.id || item?.tmdbId || item?.tmdb_id;
+                    const mediaType = item?.type === "tv" || item?.media_type === "tv"
+                      ? MEDIA_TYPE.Tv
+                      : MEDIA_TYPE.Movie;
                     return (
                       <Box
                         className="slider-item"
-                        key={key}
+                        key={itemKey(item) || `item-${index}`}
                         sx={{
-                          px: { xs: "2px", sm: "3px", md: "3.82005px" },
+                          px: { xs: "2px", md: "3.82005px" },
                           boxSizing: "border-box",
                           position: "relative",
                         }}
                       >
-                        {isTop10 ? (
-                          <NetflixRankedCardWithHover
-                            item={{
-                              ...item,
-                              id: item.id || item.tmdbId,
-                              title: item.title || item.name,
-                              name: item.title || item.name,
-                            }}
-                            rank={originalRank}
-                            mediaType={
-                              item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
-                            }
-                            watch={item.watch}
-                            suppressHover={suppressHover}
-                          />
-                        ) : (
-                          <VideoItemWithHover
-                            video={{
-                              ...item,
-                              id: item.id || item.tmdbId,
-                              title: item.title || item.name,
-                              name: item.title || item.name,
-                              genre_ids: item.genre_ids || [],
-                            }}
-                            mediaType={
-                              item.type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie
-                            }
-                            watch={item.watch}
-                            suppressHover={suppressHover}
-                          />
-                        )}
+                        <VideoItemWithHover
+                          video={{
+                            ...item,
+                            id,
+                            title: item?.title || item?.name,
+                            name: item?.title || item?.name,
+                            genre_ids: item?.genre_ids || [],
+                          }}
+                          mediaType={mediaType}
+                          watch={item?.watch}
+                          suppressHover={isSliding}
+                        />
                       </Box>
                     );
                   })}

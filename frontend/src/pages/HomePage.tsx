@@ -112,16 +112,12 @@ function fetchHomeBootstrap(_signal?: AbortSignal) {
   let shared: Promise<any>;
   shared = request
     .catch((error) => {
-      if (sharedHomeBootstrapPromise === shared) {
-        sharedHomeBootstrapPromise = null;
-      }
+      if (sharedHomeBootstrapPromise === shared) sharedHomeBootstrapPromise = null;
       throw error;
     })
     .finally(() => {
       window.setTimeout(() => {
-        if (sharedHomeBootstrapPromise === shared) {
-          sharedHomeBootstrapPromise = null;
-        }
+        if (sharedHomeBootstrapPromise === shared) sharedHomeBootstrapPromise = null;
       }, 1500);
     });
 
@@ -144,13 +140,8 @@ export async function loader() {
 
 export function Component() {
   const { mediaType: filterMediaType } = useParams();
-  const currentMediaType =
-    filterMediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
-  const {
-    items: progressItems,
-    username,
-    removeItem,
-  } = useContinueWatching();
+  const currentMediaType = filterMediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
+  const { items: progressItems, username, removeItem } = useContinueWatching();
 
   const continueItems = useMemo(() => {
     return (progressItems || [])
@@ -176,10 +167,9 @@ export function Component() {
         watch: {
           progress: item.progress,
           duration: item.duration,
-          percent:
-            item.duration > 0
-              ? Math.min(100, Math.max(0, (item.progress / item.duration) * 100))
-              : 0,
+          percent: item.duration > 0
+            ? Math.min(100, Math.max(0, (item.progress / item.duration) * 100))
+            : 0,
           season: item.season,
           episode: item.episode,
           onRemove: () => removeItem(item.tmdb_id),
@@ -217,15 +207,8 @@ export function Component() {
     if (bootstrap?.rows?.length) writeHomeCache(bootstrap);
   }, [bootstrap]);
 
-  const heroLogoUrl =
-    bootstrap?.hero?.assets?.logo_path ||
-    bootstrap?.hero?.assets?.fallback_logo_path ||
-    null;
-  const heroBackdropUrl =
-    bootstrap?.hero?.customBackdrop ||
-    bootstrap?.hero?.assets?.hero_backdrop_path ||
-    bootstrap?.hero?.assets?.backdrop_path ||
-    null;
+  const heroLogoUrl = bootstrap?.hero?.assets?.logo_path || bootstrap?.hero?.assets?.fallback_logo_path || null;
+  const heroBackdropUrl = bootstrap?.hero?.customBackdrop || bootstrap?.hero?.assets?.hero_backdrop_path || bootstrap?.hero?.assets?.backdrop_path || null;
 
   useEffect(() => {
     warmImage(heroLogoUrl, "high");
@@ -241,9 +224,7 @@ export function Component() {
     [bootstrap?.rows, filterMediaType, continueKeys]
   );
   const hasReadyHome = rows.length > 0 || continueItems.length > 0;
-  const continueTitle = username
-    ? `${username}, continua a guardare:`
-    : "Continua a guardare:";
+  const continueTitle = username ? `${username}, continua a guardare:` : "Continua a guardare:";
 
   return (
     <Box
@@ -274,16 +255,15 @@ export function Component() {
 
       {hasReadyHome && (
         <Stack
-          spacing={{ xs: 2.5, md: 3.0 }}
+          spacing={0}
           sx={{
             position: "relative",
             zIndex: 12,
-            mt: { xs: "-7.5vh", md: "-7vh" },
-            pt: { xs: 1.25, md: 1.5 },
-            pb: 8,
+            mt: 0,
+            pt: 0,
+            pb: { xs: 6, md: 8 },
             bgcolor: "transparent",
-            background:
-              "linear-gradient(to bottom, rgba(20,20,20,0) 0px, rgba(20,20,20,.18) 28px, rgba(20,20,20,.72) 92px, #141414 175px, #141414 100%)",
+            background: "transparent",
             "& > *": { position: "relative" },
           }}
           className="sliders"
