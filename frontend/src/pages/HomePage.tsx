@@ -12,7 +12,7 @@ import Top10Slider from "src/components/Top10Slider";
 import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_URL = "/api/public/home-bootstrap";
-const HOME_CACHE_KEY = "flix-home-bootstrap-v2";
+const HOME_CACHE_KEY = "flix-home-bootstrap-v3-sc-structure";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
 
@@ -51,28 +51,27 @@ function normalizeRows(rows = [], filterMediaType) {
   return (rows || [])
     .map((row, rowIndex) => {
       const type = row?.section_type || "";
-      const isTop10 = type === "top10";
       const seen = new Set();
       const items = (row?.items || []).filter((item) => {
         if (!item) return false;
         const key = itemKey(item);
-        if (!key || seen.has(key)) return false;
+        if (!key || seen.has(key) || claimed.has(key)) return false;
         seen.add(key);
 
         if (filterMediaType === "movie" || filterMediaType === "tv") {
           const itemType = item?.type === "tv" || item?.media_type === "tv" ? "tv" : "movie";
-          if (row?.media_type !== "mixed" && itemType !== filterMediaType) return false;
+          if (itemType !== filterMediaType) return false;
         }
-
-        if (!isTop10 && claimed.has(key)) return false;
         return true;
       });
 
-      if (!isTop10) items.slice(0, 50).forEach((item) => claimed.add(itemKey(item)));
+      const limit = type === "top10" ? 10 : 30;
+      const visible = items.slice(0, limit);
+      visible.forEach((item) => claimed.add(itemKey(item)));
       return {
         ...row,
         key: row?.key || `${type || "row"}-${rowIndex}`,
-        items: isTop10 ? items.slice(0, 10) : items.slice(0, 50),
+        items: visible,
       };
     })
     .filter((row) => row.items.length > 0);
@@ -89,7 +88,7 @@ export function Component() {
 
   const initialCache = useMemo(() => readHomeCache(), []);
   const { data: bootstrap } = useQuery({
-    queryKey: ["home-bootstrap-v2"],
+    queryKey: ["home-bootstrap-v3-sc-structure"],
     queryFn: async ({ signal }: any) => {
       const response = await fetch(HOME_BOOTSTRAP_URL, {
         signal,
@@ -104,9 +103,6 @@ export function Component() {
     initialDataUpdatedAt: initialCache?.savedAt || 0,
     staleTime: HOME_STALE_MS,
     gcTime: HOME_GC_MS,
-    // Keep the instant local snapshot for first paint, but always verify it
-    // against the backend when Home mounts or the tab regains focus. This makes
-    // an admin Hero change visible immediately without rebuilding every row.
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
