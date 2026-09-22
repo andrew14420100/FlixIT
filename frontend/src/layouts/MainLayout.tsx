@@ -26,6 +26,7 @@ import "src/components/site-polish.css";
 import "src/components/NetflixMotionOverrides.css";
 import "src/components/ScRowAxis.css";
 import "src/components/ScHomeLayoutFinal.css";
+import "src/components/ScHomeContentGuard.css";
 
 // Route-specific helpers stay out of the initial shell. This is especially
 // important on mobile: Home, Detail and Watch no longer download each other's
