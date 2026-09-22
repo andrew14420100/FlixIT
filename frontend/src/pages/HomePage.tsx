@@ -32,11 +32,14 @@ import {
   msUntilNextRomeRefresh,
 } from "src/utils/dailyRefresh";
 
-const INITIAL_ROWS = 6;
-const ROWS_PER_LOAD = 4;
-const ROW_ITEM_LIMIT = 240;
-const CLAIM_LIMIT = 60;
-const PAGES_PER_SECTION = 10;
+// Three TMDB pages give ~60 candidates per row, which is already more than the
+// UI exposes. The previous 10-page/240-item policy multiplied every Home row
+// into a large burst of requests and artwork work with no visible benefit.
+const INITIAL_ROWS = 4;
+const ROWS_PER_LOAD = 3;
+const ROW_ITEM_LIMIT = 60;
+const CLAIM_LIMIT = 50;
+const PAGES_PER_SECTION = 3;
 const HOME_CACHE_PREFIX = "flix-home-v11";
 const DYNAMIC_SHARE_DEFAULT = 0.25;
 const DYNAMIC_SHARE_FAST_ROWS = 0.50;
@@ -67,12 +70,12 @@ const freshFetchJson = async (url, fallback, refreshBucket = romeDailyBucket()) 
   if (!url) return fallback;
   try {
     const separator = url.includes("?") ? "&" : "?";
+    // The daily bucket already changes the URL when content should refresh, so
+    // normal browser/HTTP caching is safe within that window. `no-store` forced
+    // a full network reload even for the same data after navigation/reload.
     const response = await fetch(
       `${url}${separator}_flix_window=${encodeURIComponent(refreshBucket)}`,
-      {
-        cache: "no-store",
-        headers: { "Cache-Control": "no-cache", Accept: "application/json" },
-      }
+      { headers: { Accept: "application/json" } }
     );
     return response.ok ? await response.json() : fallback;
   } catch {
@@ -87,10 +90,10 @@ function withPage(url, page) {
 }
 
 export async function loader() {
-  await Promise.all([
-    store.dispatch(genreSliceEndpoints.getGenres.initiate(MEDIA_TYPE.Movie)),
-    store.dispatch(genreSliceEndpoints.getGenres.initiate(MEDIA_TYPE.Tv)),
-  ]);
+  // Warm genre data in the background but never block Home navigation on these
+  // two auxiliary requests.
+  store.dispatch(genreSliceEndpoints.getGenres.initiate(MEDIA_TYPE.Movie));
+  store.dispatch(genreSliceEndpoints.getGenres.initiate(MEDIA_TYPE.Tv));
   return null;
 }
 
@@ -356,7 +359,7 @@ async function fetchSectionPayload(section, url, refreshBucket) {
 
   if (type === "latest") {
     const urls = ["/api/public/homepage/latest"];
-    for (let page = 1; page <= 8; page += 1) {
+    for (let page = 1; page <= PAGES_PER_SECTION; page += 1) {
       urls.push(withPage("/api/public/tmdb/now_playing", page));
       urls.push(withPage("/api/public/tmdb/on_the_air", page));
     }
@@ -463,8 +466,8 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
     gcTime: DAILY_REFRESH_MS * 7,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
-    retry: 2,
+    refetchOnReconnect: false,
+    retry: 1,
   });
 
   const rows = useHomeDedupe((s) => s.rows);
@@ -481,10 +484,7 @@ function SectionRow({ section, index, onSettled, refreshBucket, engagementMap })
     const selected = [...uniqueFirst];
     const selectedKeys = new Set(selected.map(itemKey));
 
-    // Cross-row dedupe remains the first choice.  If it would starve a section,
-    // refill from that section's own ranked catalogue instead of rendering an
-    // empty row.  The slider still validates every artwork before publishing.
-    if (selected.length < 100) {
+    if (selected.length < ROW_ITEM_LIMIT) {
       for (const item of ranked) {
         const key = itemKey(item);
         if (!key || selectedKeys.has(key)) continue;
@@ -571,8 +571,8 @@ export function Component() {
     gcTime: DAILY_REFRESH_MS * 7,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
-    retry: 2,
+    refetchOnReconnect: false,
+    retry: 1,
   });
   const engagementMap = useMemo(
     () => buildEngagementMap(engagementPayload),
@@ -617,8 +617,8 @@ export function Component() {
     gcTime: DAILY_REFRESH_MS * 7,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
-    retry: 2,
+    refetchOnReconnect: false,
+    retry: 1,
   });
 
   useEffect(() => {
@@ -661,7 +661,7 @@ export function Component() {
           });
         }
       },
-      { rootMargin: "1600px 0px" }
+      { rootMargin: "900px 0px" }
     );
     observer.observe(el);
     return () => observer.disconnect();
