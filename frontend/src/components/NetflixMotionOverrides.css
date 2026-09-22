@@ -3,6 +3,8 @@
   --flix-home-gutter: 4%;
   --flix-mobile-gutter: 16px;
   --flix-card-gap: 7.64px;
+  --flix-card-inline-pad: 3.82005px;
+  --flix-row-start: calc(var(--flix-home-gutter) + var(--flix-card-inline-pad));
   --flix-row-title: clamp(18px, 1.25vw, 23px);
 }
 
@@ -158,9 +160,9 @@
   margin-bottom: 20px !important;
 }
 
-.slider-row .row-header,
-.top10-row .row-header {
-  padding-left: calc(var(--flix-home-gutter) + 3.82px) !important;
+/* One single x-axis for every standard row: title, first card and first hover. */
+.slider-row .row-header {
+  padding-left: var(--flix-row-start) !important;
   padding-right: var(--flix-home-gutter) !important;
   margin: 0 0 7px 0 !important;
   min-height: 25px !important;
@@ -183,9 +185,20 @@
   padding-left: var(--flix-home-gutter) !important;
 }
 
-/* Header starts on the same x coordinate as the visible first card. */
+.slider-row .slider-item {
+  padding-left: var(--flix-card-inline-pad) !important;
+  padding-right: var(--flix-card-inline-pad) !important;
+}
+
+/* Top 10 does not use the standard per-card side padding. Its title and first
+   ranked tile therefore share the raw catalogue gutter. */
 .top10-row .row-header {
   padding-left: var(--flix-home-gutter) !important;
+  padding-right: var(--flix-home-gutter) !important;
+  margin: 0 0 7px 0 !important;
+  min-height: 25px !important;
+  display: flex !important;
+  align-items: center !important;
 }
 
 .top10-row .slider {
@@ -268,6 +281,7 @@
 @media (max-width: 899px) {
   :root {
     --flix-home-gutter: var(--flix-mobile-gutter);
+    --flix-card-inline-pad: 2px;
     --flix-row-title: 16px;
   }
 
@@ -359,14 +373,12 @@
 
   .slider-row .row-header,
   .top10-row .row-header {
-    padding-left: 18px !important;
-    padding-right: 16px !important;
     margin-bottom: 7px !important;
     min-height: 19px !important;
   }
 
   .slider-row .show-peek {
-    padding-left: 16px !important;
+    padding-left: var(--flix-home-gutter) !important;
   }
 
   /* Mobile SC cards are portrait posters. Desktop cards remain landscape. */
@@ -392,7 +404,7 @@
   }
 
   .top10-row .slider {
-    padding-left: 16px !important;
+    padding-left: var(--flix-home-gutter) !important;
     padding-right: 0 !important;
   }
 
@@ -410,20 +422,6 @@
   :root {
     --flix-mobile-gutter: 14px;
     --flix-row-title: 15.5px;
-  }
-
-  .slider-row .row-header,
-  .top10-row .row-header {
-    padding-left: 16px !important;
-    padding-right: 14px !important;
-  }
-
-  .slider-row .show-peek {
-    padding-left: 14px !important;
-  }
-
-  .top10-row .slider {
-    padding-left: 14px !important;
   }
 }
 
