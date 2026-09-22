@@ -48,9 +48,6 @@ def _install_trailer_registration_hook():
             fetch_tmdb_data,
         )
 
-        # Performance services are mounted here because premium.register runs
-        # only after server_core has created the FastAPI app and registered its
-        # public catalogue routes. Both installers are idempotent.
         try:
             from services.performance_api import install_performance_api
             install_performance_api(app)
@@ -59,6 +56,8 @@ def _install_trailer_registration_hook():
         try:
             from services.home_bootstrap import install_home_bootstrap
             install_home_bootstrap(app)
+            from services.home_bootstrap_fast import install_home_bootstrap_fast
+            install_home_bootstrap_fast(app)
         except Exception:
             pass
         return result
@@ -85,9 +84,6 @@ def _install_full_sc_artwork_catalog_hook():
 
         install_sc_catalog(policy_module)
 
-        # Invalidate every previously cached "no logo" artwork bundle. Both
-        # values are required: the resolver cache checks official_artwork's
-        # SOURCE_VERSION, while the policy response exposes POLICY_VERSION.
         version = "official-artwork-v11-sc-logo-always-live"
         policy_module.POLICY_VERSION = version
         artwork_module.SOURCE_VERSION = version
@@ -129,8 +125,6 @@ def _install_full_sc_artwork_catalog_hook():
                         if score < 0.62 or score < best_score:
                             continue
 
-                        # SC can expose the title treatment either in the nested
-                        # images/artworks array or directly on the title row.
                         logo = policy_module._image_url(
                             row,
                             "logo",
@@ -175,8 +169,6 @@ def _install_full_sc_artwork_catalog_hook():
             streamingcommunity_with_live_logo._original = current_sc
             policy_module._streamingcommunity = streamingcommunity_with_live_logo
 
-        # Whenever the SC provider carries a logo, it must beat Netflix, Apple,
-        # MetaHub and all generic fallbacks for the FlixIT Hero.
         current_choose_logo = OfficialArtworkResolver._choose_logo
         if not getattr(current_choose_logo, "_flixit_sc_logo_first_v11", False):
             def choose_sc_logo_first(providers):
@@ -192,7 +184,6 @@ def _install_full_sc_artwork_catalog_hook():
             choose_sc_logo_first._original = current_choose_logo
             OfficialArtworkResolver._choose_logo = staticmethod(choose_sc_logo_first)
     except Exception:
-        # Keep the application bootable in stripped-down/test environments.
         return
 
 
