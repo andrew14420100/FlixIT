@@ -45,14 +45,19 @@ function cachePrefetchedStream(typeSlug: string, id: number, data: any) {
       `stream_${typeSlug}_${id}_${season}_${episode}`,
       `stream-${typeSlug}-${id}-${season}-${episode}`,
     ].forEach((key) => sessionStorage.setItem(key, legacyPayload));
-  } catch {
-    // Prefetch cache is an optimization only.
-  }
+  } catch {}
 }
 
-export default function HeroSection({ mediaType: _mediaType }) {
+function initialHeroLogo(hero: any) {
+  return tmdbImageUrl(
+    hero?.assets?.logo_path || hero?.assets?.fallback_logo_path,
+    "original"
+  );
+}
+
+export default function HeroSection({ mediaType: _mediaType, initialHero = null }) {
   const navigate = useNavigate();
-  const { data: heroSettings, isLoading: heroLoading } = useHeroData();
+  const { data: heroSettings, isLoading: heroLoading } = useHeroData(initialHero);
   const { getProgress } = useContinueWatching();
 
   const featuredId = useMemo(
@@ -120,7 +125,8 @@ export default function HeroSection({ mediaType: _mediaType }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [infoTarget, setInfoTarget] = useState(false);
   const [heroImageSrc, setHeroImageSrc] = useState<string | null>(null);
-  const [heroLogoSrc, setHeroLogoSrc] = useState<string | null>(null);
+  const [heroLogoSrc, setHeroLogoSrc] = useState<string | null>(() => initialHeroLogo(initialHero));
+  const [heroLogoFailed, setHeroLogoFailed] = useState(false);
 
   const isOffset = useOffSetTop(window.innerHeight * 0.6);
 
@@ -153,7 +159,9 @@ export default function HeroSection({ mediaType: _mediaType }) {
   }, [backdropUrl]);
 
   useEffect(() => {
+    if (!logoPath) return;
     setHeroLogoSrc(logoPath);
+    setHeroLogoFailed(false);
   }, [logoPath]);
 
   const displayTitle =
@@ -162,9 +170,6 @@ export default function HeroSection({ mediaType: _mediaType }) {
     heroSettings?.customDescription || detailData?.overview || "";
   const seasonLabel = heroSettings?.seasonLabel || "";
 
-  // The three-second dwell belongs to the featured title, not to the moment the
-  // resolver happens to finish. If the trailer is already cached it starts at
-  // three seconds; if it becomes available later it starts immediately then.
   useEffect(() => {
     setTrailerGateOpen(false);
     setVideoEnded(false);
@@ -240,19 +245,6 @@ export default function HeroSection({ mediaType: _mediaType }) {
         color: "#e8e8e8",
         userSelect: "none",
         boxSizing: "border-box",
-        "& .su-info-wrap": { width: "36%" },
-        "@media (min-width:1100px) and (max-width:1399px)": {
-          "& .su-info-wrap": { width: "40%" },
-        },
-        "@media (min-width:800px) and (max-width:1099px)": {
-          "& .su-info-wrap": { width: "45%" },
-        },
-        "@media (min-width:500px) and (max-width:799px)": {
-          "& .su-info-wrap": { width: "75%" },
-        },
-        "@media (max-width:499px)": {
-          "& .su-info-wrap": { width: "92%", bottom: "5%", top: "25%" },
-        },
       }}
     >
       {heroImageSrc && (
@@ -419,10 +411,13 @@ export default function HeroSection({ mediaType: _mediaType }) {
                   src={heroLogoSrc}
                   alt={displayTitle}
                   data-testid="hero-logo"
+                  fetchPriority="high"
+                  loading="eager"
                   onError={() => {
                     if (fallbackLogoPath && heroLogoSrc !== fallbackLogoPath) {
                       setHeroLogoSrc(fallbackLogoPath);
                     } else {
+                      setHeroLogoFailed(true);
                       setHeroLogoSrc(null);
                     }
                   }}
@@ -442,9 +437,9 @@ export default function HeroSection({ mediaType: _mediaType }) {
                     "@media (max-width:499px)": { maxWidth: "70%" },
                   }}
                 />
-              ) : (
+              ) : heroLogoFailed ? (
                 <Typography
-                  data-testid="hero-title"
+                  data-testid="hero-title-fallback"
                   sx={{
                     font: "inherit",
                     fontFamily: "inherit",
@@ -457,7 +452,7 @@ export default function HeroSection({ mediaType: _mediaType }) {
                 >
                   {displayTitle}
                 </Typography>
-              )}
+              ) : null}
             </Box>
 
             {seasonLabel && (
@@ -578,10 +573,7 @@ export default function HeroSection({ mediaType: _mediaType }) {
                     d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80v352c0 17.4 9.4 33.4 24.5 41.9S58.2 482 73 473l288-176c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41z"
                   />
                 </Box>
-                <Box
-                  component="span"
-                  sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}
-                >
+                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>
                   Riproduci
                 </Box>
               </Box>
@@ -631,10 +623,7 @@ export default function HeroSection({ mediaType: _mediaType }) {
                     d="M11 17h2v-6h-2zm1.713-8.287Q13 8.425 13 8t-.288-.712T12 7t-.712.288T11 8t.288.713T12 9t.713-.288M12 22q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9T2 12t.788-3.9t2.137-3.175T8.1 2.788T12 2t3.9.788t3.175 2.137T21.213 8.1T22 12t-.788 3.9t-2.137 3.175t-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12t-2.325-5.675T12 4T6.325 6.325T4 12t2.325 5.675T12 20m0-8"
                   />
                 </Box>
-                <Box
-                  component="span"
-                  sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}
-                >
+                <Box component="span" sx={{ fontSize: "1.3em", fontFamily: "inherit", lineHeight: 1.2 }}>
                   Altre info
                 </Box>
               </Box>
