@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import Box from "@mui/material/Box";
@@ -18,6 +18,7 @@ import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HUB_QUERY_VERSION = "hub-row-v3-lazy";
 const fetchJson = (url) => fetch(`${API_URL}${url}`).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] }));
 
 const MOVIE_GENRES = [
@@ -72,7 +73,7 @@ function HubHero({ item, cfg, onCatalog, mediaType }) {
         <Typography sx={{ color: "#ff5a63", fontSize: 12.5, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase" }}>{cfg.eyebrow}</Typography>
         <Typography component="h1" data-testid="hub-title" sx={{ fontFamily: "'Unbounded', sans-serif", fontWeight: 800, fontSize: { xs: 40, sm: 56, lg: 72 }, lineHeight: 1, color: "#fff", mt: 1 }}>{cfg.label}</Typography>
         <Typography sx={{ color: "rgba(255,255,255,0.8)", fontSize: { xs: 15, md: 17 }, mt: 2, maxWidth: 520 }}>{cfg.tagline}</Typography>
-        {item && <Box sx={{ mt: 3, minHeight: 52, display: "flex", alignItems: "flex-end" }}>{logo ? <Box component="img" src={logo} alt={item.title || item.name || ""} sx={{ maxWidth: { xs: 260, md: 360 }, maxHeight: 110, objectFit: "contain", objectPosition: "left bottom" }} /> : <Typography sx={{ color: "#fff", fontWeight: 700, fontSize: { xs: 24, md: 34 } }}>{item.title || item.name}</Typography>}</Box>}
+        {item && <Box sx={{ mt: 3, minHeight: 52, display: "flex", alignItems: "flex-end" }}>{logo ? <Box component="img" src={logo} alt={item.title || item.name || ""} decoding="async" sx={{ maxWidth: { xs: 260, md: 360 }, maxHeight: 110, objectFit: "contain", objectPosition: "left bottom" }} /> : <Typography sx={{ color: "#fff", fontWeight: 700, fontSize: { xs: 24, md: 34 } }}>{item.title || item.name}</Typography>}</Box>}
         <Stack direction="row" spacing={1.5} sx={{ mt: 2.5, flexWrap: "wrap", gap: 1 }}>
           {item && <Box component="button" type="button" data-testid="hub-hero-play" onClick={() => navigate(`/${MAIN_PATH.watch}/${item.type}/${item.tmdbId}`)} sx={{ height: 48, px: 3, borderRadius: "10px", border: "none", cursor: "pointer", bgcolor: "#fff", color: "#000", fontWeight: 700, fontSize: 15, display: "inline-flex", alignItems: "center", gap: .8 }}><PlayArrowRoundedIcon /> Riproduci</Box>}
           {item && <Box component="button" type="button" data-testid="hub-hero-info" onClick={() => navigate(`/${MAIN_PATH.browse}/${item.type}/${item.tmdbId}`)} sx={{ height: 48, px: 3, borderRadius: "10px", border: "none", cursor: "pointer", bgcolor: "rgba(109,109,110,.6)", color: "#fff", fontWeight: 600, fontSize: 15, display: "inline-flex", alignItems: "center", gap: .8 }}><InfoOutlinedIcon /> Dettagli</Box>}
@@ -83,17 +84,52 @@ function HubHero({ item, cfg, onCatalog, mediaType }) {
   );
 }
 
-function Row({ title, url }) {
-  const { data } = useQuery({ queryKey: ["hub-row-v2", url], queryFn: () => fetchJson(url), staleTime: DAY_MS, gcTime: DAY_MS * 7, refetchOnWindowFocus: false, refetchOnReconnect: false });
-  if (!data) return null;
-  return <HomepageSlider title={title} items={data.items || []} />;
+function HubRow({ title, url, eager = false }) {
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const [near, setNear] = useState(eager);
+
+  useEffect(() => {
+    if (near) return;
+    const node = anchorRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "1200px 0px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [near]);
+
+  const { data } = useQuery({
+    queryKey: [HUB_QUERY_VERSION, url],
+    queryFn: () => fetchJson(url),
+    enabled: near,
+    staleTime: DAY_MS,
+    gcTime: DAY_MS * 7,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  return (
+    <Box ref={anchorRef} sx={{ minHeight: data ? 0 : 180, contentVisibility: "auto", containIntrinsicSize: "180px" }}>
+      {data ? <HomepageSlider title={title} items={data.items || []} /> : null}
+    </Box>
+  );
 }
 
 function MobileCatalog({ mediaType, cfg }) {
   const [genre, setGenre] = useState("");
   const genres = mediaType === "movie" ? MOVIE_GENRES : TV_GENRES;
   const url = genre ? `/api/public/tmdb/genre/${genre}/${mediaType}` : cfg.rows[0].url;
-  const { data, isLoading } = useQuery({ queryKey: ["mobile-hub-grid", mediaType, genre], queryFn: () => fetchJson(url), staleTime: DAY_MS });
+  const { data, isLoading } = useQuery({ queryKey: [HUB_QUERY_VERSION, url], queryFn: () => fetchJson(url), staleTime: DAY_MS });
   const items = useMemo(() => (data?.items || []).slice(0, 30), [data]);
 
   return (
@@ -106,7 +142,7 @@ function MobileCatalog({ mediaType, cfg }) {
         <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "7px" }}>
           {items.map((item) => {
             const id = item.tmdbId || item.id;
-            return <Box key={`${mediaType}-${id}`} sx={{ minWidth: 0, aspectRatio: "2/3", overflow: "hidden", borderRadius: "3px" }}><VideoItemWithHover video={{ ...item, id, tmdbId: id, type: mediaType }} mediaType={mediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie} suppressHover /></Box>;
+            return <Box key={`${mediaType}-${id}`} sx={{ minWidth: 0, aspectRatio: "2/3", overflow: "hidden", borderRadius: "3px", contentVisibility: "auto", containIntrinsicSize: "120px 180px" }}><VideoItemWithHover video={{ ...item, id, tmdbId: id, type: mediaType }} mediaType={mediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie} suppressHover /></Box>;
           })}
         </Box>
       )}
@@ -118,21 +154,26 @@ export default function MediaHubPage({ mediaType }) {
   const cfg = CONFIG[mediaType];
   const navigate = useNavigate();
   const isMobile = useMediaQuery("(max-width:899px)");
-  const [hero, setHero] = useState(undefined);
+  const { data: heroData, isPending: heroPending } = useQuery({
+    queryKey: [HUB_QUERY_VERSION, cfg.rows[0].url],
+    queryFn: () => fetchJson(cfg.rows[0].url),
+    staleTime: DAY_MS,
+    gcTime: DAY_MS * 7,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
 
-  useEffect(() => {
-    fetchJson(cfg.rows[0].url).then((d) => {
-      const first = (d.items || [])[0] || null;
-      setHero(first ? { ...first, tmdbId: first.tmdbId || first.id, type: mediaType } : null);
-    });
-  }, [cfg, mediaType]);
+  const hero = useMemo(() => {
+    const first = (heroData?.items || [])[0] || null;
+    return first ? { ...first, tmdbId: first.tmdbId || first.id, type: mediaType } : null;
+  }, [heroData, mediaType]);
 
   return (
     <Box data-testid={`hub-page-${mediaType}`} sx={{ bgcolor: "#050505", minHeight: "100vh", pb: 8 }}>
-      {hero === undefined ? <Box sx={{ height: "84vh", display: "grid", placeItems: "center" }}><CircularProgress sx={{ color: "#E50914" }} /></Box> : <HubHero item={hero} cfg={cfg} mediaType={mediaType} onCatalog={() => navigate(cfg.catalogPath)} />}
+      {heroPending ? <Box sx={{ height: "84vh", bgcolor: "#0b0b0b" }} /> : <HubHero item={hero} cfg={cfg} mediaType={mediaType} onCatalog={() => navigate(cfg.catalogPath)} />}
       {isMobile ? <MobileCatalog mediaType={mediaType} cfg={cfg} /> : (
         <Stack spacing={{ xs: 4.5, md: 6 }} sx={{ mt: { xs: -8, md: -14 }, position: "relative", zIndex: 2 }}>
-          {cfg.rows.map((r) => <Row key={r.url} title={r.title} url={r.url} />)}
+          {cfg.rows.map((r, index) => <HubRow key={r.url} title={r.title} url={r.url} eager={index === 0} />)}
         </Stack>
       )}
     </Box>
