@@ -87,27 +87,27 @@ export default function Top10Slider({ title, items }) {
 
   const artworkBatch = useArtworkBatch(candidates, candidates.length > 0);
 
-  // Resolve the poster once at row level and pass that exact URL to the ranked
-  // card. Previously isReady() could approve a title from batch data while the
-  // child mounted with the unhydrated original item, leaving the poster area
-  // empty. SC artwork remains first choice; TMDB is only the final visual
-  // fallback so a Top 10 slot never renders as a blank grey block.
+  // Keep the original item intact. In particular, never overwrite poster_path:
+  // it is the independent fallback if an SC CDN image fails in the browser.
+  // The ranked tile always mounts so its number never vanishes with the image.
   const published = useMemo(
     () => candidates
       .map((item) => {
         const resolved = artworkBatch.getResolved(item);
-        const scPoster = resolved?.poster_path || resolved?.poster || resolved?.poster_url || item?.__artwork?.poster_url;
+        const scPoster =
+          resolved?.poster_path ||
+          resolved?.poster ||
+          resolved?.poster_url ||
+          item?.__artwork?.poster_url ||
+          null;
         const fallbackPoster = tmdbPosterFallback(item?.poster_path || item?.poster);
-        const poster = scPoster || fallbackPoster;
-        if (!poster) return null;
         return {
           ...item,
-          netflix_ranked_artwork_url: poster,
-          poster_path: poster,
-          __resolved_top10_poster: poster,
+          netflix_ranked_artwork_url: scPoster || fallbackPoster || undefined,
+          __resolved_top10_poster: scPoster || null,
+          __resolved_top10_fallback: fallbackPoster || null,
         };
       })
-      .filter(Boolean)
       .slice(0, 10),
     [candidates, artworkBatch.data]
   );
@@ -214,59 +214,40 @@ export default function Top10Slider({ title, items }) {
       </Stack>
 
       <Box className="slider" sx={{ position: "relative", overflow: "visible" }}>
-        {published.length === 0 ? (
-          <Box sx={{ display: "flex", gap: 1, width: "100%", overflow: "hidden" }}>
-            {Array.from({ length: Math.max(tiles, 6) }).map((_, index) => (
-              <Box
-                key={index}
-                sx={{
-                  flex: `0 0 ${100 / Math.max(2, tiles)}%`,
-                  maxWidth: `calc(${100 / Math.max(2, tiles)}% - 8px)`,
-                  aspectRatio: "1.4 / 1",
-                  borderRadius: "4px",
-                  bgcolor: "#222",
-                  opacity: 0.72,
-                  animation: "flixPulse 1.15s ease-in-out infinite",
-                }}
-              />
-            ))}
-          </Box>
-        ) : (
-          <CustomNavigation
-            isEnd={isEnd}
-            arrowWidth={ARROW_MAX_WIDTH}
-            onNext={() => sliderRef.current?.slickNext()}
-            onPrevious={() => sliderRef.current?.slickPrev()}
-            activeSlideIndex={activeSlideIndex}
-          >
-            <StyledSlider ref={sliderRef} {...settings} padding={ARROW_MAX_WIDTH} theme={theme}>
-              {published.map((item, publishedIndex) => {
-                const id = item.id || item.tmdbId || item.tmdb_id;
-                const mediaType =
-                  item.type === "tv" || item.media_type === "tv"
-                    ? MEDIA_TYPE.Tv
-                    : MEDIA_TYPE.Movie;
+        <CustomNavigation
+          isEnd={isEnd}
+          arrowWidth={ARROW_MAX_WIDTH}
+          onNext={() => sliderRef.current?.slickNext()}
+          onPrevious={() => sliderRef.current?.slickPrev()}
+          activeSlideIndex={activeSlideIndex}
+        >
+          <StyledSlider ref={sliderRef} {...settings} padding={ARROW_MAX_WIDTH} theme={theme}>
+            {published.map((item, publishedIndex) => {
+              const id = item.id || item.tmdbId || item.tmdb_id;
+              const mediaType =
+                item.type === "tv" || item.media_type === "tv"
+                  ? MEDIA_TYPE.Tv
+                  : MEDIA_TYPE.Movie;
 
-                return (
-                  <div key={`${item.type || item.media_type || "movie"}-${id}`}>
-                    <NetflixRankedCardWithHover
-                      item={{
-                        ...item,
-                        id,
-                        title: item.title || item.name,
-                        name: item.title || item.name,
-                      }}
-                      rank={publishedIndex + 1}
-                      mediaType={mediaType}
-                      watch={item.watch}
-                      suppressHover={isSliding}
-                    />
-                  </div>
-                );
-              })}
-            </StyledSlider>
-          </CustomNavigation>
-        )}
+              return (
+                <div key={`${item.type || item.media_type || "movie"}-${id}`}>
+                  <NetflixRankedCardWithHover
+                    item={{
+                      ...item,
+                      id,
+                      title: item.title || item.name,
+                      name: item.title || item.name,
+                    }}
+                    rank={publishedIndex + 1}
+                    mediaType={mediaType}
+                    watch={item.watch}
+                    suppressHover={isSliding}
+                  />
+                </div>
+              );
+            })}
+          </StyledSlider>
+        </CustomNavigation>
       </Box>
     </Box>
   );
