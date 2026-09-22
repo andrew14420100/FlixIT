@@ -1,0 +1,21 @@
+/* Shared SC rail alignment. The JS rail components measure the real first rendered card
+   and expose --flix-row-axis so titles never drift from card geometry. */
+.slider-row .row-header {
+  padding-left: var(--flix-row-axis, var(--flix-row-start, 4%)) !important;
+}
+
+.top10-row .row-header {
+  padding-left: var(--flix-row-axis, var(--flix-home-gutter, 4%)) !important;
+}
+
+.site-slider-row .row-header,
+.site-horizontal-row .row-header {
+  padding-left: var(--flix-row-axis, 40px) !important;
+}
+
+@media (max-width: 899px) {
+  .site-slider-row .row-header,
+  .site-horizontal-row .row-header {
+    padding-left: var(--flix-row-axis, 16px) !important;
+  }
+}
