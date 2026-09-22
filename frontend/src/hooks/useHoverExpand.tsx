@@ -6,7 +6,7 @@ import "src/components/NetflixMotionOverrides.css";
 
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
-const OPEN_DELAY_MS = 300;
+const OPEN_DELAY_MS = 180;
 const OPEN_DURATION_MS = 280;
 const CLOSE_DURATION_MS = 220;
 const OPACITY_OPEN_MS = 70;
@@ -28,13 +28,17 @@ function isDomElement(value: any): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
 }
 
+function pointInsideRect(x: number, y: number, rect?: DOMRect | null) {
+  if (!rect) return false;
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
 /**
  * Netflix-style hover intent + expansion.
- *
- * The preview closes only when the pointer actually leaves the card/preview.
- * Wheel, touchmove and page scroll no longer force-close it. While the preview
- * is open, its geometry stays locked to the source card instead of drifting in
- * the viewport when the page or a nested row scrolls.
+ * The preview remains geometrically attached to its source card. During page
+ * scroll it closes as soon as the pointer no longer intersects the original
+ * card footprint, preventing a stale preview from following the user down the
+ * page. Card entry uses a short, consistent intent delay across the full card.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -120,10 +124,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const onOverlayLeave = useCallback(
     (event?: any) => {
-      // React/browser mouseleave relatedTarget is not guaranteed to be a DOM
-      // Node. Chrome can supply Window (especially around portals, route changes
-      // and viewport/browser-chrome transitions). Node.contains() throws when
-      // handed that value, so guard it before containment checks.
       const related = event?.relatedTarget;
       if (isDomNode(related) && ref.current?.contains(related)) return;
       requestClose();
@@ -158,6 +158,7 @@ export function ExpandOverlay({
   testId,
 }: any) {
   const modalRef = useRef<HTMLDivElement | null>(null);
+  const pointerRef = useRef({ x: -1, y: -1 });
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
@@ -228,10 +229,30 @@ export function ExpandOverlay({
     if (!position || typeof window === "undefined") return;
 
     let frame = 0;
-    const sync = () => {
+    const onPointerMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+
+    const sync = (event?: Event) => {
       if (frame || phase === "measure" || phase === "reset" || phase === "close") return;
       frame = requestAnimationFrame(() => {
         frame = 0;
+        const card = currentCardRect();
+        const pointer = pointerRef.current;
+        const isScrollEvent = event?.type === "scroll";
+
+        if (
+          isScrollEvent &&
+          pointer.x >= 0 &&
+          pointer.y >= 0 &&
+          card &&
+          !pointInsideRect(pointer.x, pointer.y, card)
+        ) {
+          const target = document.elementFromPoint(pointer.x, pointer.y);
+          onMouseLeave?.({ relatedTarget: target, type: "scroll-anchor-leave" });
+          return;
+        }
+
         const next = calculateGeometry();
         if (!next) return;
         setGeometry((previous: any) => {
@@ -249,19 +270,21 @@ export function ExpandOverlay({
       });
     };
 
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
     window.addEventListener("scroll", sync, true);
     window.addEventListener("resize", sync);
     window.visualViewport?.addEventListener?.("scroll", sync);
     window.visualViewport?.addEventListener?.("resize", sync);
 
     return () => {
+      window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("scroll", sync, true);
       window.removeEventListener("resize", sync);
       window.visualViewport?.removeEventListener?.("scroll", sync);
       window.visualViewport?.removeEventListener?.("resize", sync);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [position, phase, calculateGeometry]);
+  }, [position, phase, calculateGeometry, currentCardRect, onMouseLeave]);
 
   useEffect(() => {
     if (closing && geometry) setPhase("close");
