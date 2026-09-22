@@ -1,11 +1,16 @@
 /* Hover geometry + lower panel tuned from the supplied SC reference screenshot. */
 
 .previewModal--container[data-motion="netflix"] {
-  --sc-hover-visual-scale: .96;
-  --sc-hover-scale: calc(var(--flix-mini-scale, 1) * var(--sc-hover-visual-scale));
-  --sc-hover-width: calc(var(--flix-mini-modal-width) * var(--sc-hover-visual-scale));
-  --sc-hover-player-height: calc(var(--flix-mini-player-height) * var(--sc-hover-visual-scale));
-  --sc-hover-info-height: calc(124px * var(--sc-hover-scale));
+  /*
+   * In the supplied SC screenshot the expanded card is exactly the normal
+   * card geometry enlarged by 1.5x. useHoverExpand already supplies that live
+   * 1.5x width/player height, so do not apply a second visual shrink here.
+   */
+  --sc-hover-scale: var(--flix-mini-scale, 1);
+  --sc-hover-width: var(--flix-mini-modal-width);
+  --sc-hover-player-height: var(--flix-mini-player-height);
+  /* Measured from the screenshot: ~142px lower panel at the 366px reference. */
+  --sc-hover-info-height: calc(142px * var(--sc-hover-scale));
   --sc-hover-height: calc(var(--sc-hover-player-height) + var(--sc-hover-info-height));
   box-shadow: var(--flix-netflix-shadow, none) !important;
   width: var(--sc-hover-width) !important;
@@ -14,7 +19,7 @@
   max-width: var(--sc-hover-width) !important;
   min-height: var(--sc-hover-height) !important;
   max-height: var(--sc-hover-height) !important;
-  margin-left: calc((var(--flix-mini-modal-width) - var(--sc-hover-width)) / 2) !important;
+  margin-left: 0 !important;
   overflow: hidden !important;
   border-radius: calc(5px * var(--sc-hover-scale)) !important;
   background: #141414 !important;
@@ -51,7 +56,7 @@
   padding:
     calc(16px * var(--sc-hover-scale))
     calc(16px * var(--sc-hover-scale))
-    calc(4px * var(--sc-hover-scale));
+    calc(24px * var(--sc-hover-scale));
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -222,4 +227,14 @@
 .previewModal--container[data-motion="netflix"][data-phase="open"] .previewModal--info,
 .previewModal--container[data-motion="netflix"][data-phase="close"] .previewModal--info {
   opacity: 1 !important;
+}
+
+/* The ranked poster itself must always remain a live hover target on desktop. */
+@media (min-width: 900px) {
+  .top10-row .netflix-ranked-card-root,
+  .top10-row .netflix-ranked-card-link,
+  .top10-row .netflix-ranked-card-poster-wrap,
+  .top10-row .netflix-ranked-card-poster {
+    pointer-events: auto !important;
+  }
 }
