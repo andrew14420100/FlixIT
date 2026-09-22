@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Slider, { Settings } from "react-slick";
 import { styled, Theme, useTheme } from "@mui/material/styles";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -91,8 +91,6 @@ export default function HomepageSlider({
   const up900 = useMediaQuery("(min-width:900px)");
   const up600 = useMediaQuery("(min-width:600px)");
 
-  // Mobile keeps the confirmed ~2.6 portrait posters. On wide desktop the
-  // SC reference shows six full 16:9 cards plus a narrow seventh-card peek.
   const tiles = up1400 ? 6 : up1100 ? 5 : up900 ? 4 : up600 ? 3 : 2;
   const visibleTiles = isMobile
     ? 2.6
@@ -109,6 +107,40 @@ export default function HomepageSlider({
     () => visibleItems.filter((item) => artworkBatch.isReady(item, isMobile ? "poster" : "landscape")),
     [visibleItems, artworkBatch.data, isMobile]
   );
+
+  // Mount only a few pages of cards at first. A 20-row Home previously mounted
+  // hundreds of hover hooks, IntersectionObservers and media resolvers during a
+  // refresh even though most cards were far off-screen. Grow the rail before the
+  // user reaches its mounted tail, so navigation remains visually unchanged.
+  const initialRenderCount = useMemo(
+    () => Math.min(TARGET_ROW_ITEMS, Math.max(isMobile ? 12 : 18, Math.ceil(visibleTiles * 3))),
+    [isMobile, visibleTiles]
+  );
+  const [renderLimit, setRenderLimit] = useState(initialRenderCount);
+
+  useEffect(() => {
+    setRenderLimit(initialRenderCount);
+    setActiveSlideIndex(0);
+  }, [rowId, title, initialRenderCount, visibleItems[0]?.id, visibleItems[0]?.tmdbId]);
+
+  useEffect(() => {
+    if (readyItems.length && renderLimit < Math.min(initialRenderCount, readyItems.length)) {
+      setRenderLimit(Math.min(initialRenderCount, readyItems.length));
+    }
+  }, [readyItems.length, initialRenderCount, renderLimit]);
+
+  const renderedItems = useMemo(
+    () => readyItems.slice(0, Math.min(renderLimit, readyItems.length)),
+    [readyItems, renderLimit]
+  );
+
+  const growRailIfNeeded = useCallback((index: number) => {
+    if (renderLimit >= readyItems.length) return;
+    const buffer = Math.max(4, Math.ceil(visibleTiles * 2));
+    if (index < renderLimit - buffer) return;
+    const chunk = Math.max(8, Math.ceil(visibleTiles * 3));
+    setRenderLimit((current) => Math.min(readyItems.length, current + chunk));
+  }, [renderLimit, readyItems.length, visibleTiles]);
 
   const syncRowAxis = useCallback(() => {
     const row = rowRef.current;
@@ -128,7 +160,7 @@ export default function HomepageSlider({
 
   useLayoutEffect(() => {
     const row = rowRef.current;
-    if (!row || !readyItems.length || typeof window === "undefined") return;
+    if (!row || !renderedItems.length || typeof window === "undefined") return;
 
     let frame = window.requestAnimationFrame(syncRowAxis);
     const schedule = () => {
@@ -136,7 +168,7 @@ export default function HomepageSlider({
       frame = window.requestAnimationFrame(syncRowAxis);
     };
 
-    window.addEventListener("resize", schedule);
+    window.addEventListener("resize", schedule, { passive: true });
     const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
     observer?.observe(row);
 
@@ -151,7 +183,7 @@ export default function HomepageSlider({
       window.removeEventListener("resize", schedule);
       observer?.disconnect();
     };
-  }, [syncRowAxis, readyItems.length, activeSlideIndex, isMobile, visibleTiles]);
+  }, [syncRowAxis, renderedItems.length, activeSlideIndex, isMobile, visibleTiles]);
 
   const pageCount = Math.max(1, Math.ceil(readyItems.length / Math.max(1, scrollTiles)));
   const activePage = Math.min(pageCount - 1, Math.floor(activeSlideIndex / Math.max(1, scrollTiles)));
@@ -177,16 +209,21 @@ export default function HomepageSlider({
     slidesToShow: visibleTiles,
     slidesToScroll: scrollTiles,
     beforeChange: (_current, next) => {
+      growRailIfNeeded(next);
       setIsSliding(true);
       setActiveSlideIndex(next);
     },
     afterChange: (current) => {
+      growRailIfNeeded(current);
       setActiveSlideIndex(current);
       setIsSliding(false);
     },
   };
 
-  const handleNext = useCallback(() => sliderRef.current?.slickNext(), []);
+  const handleNext = useCallback(() => {
+    growRailIfNeeded(activeSlideIndex + scrollTiles);
+    sliderRef.current?.slickNext();
+  }, [growRailIfNeeded, activeSlideIndex, scrollTiles]);
   const handlePrevious = useCallback(() => sliderRef.current?.slickPrev(), []);
 
   if (!visibleItems.length) return null;
@@ -308,7 +345,7 @@ export default function HomepageSlider({
                 activeSlideIndex={activeSlideIndex}
               >
                 <StyledSlider ref={sliderRef} {...settings} theme={theme}>
-                  {readyItems.map((item, index) => {
+                  {renderedItems.map((item, index) => {
                     const id = item?.id || item?.tmdbId || item?.tmdb_id;
                     const mediaType = item?.type === "tv" || item?.media_type === "tv"
                       ? MEDIA_TYPE.Tv
