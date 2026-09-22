@@ -6,21 +6,6 @@ FLIX-IT supports two Omni modes:
    process and resolves authorized streams stored in FLIX-IT's database;
 2. remote: when OMNI_ADDON_URL or the legacy Admin Stremio URL is configured,
    FLIX-IT consumes the remote Stremio /stream resource.
-
-Remote protocol:
-  GET {addon}/manifest.json
-  GET {addon}/stream/{movie|series}/{imdb_id}.json
-  GET {addon}/stream/series/{imdb_id}:{season}:{episode}.json
-
-Runtime configuration:
-  OMNI_ADDON_URL   optional remote Omni base URL. A trailing /manifest.json is accepted.
-  OMNI_ENABLED     global boolean override (1/true/yes/on or 0/false/no/off).
-
-Backward-compatible Admin settings:
-  stremio_addon_url
-  stremio_enabled
-
-When no URL is configured, source="embedded" is selected automatically.
 """
 import logging
 import os
@@ -41,10 +26,33 @@ OMNI_ENABLED_ENV = "OMNI_ENABLED"
 
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 REQUEST_TIMEOUT = 15.0
+_HTTP_MAX_CONNECTIONS = 24
+_HTTP_MAX_KEEPALIVE = 12
+
+_client: Optional[httpx.AsyncClient] = None
+_imdb_memory: dict[tuple[str, int], str] = {}
+_IMDB_MEMORY_MAX = 6000
+_external_ids_index_ready = False
 
 
 class StremioError(Exception):
     """Omni/Stremio addon unreachable or returned an invalid response."""
+
+
+def _http() -> httpx.AsyncClient:
+    """One keep-alive client for TMDB external ids and remote Omni calls."""
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(REQUEST_TIMEOUT, connect=5.0),
+            follow_redirects=True,
+            limits=httpx.Limits(
+                max_connections=_HTTP_MAX_CONNECTIONS,
+                max_keepalive_connections=_HTTP_MAX_KEEPALIVE,
+                keepalive_expiry=60.0,
+            ),
+        )
+    return _client
 
 
 def normalize_addon_url(url: Optional[str]) -> str:
@@ -98,8 +106,6 @@ def get_config(get_setting: Optional[Callable]) -> dict:
         if url and bool(get_setting(ENABLED_KEY, True)):
             return {"url": url, "enabled": True, "source": "admin"}
 
-    # No separate Omni deployment is required. The resolver switches to
-    # services.omni_embedded inside the same FastAPI process.
     return {"url": "", "enabled": True, "source": "embedded"}
 
 
@@ -111,28 +117,74 @@ def _tmdb_auth() -> tuple[dict, dict]:
     return {"api_key": api_key}, {}
 
 
+def _ensure_external_ids_index(db) -> None:
+    global _external_ids_index_ready
+    if _external_ids_index_ready or db is None:
+        return
+    try:
+        db["external_ids"].create_index(
+            [("media_type", 1), ("tmdbId", 1)],
+            unique=True,
+            background=True,
+        )
+    except Exception:
+        pass
+    _external_ids_index_ready = True
+
+
 async def fetch_imdb_id(media_type: str, tmdb_id: int, db=None) -> Optional[str]:
-    """Resolve the IMDb id of a TMDB title (cached in Mongo `external_ids`)."""
+    """Resolve the IMDb id of a TMDB title with memory + Mongo + TMDB caching."""
+    media_type = "tv" if media_type == "tv" else "movie"
+    tmdb_id = int(tmdb_id)
+    memory_key = (media_type, tmdb_id)
+    memory_hit = _imdb_memory.get(memory_key)
+    if memory_hit:
+        return memory_hit
+
     if db is not None:
-        doc = db["external_ids"].find_one({"media_type": media_type, "tmdbId": tmdb_id}, {"_id": 0})
+        _ensure_external_ids_index(db)
+        try:
+            doc = db["external_ids"].find_one(
+                {"media_type": media_type, "tmdbId": tmdb_id},
+                {"_id": 0, "imdb_id": 1},
+            )
+        except Exception:
+            doc = None
         if doc and doc.get("imdb_id"):
-            return doc["imdb_id"]
+            imdb_id = str(doc["imdb_id"])
+            if len(_imdb_memory) >= _IMDB_MEMORY_MAX:
+                _imdb_memory.clear()
+            _imdb_memory[memory_key] = imdb_id
+            return imdb_id
+
     params, headers = _tmdb_auth()
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"{TMDB_BASE_URL}/{media_type}/{tmdb_id}/external_ids", params=params, headers=headers)
+        r = await _http().get(
+            f"{TMDB_BASE_URL}/{media_type}/{tmdb_id}/external_ids",
+            params=params,
+            headers=headers,
+            timeout=10.0,
+        )
         if r.status_code != 200:
             return None
         imdb_id = (r.json().get("imdb_id") or "").strip() or None
     except Exception as e:
-        logger.warning(f"TMDB external_ids failed for {media_type}/{tmdb_id}: {e}")
+        logger.warning("TMDB external_ids failed for %s/%s: %s", media_type, tmdb_id, e.__class__.__name__)
         return None
-    if imdb_id and db is not None:
-        db["external_ids"].update_one(
-            {"media_type": media_type, "tmdbId": tmdb_id},
-            {"$set": {"imdb_id": imdb_id}},
-            upsert=True,
-        )
+
+    if imdb_id:
+        if len(_imdb_memory) >= _IMDB_MEMORY_MAX:
+            _imdb_memory.clear()
+        _imdb_memory[memory_key] = imdb_id
+        if db is not None:
+            try:
+                db["external_ids"].update_one(
+                    {"media_type": media_type, "tmdbId": tmdb_id},
+                    {"$set": {"imdb_id": imdb_id}},
+                    upsert=True,
+                )
+            except Exception:
+                pass
     return imdb_id
 
 
@@ -149,8 +201,7 @@ async def fetch_manifest(addon_url: str) -> dict:
     if not addon_url:
         raise StremioError("URL Omni non configurato")
     try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
-            r = await client.get(f"{addon_url}/manifest.json")
+        r = await _http().get(f"{addon_url}/manifest.json")
     except httpx.TimeoutException:
         raise StremioError("Omni non raggiungibile: timeout")
     except httpx.HTTPError as e:
@@ -180,8 +231,7 @@ async def fetch_streams(
     s_type, s_id = stremio_id(imdb_id, media_type, season, episode)
     url = f"{addon_url}/stream/{s_type}/{quote(s_id, safe=':')}.json"
     try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
-            r = await client.get(url)
+        r = await _http().get(url)
     except httpx.TimeoutException:
         raise StremioError("Omni non raggiungibile: timeout")
     except httpx.HTTPError as e:
