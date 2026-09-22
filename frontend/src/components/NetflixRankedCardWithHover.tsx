@@ -11,7 +11,6 @@ import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
 import HoverTrailerOverlay from "./HoverTrailerOverlay";
 import "./NetflixMiniModalExact.css";
-import NetflixTop10RankSvg from "./NetflixTop10RankSvg";
 import StreamingCommunityTop10RankSvg from "./StreamingCommunityTop10RankSvg";
 
 const TRAILER_HOVER_DELAY_MS = 2000;
@@ -169,11 +168,13 @@ export default function NetflixRankedCardWithHover({
     automaticAssets?.hero_backdrop_path,
     automaticAssets?.detail_backdrop_path,
     automaticBackdrop,
+    item?.__artwork?.backdrop_url,
     mappedBackdrop,
     legacyBackdrop
   );
-  const hoverCoverUrl = automaticBackdrop || mappedBackdrop || legacyBackdrop || hoverBackdrop;
+  const hoverCoverUrl = item?.__artwork?.backdrop_url || automaticBackdrop || mappedBackdrop || legacyBackdrop || hoverBackdrop;
   const scLogoUrl = firstNonTmdbArtwork(
+    item?.__artwork?.logo_url,
     automaticAssets?.logo_path,
     item?.netflix_logo_url,
     item?.logo_path,
@@ -191,13 +192,13 @@ export default function NetflixRankedCardWithHover({
 
   const posterCandidates = useMemo(
     () => unique([
-      automaticPoster,
       item?.__artwork?.poster_url,
       item?.mobile_sc_poster_url,
+      automaticPoster,
       mappedPoster,
       legacyPoster,
     ].map(usableArtwork)),
-    [automaticPoster, item?.__artwork?.poster_url, item?.mobile_sc_poster_url, mappedPoster, legacyPoster]
+    [item?.__artwork?.poster_url, item?.mobile_sc_poster_url, automaticPoster, mappedPoster, legacyPoster]
   );
 
   useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
@@ -276,18 +277,10 @@ export default function NetflixRankedCardWithHover({
           onClick={goDetail}
         >
           <div className="netflix-ranked-card-rank">
-            {isMobile ? (
-              <StreamingCommunityTop10RankSvg
-                rank={rank}
-                className="netflix-ranked-card-rank-svg"
-              />
-            ) : (
-              <NetflixTop10RankSvg
-                rank={rank}
-                className="netflix-ranked-card-rank-svg"
-                opacity={0.5}
-              />
-            )}
+            <StreamingCommunityTop10RankSvg
+              rank={rank}
+              className="netflix-ranked-card-rank-svg"
+            />
           </div>
           <div className="netflix-ranked-card-poster-wrap">
             <img
