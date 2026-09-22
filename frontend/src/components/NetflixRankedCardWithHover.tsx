@@ -6,7 +6,7 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useHoverExpand, ExpandOverlay } from "src/hooks/useHoverExpand";
 import useDeferredMediaAssets from "src/hooks/useDeferredMediaAssets";
-import useAutomaticMediaAssets, { isEmbeddedCardArtwork } from "src/hooks/useAutomaticMediaAssets";
+import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 import ExpandedCard from "./ExpandedCard";
 import HoverTrailerOverlay from "./HoverTrailerOverlay";
@@ -34,33 +34,36 @@ function firstArtwork(...values: any[]) {
   return null;
 }
 
-function nonTmdbArtwork(value: any) {
+function usableArtwork(value: any) {
   const raw = firstArtwork(value);
   if (!raw) return null;
   const text = String(raw).trim();
   if (!text) return null;
-  if (text.startsWith("data:") || text.startsWith("blob:")) return text;
+  if (text.startsWith("/") || text.startsWith("data:") || text.startsWith("blob:")) return text;
   if (!/^https?:\/\//i.test(text)) return null;
-  if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return null;
   return text;
 }
 
-function firstNonTmdbArtwork(...values: any[]) {
+function firstUsableArtwork(...values: any[]) {
   for (const value of values) {
-    const resolved = nonTmdbArtwork(value);
+    const resolved = usableArtwork(value);
     if (resolved) return resolved;
   }
   return null;
 }
 
-function firstLogo(...values: any[]) {
+function firstNonTmdbArtwork(...values: any[]) {
   for (const value of values) {
-    const raw = firstArtwork(value);
+    const raw = usableArtwork(value);
     if (!raw) continue;
-    const text = String(raw).trim();
-    if (/^https?:\/\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) return text;
+    if (/^https?:\/\/image\.tmdb\.org\//i.test(raw)) continue;
+    return raw;
   }
   return null;
+}
+
+function firstLogo(...values: any[]) {
+  return firstUsableArtwork(...values);
 }
 
 export default function NetflixRankedCardWithHover({
@@ -95,7 +98,7 @@ export default function NetflixRankedCardWithHover({
           observer.disconnect();
         }
       },
-      { rootMargin: "260px 420px" }
+      { rootMargin: "320px 480px" }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -127,13 +130,13 @@ export default function NetflixRankedCardWithHover({
   );
 
   const mappedPoster = normalizedId
-    ? getCDNImageUrl(Number(normalizedId), "poster")
+    ? usableArtwork(getCDNImageUrl(Number(normalizedId), "poster"))
     : null;
   const mappedBackdrop = normalizedId
-    ? getCDNImageUrl(Number(normalizedId), "backdrop")
+    ? usableArtwork(getCDNImageUrl(Number(normalizedId), "backdrop"))
     : null;
 
-  const legacyPoster = firstNonTmdbArtwork(
+  const legacyPoster = firstUsableArtwork(
     item?.netflix_ranked_artwork_url,
     item?.netflixRankedArtworkUrl,
     item?.poster_path,
@@ -143,7 +146,7 @@ export default function NetflixRankedCardWithHover({
     item?.cover_path,
     item?.cover
   );
-  const legacyBackdrop = firstNonTmdbArtwork(
+  const legacyBackdrop = firstUsableArtwork(
     item?.netflix_artwork_url,
     item?.netflixArtworkUrl,
     item?.backdrop_path,
@@ -153,23 +156,21 @@ export default function NetflixRankedCardWithHover({
     item?.artwork,
     item?.image
   );
-  const legacyPosterEmbedded = !!(
-    item?.poster_embedded_title_treatment ||
-    item?.has_embedded_poster_title_treatment ||
-    isEmbeddedCardArtwork(legacyPoster)
-  );
 
-  const automaticPoster = firstNonTmdbArtwork(automaticAssets?.poster_path);
-  const automaticPosterEmbedded = !!automaticAssets?.poster_embedded_title_treatment;
-  const automaticBackdrop = firstNonTmdbArtwork(
+  const automaticPoster = firstUsableArtwork(
+    automaticAssets?.poster_path,
+    automaticAssets?.poster
+  );
+  const automaticBackdrop = firstUsableArtwork(
     automaticAssets?.backdrop_path,
     automaticAssets?.titled_backdrop_path
   );
-  const hoverBackdrop = firstNonTmdbArtwork(
+  const hoverBackdrop = firstUsableArtwork(
     automaticAssets?.hero_backdrop_path,
     automaticAssets?.detail_backdrop_path,
     automaticBackdrop,
-    mappedBackdrop
+    mappedBackdrop,
+    legacyBackdrop
   );
   const hoverCoverUrl = automaticBackdrop || mappedBackdrop || legacyBackdrop || hoverBackdrop;
   const scLogoUrl = firstNonTmdbArtwork(
@@ -190,24 +191,13 @@ export default function NetflixRankedCardWithHover({
 
   const posterCandidates = useMemo(
     () => unique([
-      automaticPosterEmbedded && automaticPoster && automaticPoster !== automaticBackdrop
-        ? automaticPoster
-        : null,
-      mappedPoster && mappedPoster !== mappedBackdrop ? mappedPoster : null,
-      legacyPosterEmbedded && legacyPoster && legacyPoster !== legacyBackdrop
-        ? legacyPoster
-        : null,
-    ]),
-    [
       automaticPoster,
-      automaticPosterEmbedded,
-      automaticBackdrop,
+      item?.__artwork?.poster_url,
+      item?.mobile_sc_poster_url,
       mappedPoster,
-      mappedBackdrop,
       legacyPoster,
-      legacyPosterEmbedded,
-      legacyBackdrop,
-    ]
+    ].map(usableArtwork)),
+    [automaticPoster, item?.__artwork?.poster_url, item?.mobile_sc_poster_url, mappedPoster, legacyPoster]
   );
 
   useEffect(() => setPosterIndex(0), [posterCandidates.join("|")]);
@@ -237,11 +227,11 @@ export default function NetflixRankedCardWithHover({
 
   const handleEnter = useCallback(
     (event?: any) => {
-      if (!suppressHover) {
+      if (!suppressHover && !isMobile) {
         hoverStartedAtRef.current = Date.now();
         onEnter(event);
       }
-    }, [suppressHover, onEnter]
+    }, [suppressHover, isMobile, onEnter]
   );
 
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
@@ -267,9 +257,7 @@ export default function NetflixRankedCardWithHover({
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
-  const staticReady = !!automaticAssets?.top10_ready && posterCandidates.length > 0;
-
-  if (!staticReady || !posterUrl) return null;
+  if (!posterUrl) return null;
 
   return (
     <>
@@ -277,7 +265,7 @@ export default function NetflixRankedCardWithHover({
         ref={ref}
         className="netflix-ranked-card-root"
         onMouseEnter={handleEnter}
-        onMouseLeave={onLeave}
+        onMouseLeave={isMobile ? undefined : onLeave}
         data-testid={`netflix-ranked-card-${normalizedId}`}
       >
         <a
@@ -301,12 +289,13 @@ export default function NetflixRankedCardWithHover({
               />
             )}
           </div>
-          <div className="netflix-ranked-card-poster-wrap" style={{ position: "absolute", overflow: "hidden" }}>
+          <div className="netflix-ranked-card-poster-wrap">
             <img
               src={posterUrl}
               alt=""
               draggable={false}
-              loading="lazy"
+              loading={rank <= 4 ? "eager" : "lazy"}
+              fetchPriority={rank <= 4 ? "high" : "auto"}
               decoding="async"
               onError={() => setPosterIndex((index) => index + 1)}
               className="netflix-ranked-card-poster"
@@ -315,7 +304,7 @@ export default function NetflixRankedCardWithHover({
         </a>
       </div>
 
-      {open && !suppressHover ? (
+      {open && !suppressHover && !isMobile ? (
         <ExpandOverlay
           position={position}
           closing={closing}
