@@ -43,10 +43,9 @@ function heroRevision(hero: HeroSettings | null | undefined) {
 }
 
 /**
- * Home supplies the current Hero inline through the bootstrap payload. The
- * revision is part of the query key so an admin change can never be masked by
- * the previous React Query entry. Assets returned by the backend are preserved:
- * this is important for the SC logo/backdrop selected for the Hero.
+ * Home can bootstrap the current Hero, but Admin edits must become visible
+ * immediately when the user returns to /browse. Keep the bootstrap for fast
+ * first paint and always revalidate it in the background.
  */
 export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
@@ -55,16 +54,17 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
   const revision = heroRevision(hydrated);
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v3', profile, viewport, revision],
+    queryKey: ['hero-settings-v4', profile, viewport, revision],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
           signal,
+          cache: 'no-store',
           headers: { Accept: 'application/json' },
         });
-        if (!response.ok) return null;
+        if (!response.ok) return hydrated || null;
         const data = await response.json();
-        if (!data?.contentId) return null;
+        if (!data?.contentId) return hydrated || null;
         return {
           ...data,
           mediaType: data.mediaType || 'tv',
@@ -80,11 +80,11 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
         }
       : undefined,
     initialDataUpdatedAt: hydrated?.contentId ? Date.now() : undefined,
-    staleTime: hydrated?.contentId ? 10 * 60 * 1000 : 0,
-    gcTime: 60 * 60 * 1000,
-    refetchOnWindowFocus: !hydrated,
-    refetchOnReconnect: !hydrated,
-    refetchOnMount: hydrated ? false : 'always',
+    staleTime: 0,
+    gcTime: 30 * 60 * 1000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchOnMount: 'always',
     retry: 1,
   });
 }
