@@ -23,6 +23,7 @@ import "src/components/mobile/mobile-detail-runtime-fixes.css";
 import "src/components/detail-interactions.css";
 import "src/components/detail/detail-episode-polish.css";
 import "src/components/site-polish.css";
+import "src/components/NetflixMotionOverrides.css";
 import "src/components/ScRowAxis.css";
 import "src/components/ScHomeLayoutFinal.css";
 
