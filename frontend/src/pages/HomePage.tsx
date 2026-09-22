@@ -6,7 +6,6 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 
 import HeroSection from "src/components/HeroSection";
-import ContinueWatchingSection from "src/components/ContinueWatchingSection";
 import HomepageSlider from "src/components/HomepageSlider";
 import Top10Slider from "src/components/Top10Slider";
 import { MEDIA_TYPE } from "src/types/Common";
@@ -167,8 +166,6 @@ export function Component() {
           className="sliders"
           data-testid="home-rows"
         >
-          <ContinueWatchingSection />
-
           {rows.map((row) =>
             row.section_type === "top10" ? (
               <Top10Slider key={row.key} title={row.name} items={row.items} />
