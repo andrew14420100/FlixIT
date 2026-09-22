@@ -5,22 +5,6 @@ This module runs inside the existing FastAPI backend. It intentionally does not
 bundle third-party site scrapers. Instead it exposes the same stream selection
 shape used by the Omni/Stremio client and resolves streams that are explicitly
 stored in FLIX-IT's own database.
-
-Supported collections:
-- stream_sources: existing Admin > Contenuti sources, keyed by TMDB id.
-- omni_stream_sources: optional multi-source collection keyed by IMDb id.
-
-An omni_stream_sources document can contain:
-{
-  "imdb_id": "tt1234567",
-  "media_type": "movie" | "tv",
-  "season": 1,
-  "episode": 2,
-  "url": "https://.../master.m3u8",
-  "name": "My authorized provider",
-  "headers": {"Referer": "https://example.com/"},
-  "enabled": true
-}
 """
 from __future__ import annotations
 
@@ -59,15 +43,14 @@ def resolve_streams(
     media_type: str,
     season: Optional[int] = None,
     episode: Optional[int] = None,
+    tmdb_id: Optional[int] = None,
 ) -> list[dict]:
-    """Return authorized local streams using the same normalized shape as stremio.parse_streams."""
+    """Return authorized local streams using the normalized Omni stream shape."""
     if db is None or not imdb_id:
         return []
 
     out: list[dict] = []
 
-    # Optional multi-source embedded collection. This is the preferred extension
-    # point for authorized providers because several alternatives may coexist.
     query = {
         "imdb_id": imdb_id,
         "media_type": media_type,
@@ -96,19 +79,24 @@ def resolve_streams(
             )
         )
 
-    # Existing Admin stream_sources remain a zero-configuration fallback.
-    # external_ids is populated by stremio.fetch_imdb_id when titles are played.
-    try:
-        external = db["external_ids"].find_one(
-            {"imdb_id": imdb_id, "media_type": media_type},
-            {"_id": 0, "tmdbId": 1},
-        )
-    except Exception:
-        external = None
+    # StremioAddonResolver already has the TMDB id that started this resolution.
+    # Older code immediately queried external_ids in reverse (IMDb -> TMDB), even
+    # though it had just resolved TMDB -> IMDb one call earlier. Use the supplied
+    # id directly; retain the lookup only for backward-compatible direct callers.
+    resolved_tmdb_id = tmdb_id
+    if resolved_tmdb_id is None:
+        try:
+            external = db["external_ids"].find_one(
+                {"imdb_id": imdb_id, "media_type": media_type},
+                {"_id": 0, "tmdbId": 1},
+            )
+            resolved_tmdb_id = external.get("tmdbId") if external else None
+        except Exception:
+            resolved_tmdb_id = None
 
-    if external and external.get("tmdbId") is not None:
+    if resolved_tmdb_id is not None:
         admin_query = {
-            "tmdbId": int(external["tmdbId"]),
+            "tmdbId": int(resolved_tmdb_id),
             "media_type": media_type,
             "season": season if media_type == "tv" else None,
             "episode": episode if media_type == "tv" else None,
