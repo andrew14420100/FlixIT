@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useMemo } from "react";
 import { useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 
@@ -11,8 +11,10 @@ import Top10Slider from "src/components/Top10Slider";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { MEDIA_TYPE } from "src/types/Common";
 
-const HOME_BOOTSTRAP_URL = "/api/public/home-bootstrap";
-const HOME_CACHE_KEY = "flix-home-bootstrap-v6-fast-first-paint";
+const HOME_BOOTSTRAP_FAST_URL = "/api/public/home-bootstrap-fast";
+const HOME_BOOTSTRAP_FULL_URL = "/api/public/home-bootstrap";
+const HOME_QUERY_KEY = ["home-bootstrap-v7-progressive"];
+const HOME_CACHE_KEY = "flix-home-bootstrap-v7-progressive";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
 const FIRST_PAINT_ROWS = 8;
@@ -31,22 +33,22 @@ function readHomeCache() {
 
 function firstPaintSnapshot(data: any) {
   if (!data) return null;
+  const sourceRows = Array.isArray(data.rows) ? data.rows : [];
   return {
     ...data,
-    rows: (data.rows || []).slice(0, FIRST_PAINT_ROWS).map((row: any) => ({
+    compact: true,
+    total_row_count: Number(data.total_row_count || data.row_count || sourceRows.length),
+    rows: sourceRows.slice(0, FIRST_PAINT_ROWS).map((row: any) => ({
       ...row,
       items: (row?.items || []).slice(0, FIRST_PAINT_ITEMS_PER_ROW),
     })),
+    row_count: Math.min(sourceRows.length, FIRST_PAINT_ROWS),
   };
 }
 
 function writeHomeCache(data) {
   if (typeof window === "undefined" || !data?.rows?.length) return;
   try {
-    // localStorage is synchronous. Persisting the old full 20x50 Home payload
-    // made refreshes spend noticeable main-thread time parsing JSON before React
-    // could paint anything. Keep only enough rows/cards for the first viewport;
-    // React Query replaces it with the full network snapshot in the background.
     const fast = firstPaintSnapshot(data);
     window.localStorage.setItem(
       HOME_CACHE_KEY,
@@ -113,33 +115,52 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
     .filter((row) => row.items.length > 0);
 }
 
-let sharedHomeBootstrapPromise: Promise<any> | null = null;
-function fetchHomeBootstrap(_signal?: AbortSignal) {
-  if (sharedHomeBootstrapPromise) return sharedHomeBootstrapPromise;
-
-  const request = fetch(HOME_BOOTSTRAP_URL, {
+async function fetchBootstrapUrl(url: string, signal?: AbortSignal) {
+  const response = await fetch(url, {
+    signal,
     headers: { Accept: "application/json" },
-  }).then(async (response) => {
-    if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
-    const data = await response.json();
-    if (!Array.isArray(data?.rows)) throw new Error("Home bootstrap non valido");
-    warmCriticalHero(data?.hero);
-    return data;
   });
+  if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
+  const data = await response.json();
+  if (!Array.isArray(data?.rows)) throw new Error("Home bootstrap non valido");
+  warmCriticalHero(data?.hero);
+  return data;
+}
 
+let sharedFastPromise: Promise<any> | null = null;
+function fetchFastHomeBootstrap(signal?: AbortSignal) {
+  if (sharedFastPromise) return sharedFastPromise;
   let shared: Promise<any>;
-  shared = request
-    .catch((error) => {
-      if (sharedHomeBootstrapPromise === shared) sharedHomeBootstrapPromise = null;
-      throw error;
+  shared = fetchBootstrapUrl(HOME_BOOTSTRAP_FAST_URL, signal)
+    .catch(async (error) => {
+      // Rolling deploy / old backend: fall back transparently to the canonical
+      // endpoint instead of breaking Home while frontend/backend restart order
+      // differs.
+      if (signal?.aborted) throw error;
+      const full = await fetchBootstrapUrl(HOME_BOOTSTRAP_FULL_URL, signal);
+      return { ...full, compact: false };
     })
     .finally(() => {
       window.setTimeout(() => {
-        if (sharedHomeBootstrapPromise === shared) sharedHomeBootstrapPromise = null;
+        if (sharedFastPromise === shared) sharedFastPromise = null;
       }, 1500);
     });
+  sharedFastPromise = shared;
+  return shared;
+}
 
-  sharedHomeBootstrapPromise = shared;
+let sharedFullPromise: Promise<any> | null = null;
+function fetchFullHomeBootstrap(signal?: AbortSignal) {
+  if (sharedFullPromise) return sharedFullPromise;
+  let shared: Promise<any>;
+  shared = fetchBootstrapUrl(HOME_BOOTSTRAP_FULL_URL, signal)
+    .then((data) => ({ ...data, compact: false }))
+    .finally(() => {
+      window.setTimeout(() => {
+        if (sharedFullPromise === shared) sharedFullPromise = null;
+      }, 5000);
+    });
+  sharedFullPromise = shared;
   return shared;
 }
 
@@ -148,7 +169,7 @@ if (MODULE_HOME_CACHE?.data?.hero) warmCriticalHero(MODULE_HOME_CACHE.data.hero)
 
 const EARLY_HOME_BOOTSTRAP_PROMISE =
   typeof window !== "undefined"
-    ? fetchHomeBootstrap().catch(() => null)
+    ? fetchFastHomeBootstrap().catch(() => null)
     : null;
 let earlyHomeBootstrapConsumed = false;
 
@@ -158,6 +179,7 @@ export async function loader() {
 
 export function Component() {
   const { mediaType: filterMediaType } = useParams();
+  const queryClient = useQueryClient();
   const currentMediaType = filterMediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
   const { items: progressItems, username, removeItem } = useContinueWatching();
 
@@ -202,14 +224,14 @@ export function Component() {
 
   const initialCache = useMemo(() => MODULE_HOME_CACHE || readHomeCache(), []);
   const { data: bootstrap } = useQuery({
-    queryKey: ["home-bootstrap-v6-fast-first-paint"],
+    queryKey: HOME_QUERY_KEY,
     queryFn: async ({ signal }: any) => {
       if (!earlyHomeBootstrapConsumed && EARLY_HOME_BOOTSTRAP_PROMISE) {
         earlyHomeBootstrapConsumed = true;
         const early = await EARLY_HOME_BOOTSTRAP_PROMISE;
         if (early?.rows) return early;
       }
-      return fetchHomeBootstrap(signal);
+      return fetchFastHomeBootstrap(signal);
     },
     initialData: initialCache?.data,
     initialDataUpdatedAt: initialCache?.savedAt || 0,
@@ -224,6 +246,45 @@ export function Component() {
   useEffect(() => {
     if (bootstrap?.rows?.length) writeHomeCache(bootstrap);
   }, [bootstrap]);
+
+  // First-paint payload stops after a handful of rows. Hydrate the complete Home
+  // only after the browser has painted and gets idle time. This is the same basic
+  // scheduling idea used by large streaming UIs: critical frame first, catalogue
+  // depth second.
+  useEffect(() => {
+    if (!bootstrap?.rows?.length || bootstrap?.compact === false) return;
+    let cancelled = false;
+    let timer = 0;
+    let idleId: any = null;
+    const controller = new AbortController();
+
+    const hydrate = () => {
+      if (cancelled) return;
+      fetchFullHomeBootstrap(controller.signal)
+        .then((full) => {
+          if (!cancelled && full?.rows?.length) {
+            queryClient.setQueryData(HOME_QUERY_KEY, full);
+            writeHomeCache(full);
+          }
+        })
+        .catch(() => {});
+    };
+
+    if ("requestIdleCallback" in window) {
+      idleId = (window as any).requestIdleCallback(hydrate, { timeout: 3000 });
+    } else {
+      timer = window.setTimeout(hydrate, 1500);
+    }
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (timer) window.clearTimeout(timer);
+      if (idleId != null && "cancelIdleCallback" in window) {
+        (window as any).cancelIdleCallback(idleId);
+      }
+    };
+  }, [bootstrap?.compact, bootstrap?.generated_at, queryClient]);
 
   const heroLogoUrl = bootstrap?.hero?.assets?.logo_path || bootstrap?.hero?.assets?.fallback_logo_path || null;
   const heroBackdropUrl = bootstrap?.hero?.customBackdrop || bootstrap?.hero?.assets?.hero_backdrop_path || bootstrap?.hero?.assets?.backdrop_path || null;
