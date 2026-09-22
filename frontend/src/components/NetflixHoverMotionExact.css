@@ -2,6 +2,66 @@
 
 .previewModal--container[data-motion="netflix"] {
   box-shadow: var(--flix-netflix-shadow, none) !important;
+
+  /* Captured Netflix desktop MiniModal final box: 366 x 374.55px. */
+  width: 366px !important;
+  height: 374.557px !important;
+  min-width: 366px !important;
+  max-width: 366px !important;
+  min-height: 374.557px !important;
+  max-height: 374.557px !important;
+  overflow: hidden !important;
+}
+
+/* Captured player ratio: 366 * .563925 = 206.397px. */
+.previewModal--container[data-motion="netflix"] .previewModal--player_container {
+  width: 366px !important;
+  height: 206.39655px !important;
+  min-height: 206.39655px !important;
+  max-height: 206.39655px !important;
+  aspect-ratio: auto !important;
+  overflow: hidden !important;
+}
+
+/* Remaining captured lower panel: 374.557 - 206.397 = 168.160px. */
+.previewModal--container[data-motion="netflix"] .previewModal--info {
+  width: 100% !important;
+  height: 168.16045px !important;
+  min-height: 168.16045px !important;
+  max-height: 168.16045px !important;
+  overflow: hidden !important;
+  transition: none !important;
+}
+
+.previewModal--container[data-motion="netflix"] .previewModal--info-link,
+.previewModal--container[data-motion="netflix"] .mini-modal-container,
+.previewModal--container[data-motion="netflix"] .previewModal--info-container {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 168.16045px !important;
+  overflow: hidden !important;
+}
+
+/* Keep the description visible without letting it increase Netflix's measured height. */
+.previewModal--container[data-motion="netflix"] .previewModal-description {
+  margin-top: 6px !important;
+  line-height: 18px !important;
+  max-height: 18px !important;
+  -webkit-line-clamp: 1 !important;
+  overflow: hidden !important;
+}
+
+.previewModal--container[data-motion="netflix"] .previewModal--metadatAndControls-tags-container {
+  margin-top: 6px !important;
+  max-height: 18px !important;
+  overflow: hidden !important;
+}
+
+.previewModal--container[data-motion="netflix"] .evidence-list {
+  flex-wrap: nowrap !important;
+  line-height: 18px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
 }
 
 .previewModal--container[data-motion="netflix"] .previewModal--info,
@@ -9,10 +69,6 @@
 .previewModal--container[data-motion="netflix"] .previewModal--metadatAndControls-tags-container {
   opacity: 1 !important;
   transform: none !important;
-}
-
-.previewModal--container[data-motion="netflix"] .previewModal--info {
-  transition: none !important;
 }
 
 .previewModal--container[data-motion="netflix"][data-phase="opening"] .previewModal--info,
