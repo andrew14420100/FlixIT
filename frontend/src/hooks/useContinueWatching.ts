@@ -20,7 +20,7 @@ const API_URL = '';
 const LOCAL_STORAGE_KEY = 'netflix_continue_watching';
 const USERNAME_KEY = 'netflix_username';
 const TOKEN_KEY = 'user_token';
-const LIVE_REFRESH_MS = 60 * 1000;
+const LIVE_REFRESH_MS = 2 * 60 * 1000;
 const PROGRESS_EVENT = 'flix-watch-progress-changed';
 
 function getToken(): string | null {
@@ -37,7 +37,6 @@ async function apiFetch(path: string, options?: RequestInit) {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        ...(isGet ? { 'Cache-Control': 'no-cache' } : {}),
         Authorization: `Bearer ${token}`,
         ...(options?.headers || {}),
       },
@@ -49,9 +48,11 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
 }
 
-// Shared request across every mounted hook (home row, hero, detail, hover cards).
+// Every mounted hook (Home, Hero, Detail, hover) shares the same request.  The
+// previous implementation invalidated this memo from each interval/focus
+// listener, causing a burst of identical authenticated requests.
 let progressMemo: { at: number; promise: Promise<any> } | null = null;
-const PROGRESS_MEMO_MS = 15 * 1000;
+const PROGRESS_MEMO_MS = 20 * 1000;
 function fetchProgressShared(force = false) {
   const now = Date.now();
   if (!force && progressMemo && now - progressMemo.at < PROGRESS_MEMO_MS) {
@@ -118,25 +119,20 @@ export function useContinueWatching() {
     return data;
   }, [applyPayload]);
 
-  // Initial load.
   useEffect(() => {
     refresh(false);
   }, [refresh]);
 
-  // Keep every mounted card/row instance current. This is intentionally a
-  // shared live refresh rather than a one-shot mount fetch.
   useEffect(() => {
-    const sync = () => refresh(true);
+    // Passive synchronisation always uses the shared memo. Mutations explicitly
+    // invalidate it before broadcasting PROGRESS_EVENT, so the first listener
+    // fetches fresh data and all other mounted listeners reuse that promise.
+    const sync = () => refresh(false);
     const onVisibility = () => {
       if (document.visibilityState === 'visible') sync();
     };
     const onStorage = (event: StorageEvent) => {
-      if (
-        !event.key ||
-        event.key === TOKEN_KEY ||
-        event.key === LOCAL_STORAGE_KEY ||
-        event.key === USERNAME_KEY
-      ) {
+      if (!event.key || event.key === TOKEN_KEY || event.key === LOCAL_STORAGE_KEY || event.key === USERNAME_KEY) {
         sync();
       }
     };
@@ -158,18 +154,16 @@ export function useContinueWatching() {
     };
   }, [refresh]);
 
-  // Lightweight same-tab login/logout detector. The event listeners above
-  // cover all normal refreshes; this catches code that mutates localStorage
-  // without dispatching an event.
   useEffect(() => {
     let lastToken = getToken();
     const interval = window.setInterval(() => {
       const nextToken = getToken();
       if (nextToken !== lastToken) {
         lastToken = nextToken;
-        refresh(true);
+        invalidateProgressMemo();
+        refresh(false);
       }
-    }, 2000);
+    }, 10_000);
     return () => window.clearInterval(interval);
   }, [refresh]);
 
@@ -195,7 +189,6 @@ export function useContinueWatching() {
       });
 
       if (getToken()) {
-        invalidateProgressMemo();
         await apiFetch('/api/auth/watch-progress', {
           method: 'POST',
           body: JSON.stringify(item),
@@ -210,9 +203,7 @@ export function useContinueWatching() {
   );
 
   const getProgress = useCallback(
-    (tmdbId: number): ContinueWatchingItem | undefined => {
-      return items.find((i) => i.tmdb_id === tmdbId);
-    },
+    (tmdbId: number): ContinueWatchingItem | undefined => items.find((i) => i.tmdb_id === tmdbId),
     [items]
   );
 
@@ -224,9 +215,7 @@ export function useContinueWatching() {
     });
 
     if (getToken()) {
-      await apiFetch(`/api/auth/watch-progress/${tmdbId}`, {
-        method: 'DELETE',
-      });
+      await apiFetch(`/api/auth/watch-progress/${tmdbId}`, { method: 'DELETE' });
     }
 
     invalidateProgressMemo();
