@@ -97,7 +97,7 @@ export default function NetflixRankedCardWithHover({
           observer.disconnect();
         }
       },
-      { rootMargin: "320px 480px" }
+      { rootMargin: "240px 320px" }
     );
     observer.observe(node);
     return () => observer.disconnect();
@@ -119,10 +119,13 @@ export default function NetflixRankedCardWithHover({
     mType,
     nearViewport || intent || open
   );
+  // Metadata and trailer resolution are hover-only. Top 10 already receives its
+  // poster in the Home bootstrap; resolving ten trailers on every refresh wasted
+  // bandwidth and could create polling work the user never asked for.
   const deferredAssets = useDeferredMediaAssets(
     { ...item, id: normalizedId },
     mType,
-    nearViewport || intent || open
+    intent || open
   );
   const assets = useMemo(
     () => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }),
@@ -184,12 +187,12 @@ export default function NetflixRankedCardWithHover({
   const logoUrl = scLogoUrl || firstLogo(deferredAssets?.logo_path, deferredAssets?.fallback_logo_path);
 
   useEffect(() => {
-    if (!nearViewport || !logoUrl || typeof Image === "undefined") return;
+    if ((!intent && !open) || !logoUrl || typeof Image === "undefined") return;
     const image = new Image();
     image.decoding = "async";
-    image.fetchPriority = "high";
+    image.fetchPriority = "auto";
     image.src = logoUrl;
-  }, [nearViewport, logoUrl]);
+  }, [intent, open, logoUrl]);
 
   const posterCandidates = useMemo(
     () => unique([
@@ -246,15 +249,7 @@ export default function NetflixRankedCardWithHover({
     }, [suppressHover, isMobile, onEnter]
   );
 
-  const handlePosterEnter = useCallback(() => {
-    /*
-     * Trigger from the visible Top 10 poster but intentionally let useHoverExpand
-     * measure the full ranked tile (ref.current). This keeps the expanded box the
-     * same width family as the normal row cards instead of measuring only the
-     * 50%-wide portrait poster.
-     */
-    handleEnter();
-  }, [handleEnter]);
+  const handlePosterEnter = useCallback(() => handleEnter(), [handleEnter]);
 
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
     ? (assets?.resolved_trailer?.trailer_url ||
@@ -294,10 +289,7 @@ export default function NetflixRankedCardWithHover({
           onClick={goDetail}
         >
           <div className="netflix-ranked-card-rank">
-            <StreamingCommunityTop10RankSvg
-              rank={rank}
-              className="netflix-ranked-card-rank-svg"
-            />
+            <StreamingCommunityTop10RankSvg rank={rank} className="netflix-ranked-card-rank-svg" />
           </div>
           <div
             className="netflix-ranked-card-poster-wrap"
@@ -316,9 +308,7 @@ export default function NetflixRankedCardWithHover({
                 className="netflix-ranked-card-poster"
               />
             ) : (
-              <div className="netflix-ranked-card-placeholder" aria-hidden="true">
-                {title}
-              </div>
+              <div className="netflix-ranked-card-placeholder" aria-hidden="true">{title}</div>
             )}
           </div>
         </a>
