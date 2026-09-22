@@ -56,6 +56,14 @@ _sc_import_state = {
     "version": POLICY_VERSION,
 }
 
+# Top 10 sorts globally by recent activity. The existing compound
+# (user_id, updated_at) index cannot serve that sort, so keep a dedicated
+# timestamp index as well. create_index is idempotent on startup.
+try:
+    _core.db["watch_progress"].create_index([("updated_at", -1)])
+except Exception:
+    pass
+
 
 @app.get("/api/public/official-artwork/{media_type}/{tmdb_id}", tags=["artwork"])
 async def flixit_official_artwork(media_type: str, tmdb_id: int):
@@ -160,6 +168,7 @@ def _media_identity(row: dict):
 
 
 @app.get("/api/public/flixit-top10", tags=["catalog"])
+@_core.cached_response(ttl=timedelta(minutes=5))
 async def flixit_recent_top10(hours: int = Query(48, ge=24, le=168)):
     """Top 10 driven primarily by recent real FlixIT activity."""
     now = datetime.now(timezone.utc)
