@@ -12,14 +12,17 @@
     --sc-row-gap: clamp(30px, 2.15vw, 40px);
   }
 
+  /* HERO ---------------------------------------------------------------
+     SC keeps the 35em billboard for layout, but the 16:9 artwork continues
+     below it so the first rail still sits on the Hero image. */
   [data-testid="home-page"] [data-testid="hero-section"] {
     position: relative !important;
     width: 100% !important;
     height: 35em !important;
     min-height: 0 !important;
     max-height: none !important;
-    overflow: hidden !important;
-    background: #141414 !important;
+    overflow: visible !important;
+    background: transparent !important;
     font-size: 1vw !important;
   }
 
@@ -39,32 +42,38 @@
     object-position: top center !important;
   }
 
+  /* One continuous fade over the extended backdrop. It stays translucent where
+     the first row is rendered and reaches #141414 only farther down, preventing
+     both a hard Hero cut and the old black-band / image-reappearance bug. */
   [data-testid="home-page"] [data-testid="hero-section"]::after {
     content: "" !important;
     display: block !important;
     position: absolute !important;
     left: 0 !important;
     right: 0 !important;
-    bottom: -1px !important;
-    height: 17.5em !important;
+    bottom: -21.25em !important;
+    height: 34em !important;
     z-index: 5 !important;
     pointer-events: none !important;
     background: linear-gradient(
       to bottom,
       rgba(20,20,20,0) 0%,
-      rgba(20,20,20,.035) 26%,
-      rgba(20,20,20,.12) 43%,
-      rgba(20,20,20,.30) 60%,
-      rgba(20,20,20,.58) 76%,
-      rgba(20,20,20,.84) 90%,
+      rgba(20,20,20,.03) 34%,
+      rgba(20,20,20,.10) 48%,
+      rgba(20,20,20,.26) 60%,
+      rgba(20,20,20,.54) 74%,
+      rgba(20,20,20,.84) 88%,
       #141414 100%
     ) !important;
   }
 
+  /* SC screenshot: the entire information block is higher inside the billboard,
+     while the distance from the buttons to the first rail remains essentially
+     unchanged because the rows are moved upward by the same amount. */
   [data-testid="home-page"] [data-testid="hero-section"] .info-wrap {
     position: absolute !important;
     top: 0 !important;
-    bottom: 14% !important;
+    bottom: 22% !important;
     left: 4% !important;
     width: 36% !important;
     max-width: none !important;
@@ -113,15 +122,17 @@
 
   /* Keep the existing buttons exactly as implemented by HeroSection. */
 
-  /* The rows are one full-width stack. Only this stack controls Hero -> rows
-     separation; individual rows do not compensate with extra top margins. */
+  /* FIRST ROW / SECTION STACK ------------------------------------------
+     In SC the first rail begins slightly before the logical 35em billboard end,
+     over the extended backdrop. The stack itself must stay transparent so it
+     never paints a black rectangle over the Hero. */
   [data-testid="home-page"] [data-testid="home-rows"] {
     width: 100% !important;
-    margin-top: clamp(10px, .8vw, 16px) !important;
+    margin-top: -1.8vw !important;
     padding: 0 !important;
     position: relative !important;
     z-index: 20 !important;
-    background: #141414 !important;
+    background: transparent !important;
     overflow: visible !important;
   }
 
@@ -142,9 +153,7 @@
     isolation: isolate !important;
   }
 
-  /* SC has one and only one horizontal axis: 4% from the viewport.
-     Do not re-use the measured axis here because old double-padding made that
-     measurement approximately 8%. The card viewport is fixed to the same 4%. */
+  /* SC uses one horizontal axis for the complete section. */
   [data-testid="home-page"] .slider-row .row-header,
   [data-testid="home-page"] .top10-row .row-header {
     width: 100% !important;
@@ -168,16 +177,13 @@
     letter-spacing: -.012em !important;
   }
 
-  /* Pagination belongs to the section header and ends on the same right 4%. */
   [data-testid="home-page"] .slider-row .tab-indicator,
   [data-testid="home-page"] .top10-row .tab-indicator {
     margin-left: auto !important;
     margin-right: 0 !important;
   }
 
-  /* STANDARD SECTIONS ---------------------------------------------------
-     Remove the old nested 4% + 4% padding. The rail viewport itself starts at
-     4%, while navigation handles remain attached to the full-width section. */
+  /* STANDARD SECTIONS --------------------------------------------------- */
   [data-testid="home-page"] .slider-row:not(.top10-row) .slider,
   [data-testid="home-page"] .slider-row:not(.top10-row) .show-peek,
   [data-testid="home-page"] .slider-row:not(.top10-row) .slider-content {
@@ -208,8 +214,6 @@
     box-sizing: border-box !important;
   }
 
-  /* Keep card internals unchanged; these rules only preserve their existing
-     landscape frame while the enclosing section is repositioned. */
   [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait),
   [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) .netflix-standard-card-link,
   [data-testid="home-page"] .netflix-standard-card-root:not(.is-portrait) .netflix-standard-card-frame,
@@ -241,9 +245,7 @@
     height: 3px !important;
   }
 
-  /* TOP 10 SECTION ------------------------------------------------------
-     Top 10 uses the same section frame: header at 4%, rail viewport from 4%
-     to 96%. The arrow overlays live outside that viewport, not inside it. */
+  /* TOP 10 SECTION ------------------------------------------------------ */
   [data-testid="home-page"] .top10-row .slider {
     width: 100% !important;
     padding: 0 !important;
@@ -272,7 +274,6 @@
     margin-right: 0 !important;
   }
 
-  /* Number lane + real 2:3 poster lane. */
   [data-testid="home-page"] .top10-row .netflix-ranked-card-root {
     position: relative !important;
     width: 100% !important;
@@ -330,7 +331,6 @@
     object-position: center !important;
   }
 
-  /* Navigation belongs to the entire section, exactly at the viewport edges. */
   [data-testid="home-page"] .slider-row [data-navigation-handle="previous"] {
     left: 0 !important;
   }
@@ -339,7 +339,6 @@
     right: 0 !important;
   }
 
-  /* Source cards never shift when the pointer moves between rows. */
   [data-testid="home-page"] .slick-slide,
   [data-testid="home-page"] .slider-item,
   [data-testid="home-page"] .netflix-standard-card-root,
