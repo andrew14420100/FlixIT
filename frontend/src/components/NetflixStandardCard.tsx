@@ -66,7 +66,7 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   return (
     <div
       ref={ref}
-      className={`netflix-standard-card-root${portrait ? " is-portrait" : ""}`}
+      className={`netflix-standard-card-root flixit-mobile-poster${portrait ? " is-portrait" : ""}`}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       data-testid={testId}
