@@ -85,15 +85,18 @@ export default function HomepageSlider({
   const sliderRef = useRef<Slider>(null);
   const theme = useTheme();
   const isMobile = useMediaQuery("(max-width:899px)");
-  const up600 = useMediaQuery("(min-width:600px)");
-  const up900 = useMediaQuery("(min-width:900px)");
-  const up1100 = useMediaQuery("(min-width:1100px)");
   const up1400 = useMediaQuery("(min-width:1400px)");
+  const up1100 = useMediaQuery("(min-width:1100px)");
+  const up900 = useMediaQuery("(min-width:900px)");
+  const up600 = useMediaQuery("(min-width:600px)");
 
+  // Restore the touch geometry from the last mobile version the user confirmed
+  // as correct: ~2.6 portrait posters in view. Desktop keeps landscape density.
+  const tiles = up1400 ? 6 : up1100 ? 5 : up900 ? 4 : up600 ? 3 : 2;
   const visibleTiles = isMobile
-    ? (up600 ? 4.15 : 3.15)
-    : up1400 ? 6.35 : up1100 ? 5.35 : up900 ? 4.25 : 3.15;
-  const scrollTiles = isMobile ? 1 : up1400 ? 6 : up1100 ? 5 : up900 ? 4 : 3;
+    ? 2.6
+    : up1400 ? 6.38 : up1100 ? 5.35 : up900 ? 4.25 : 3;
+  const scrollTiles = isMobile ? 1 : tiles;
 
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isSliding, setIsSliding] = useState(false);
@@ -124,7 +127,7 @@ export default function HomepageSlider({
     touchMove: true,
     waitForAnimate: true,
     useCSS: true,
-    useTransform: true,
+    useTransform: !isMobile,
     adaptiveHeight: false,
     lazyLoad: isMobile ? undefined : "ondemand",
     slidesToShow: visibleTiles,
