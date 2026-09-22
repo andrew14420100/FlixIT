@@ -16,6 +16,12 @@ const VIEWPORT_GUTTER = 4;
 const POINTER_PAD = 12;
 const EASE = "cubic-bezier(.21,0,.07,1)";
 
+// Only one mini-modal may exist logically at a time. Without a shared owner,
+// every card hook can see another card's portal and incorrectly keep itself
+// alive, which creates the row of overlapping previews seen in the screenshot.
+let activeHoverOwner: symbol | null = null;
+let activeHoverForceClose: (() => void) | null = null;
+
 type HoverEdge = "left" | "center" | "right";
 
 type AnchorData = {
@@ -114,6 +120,7 @@ function updatePointer(ref: React.MutableRefObject<{ x: number; y: number }>, ev
 }
 
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
+  const ownerRef = useRef(Symbol("flix-hover-owner"));
   const openTimerRef = useRef<any>(null);
   const closeTimerRef = useRef<any>(null);
   const pointerRef = useRef({ x: -1, y: -1 });
@@ -148,6 +155,12 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     clearTimers();
     openRef.current = false;
     closingRef.current = false;
+
+    if (activeHoverOwner === ownerRef.current) {
+      activeHoverOwner = null;
+      activeHoverForceClose = null;
+    }
+
     setIntent(false);
     setOpen(false);
     setClosing(false);
@@ -165,6 +178,9 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const pointerIsOnSurface = useCallback(() => {
     if (typeof document === "undefined") return false;
 
+    // This hook must never be kept alive by a portal belonging to another card.
+    if (activeHoverOwner !== ownerRef.current) return false;
+
     const { x, y } = pointerRef.current;
     if (x < 0 || y < 0) return false;
 
@@ -173,11 +189,9 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       return true;
     }
 
-    const previews = Array.from(
-      document.querySelectorAll(".previewModal--container")
-    ) as HTMLElement[];
-
-    if (previews.some((node) => node.isConnected && pointInsideRect(x, y, node.getBoundingClientRect(), POINTER_PAD))) {
+    // Singleton ownership guarantees that the remaining preview is ours.
+    const preview = document.querySelector(".previewModal--container") as HTMLElement | null;
+    if (preview?.isConnected && pointInsideRect(x, y, preview.getBoundingClientRect(), POINTER_PAD)) {
       return true;
     }
 
@@ -205,6 +219,10 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const scheduleClose = useCallback(() => {
     if (!openRef.current) return;
+    if (activeHoverOwner !== ownerRef.current) {
+      finishClose();
+      return;
+    }
     if (closeTimerRef.current) return;
 
     closeTimerRef.current = setTimeout(() => {
@@ -216,7 +234,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       }
       requestClose();
     }, LEAVE_GRACE_MS);
-  }, [pointerIsOnSurface, cancelClosing, requestClose]);
+  }, [pointerIsOnSurface, cancelClosing, requestClose, finishClose]);
 
   const openFrom = useCallback((element: HTMLElement | null, event?: any) => {
     if (!element || typeof window === "undefined") return;
@@ -226,17 +244,35 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     cancelClosing();
     setIntent(true);
 
-    // Critical: never start a second opening cycle while the preview is
-    // already open or while the first opening timer is still pending.
+    // If another card owns the mini-modal, remove it immediately. This prevents
+    // two portals from coexisting during the next card's opening delay.
+    if (activeHoverOwner && activeHoverOwner !== ownerRef.current) {
+      const closeOther = activeHoverForceClose;
+      activeHoverOwner = null;
+      activeHoverForceClose = null;
+      closeOther?.();
+    }
+
+    // Never replay this card's opening animation while it is already open.
     if (openRef.current || openTimerRef.current) return;
 
     openTimerRef.current = setTimeout(() => {
       openTimerRef.current = null;
       if (!element.isConnected) return;
 
+      // A different card may have become active during this card's delay.
+      if (activeHoverOwner && activeHoverOwner !== ownerRef.current) {
+        const closeOther = activeHoverForceClose;
+        activeHoverOwner = null;
+        activeHoverForceClose = null;
+        closeOther?.();
+      }
+
       const rect = element.getBoundingClientRect();
       const measured = measureEdges(element, rect);
 
+      activeHoverOwner = ownerRef.current;
+      activeHoverForceClose = finishClose;
       openRef.current = true;
       closingRef.current = false;
       setClosing(false);
@@ -250,7 +286,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       });
       setOpen(true);
     }, OPEN_DELAY_MS);
-  }, [clearCloseTimer, cancelClosing]);
+  }, [clearCloseTimer, cancelClosing, finishClose]);
 
   const onEnter = useCallback((event?: any) => {
     updatePointer(pointerRef, event);
@@ -258,8 +294,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     cancelClosing();
     setIntent(true);
 
-    // Re-entering the source under an already-expanded portal must only keep
-    // it alive; it must never recreate position/phase or replay the animation.
     if (openRef.current || openTimerRef.current) return;
 
     openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
@@ -274,13 +308,11 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       return;
     }
 
-    // Once open, the portal can physically cover the source card and cause a
-    // browser mouseleave even though the pointer is still on the visible card.
-    // Never close directly from this event.
     scheduleClose();
   }, [clearOpenTimer, scheduleClose]);
 
   const onOverlayEnter = useCallback((event?: any) => {
+    if (activeHoverOwner !== ownerRef.current) return;
     updatePointer(pointerRef, event);
     clearCloseTimer();
     cancelClosing();
@@ -288,6 +320,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   }, [clearCloseTimer, cancelClosing]);
 
   const onOverlayLeave = useCallback((event?: any) => {
+    if (activeHoverOwner !== ownerRef.current) return;
     updatePointer(pointerRef, event);
 
     const related = event?.relatedTarget;
@@ -300,13 +333,18 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     scheduleClose();
   }, [ref, clearCloseTimer, cancelClosing, scheduleClose]);
 
-  // Pointer movement only decides whether the already-open preview should stay
-  // alive. It never recalculates geometry and never calls openFrom().
+  // Pointer movement only keeps the unique active preview alive; it never
+  // recalculates its geometry and never opens any other card.
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
     const onPointerMove = (event: PointerEvent) => {
       pointerRef.current = { x: event.clientX, y: event.clientY };
+
+      if (activeHoverOwner !== ownerRef.current) {
+        finishClose();
+        return;
+      }
 
       if (pointerIsOnSurface()) {
         clearCloseTimer();
@@ -320,9 +358,15 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
     document.addEventListener("pointermove", onPointerMove, true);
     return () => document.removeEventListener("pointermove", onPointerMove, true);
-  }, [open, pointerIsOnSurface, clearCloseTimer, cancelClosing, scheduleClose]);
+  }, [open, pointerIsOnSurface, clearCloseTimer, cancelClosing, scheduleClose, finishClose]);
 
-  useEffect(() => () => clearTimers(), [clearTimers]);
+  useEffect(() => () => {
+    clearTimers();
+    if (activeHoverOwner === ownerRef.current) {
+      activeHoverOwner = null;
+      activeHoverForceClose = null;
+    }
+  }, [clearTimers]);
 
   return {
     open,
@@ -402,8 +446,6 @@ export function ExpandOverlay({
     };
   }, [currentCardRect, position]);
 
-  // Position is measured once for this opening. It is not recalculated while
-  // the pointer moves, the trailer changes frame, or the page scrolls.
   useLayoutEffect(() => {
     if (!position || !modalRef.current || typeof window === "undefined") return;
 
