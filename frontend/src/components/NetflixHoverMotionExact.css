@@ -1,14 +1,20 @@
 /* Hover geometry + lower panel tuned from the supplied SC reference screenshot. */
 
 .previewModal--container[data-motion="netflix"] {
-  --sc-hover-scale: var(--flix-mini-scale, 1);
+  --sc-hover-visual-scale: .96;
+  --sc-hover-scale: calc(var(--flix-mini-scale, 1) * var(--sc-hover-visual-scale));
+  --sc-hover-width: calc(var(--flix-mini-modal-width) * var(--sc-hover-visual-scale));
+  --sc-hover-player-height: calc(var(--flix-mini-player-height) * var(--sc-hover-visual-scale));
+  --sc-hover-info-height: calc(124px * var(--sc-hover-scale));
+  --sc-hover-height: calc(var(--sc-hover-player-height) + var(--sc-hover-info-height));
   box-shadow: var(--flix-netflix-shadow, none) !important;
-  width: var(--flix-mini-modal-width) !important;
-  height: var(--flix-mini-modal-height) !important;
-  min-width: var(--flix-mini-modal-width) !important;
-  max-width: var(--flix-mini-modal-width) !important;
-  min-height: var(--flix-mini-modal-height) !important;
-  max-height: var(--flix-mini-modal-height) !important;
+  width: var(--sc-hover-width) !important;
+  height: var(--sc-hover-height) !important;
+  min-width: var(--sc-hover-width) !important;
+  max-width: var(--sc-hover-width) !important;
+  min-height: var(--sc-hover-height) !important;
+  max-height: var(--sc-hover-height) !important;
+  margin-left: calc((var(--flix-mini-modal-width) - var(--sc-hover-width)) / 2) !important;
   overflow: hidden !important;
   border-radius: calc(5px * var(--sc-hover-scale)) !important;
   background: #141414 !important;
@@ -16,18 +22,18 @@
 
 .previewModal--container[data-motion="netflix"] .previewModal--player_container {
   width: 100% !important;
-  height: var(--flix-mini-player-height) !important;
-  min-height: var(--flix-mini-player-height) !important;
-  max-height: var(--flix-mini-player-height) !important;
+  height: var(--sc-hover-player-height) !important;
+  min-height: var(--sc-hover-player-height) !important;
+  max-height: var(--sc-hover-player-height) !important;
   aspect-ratio: auto !important;
   overflow: hidden !important;
 }
 
 .previewModal--container[data-motion="netflix"] .previewModal--info.sc-hover-info {
   width: 100% !important;
-  height: var(--flix-mini-info-height) !important;
-  min-height: var(--flix-mini-info-height) !important;
-  max-height: var(--flix-mini-info-height) !important;
+  height: var(--sc-hover-info-height) !important;
+  min-height: var(--sc-hover-info-height) !important;
+  max-height: var(--sc-hover-info-height) !important;
   margin: 0 !important;
   padding: 0 !important;
   overflow: hidden !important;
@@ -45,7 +51,7 @@
   padding:
     calc(16px * var(--sc-hover-scale))
     calc(16px * var(--sc-hover-scale))
-    calc(14px * var(--sc-hover-scale));
+    calc(4px * var(--sc-hover-scale));
   display: flex;
   flex-direction: column;
   align-items: stretch;
