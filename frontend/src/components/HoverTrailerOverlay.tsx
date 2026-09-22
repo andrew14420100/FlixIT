@@ -3,16 +3,14 @@ import { useEffect, useRef, useState } from "react";
 import TrailerPlayer from "./TrailerPlayer";
 import TrailerAudioButton from "./TrailerAudioButton";
 
-const LOGO_ENTER_MS = 220;
 const LOGO_VISIBLE_MS = 5000;
 const LOGO_FADE_MS = 300;
 
 /**
  * Netflix-style hover trailer.
- *
- * As soon as the expanded hover is mounted, the visual area becomes black.
- * The static cover must not remain visible while the trailer is buffering.
- * The video then replaces the black loading surface as soon as it can play.
+ * Playback is allowed only after the caller-provided hover delay. The logo is
+ * revealed on the same `playing` event as the video, so it never appears early
+ * and never lags behind the first trailer frame.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -30,19 +28,13 @@ export default function HoverTrailerOverlay({
   const [muted, setMuted] = useState(true);
   const [failed, setFailed] = useState(false);
   const [logoVisible, setLogoVisible] = useState(true);
-  const [logoEntered, setLogoEntered] = useState(false);
   const logoTimerRef = useRef<number | null>(null);
-  const entryFrameRef = useRef<number | null>(null);
   const logoTimerStartedRef = useRef(false);
 
   const clearTimers = () => {
     if (logoTimerRef.current !== null) {
       window.clearTimeout(logoTimerRef.current);
       logoTimerRef.current = null;
-    }
-    if (entryFrameRef.current !== null) {
-      window.cancelAnimationFrame(entryFrameRef.current);
-      entryFrameRef.current = null;
     }
   };
 
@@ -52,7 +44,6 @@ export default function HoverTrailerOverlay({
     setMuted(true);
     setFailed(false);
     setLogoVisible(true);
-    setLogoEntered(false);
     logoTimerStartedRef.current = false;
     clearTimers();
 
@@ -66,28 +57,20 @@ export default function HoverTrailerOverlay({
 
   const handlePlaying = () => {
     setPlaying(true);
+    setLogoVisible(true);
     if (logoTimerStartedRef.current) return;
 
     logoTimerStartedRef.current = true;
-    setLogoVisible(true);
-    setLogoEntered(false);
-    entryFrameRef.current = window.requestAnimationFrame(() => {
-      entryFrameRef.current = window.requestAnimationFrame(() => {
-        setLogoEntered(true);
-        entryFrameRef.current = null;
-      });
-    });
     logoTimerRef.current = window.setTimeout(() => {
       setLogoVisible(false);
       logoTimerRef.current = null;
-    }, LOGO_ENTER_MS + LOGO_VISIBLE_MS);
+    }, LOGO_VISIBLE_MS);
   };
 
   const handleEnded = () => {
     clearTimers();
     setPlaying(false);
     setLogoVisible(true);
-    setLogoEntered(false);
   };
 
   const handleError = () => {
@@ -95,7 +78,6 @@ export default function HoverTrailerOverlay({
     setPlaying(false);
     setFailed(true);
     setLogoVisible(true);
-    setLogoEntered(false);
   };
 
   if (!url || failed) return null;
@@ -163,11 +145,11 @@ export default function HoverTrailerOverlay({
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "flex-start",
-            opacity: showLogo && logoEntered ? 1 : 0,
-            transform: showLogo && logoEntered
+            opacity: showLogo ? 1 : 0,
+            transform: showLogo
               ? "translate3d(0,0,0) scale(1)"
-              : "translate3d(0,7px,0) scale(.985)",
-            transition: `opacity ${logoVisible ? LOGO_ENTER_MS : LOGO_FADE_MS}ms ease, transform ${LOGO_ENTER_MS}ms cubic-bezier(.21,0,.07,1)`,
+              : "translate3d(0,5px,0) scale(.99)",
+            transition: `opacity ${logoVisible ? 0 : LOGO_FADE_MS}ms ease, transform 120ms cubic-bezier(.21,0,.07,1)`,
             pointerEvents: "none",
           }}
         >
