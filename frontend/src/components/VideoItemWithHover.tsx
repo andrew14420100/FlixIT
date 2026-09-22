@@ -95,7 +95,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
         setNearViewport(true);
         observer.disconnect();
       }
-    }, { rootMargin: "320px 480px" });
+    }, { rootMargin: "240px 320px" });
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
@@ -111,15 +111,18 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     onOverlayLeave,
   } = useHoverExpand(ref);
 
+  // Static artwork can warm shortly before a card reaches the viewport. Trailer,
+  // metadata and preview endpoints are intentionally delayed until actual user
+  // intent so an idle Home does not launch hundreds of requests/pollers.
   const automaticAssets = useAutomaticMediaAssets(
     { ...video, id },
     mType,
-    nearViewport || intent || open || isMobile
+    nearViewport || intent || open
   );
   const deferredAssets = useDeferredMediaAssets(
     { ...video, id },
     mType,
-    nearViewport || intent || open
+    intent || open
   );
   const assets = useMemo(
     () => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }),
@@ -256,16 +259,16 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const hoverPoster = embeddedScPoster || automaticPoster || mappedPoster || hoverArtwork;
 
   useEffect(() => {
-    if (!nearViewport || !hoverLogoUrl || typeof Image === "undefined") return;
+    if ((!intent && !open) || !hoverLogoUrl || typeof Image === "undefined") return;
     const image = new Image();
     image.decoding = "async";
-    image.fetchPriority = "high";
+    image.fetchPriority = "auto";
     image.src = hoverLogoUrl;
-  }, [nearViewport, hoverLogoUrl]);
+  }, [intent, open, hoverLogoUrl]);
 
   const staticReady = isMobile
     ? posterCandidates.length > 0
-    : landscapeCandidates.length > 0 && !!automaticAssets?.card_ready;
+    : landscapeCandidates.length > 0 && (!!embeddedScLandscape || !!automaticAssets?.card_ready);
   if (!staticReady) return null;
 
   return (
