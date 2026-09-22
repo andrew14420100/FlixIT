@@ -64,9 +64,6 @@ function normalizeRows(rows = [], filterMediaType) {
           if (row?.media_type !== "mixed" && itemType !== filterMediaType) return false;
         }
 
-        // Top 10 is allowed to overlap ordinary catalogue rows. Ordinary rows
-        // are deduped against rows already rendered above, matching the previous
-        // Home behaviour without any extra data fetching.
         if (!isTop10 && claimed.has(key)) return false;
         return true;
       });
@@ -82,8 +79,6 @@ function normalizeRows(rows = [], filterMediaType) {
 }
 
 export async function loader() {
-  // Home data is intentionally not warmed from the browser anymore. The backend
-  // owns the warm snapshot, so navigation never fans out into catalogue calls.
   return null;
 }
 
@@ -118,6 +113,10 @@ export function Component() {
   useEffect(() => {
     if (bootstrap?.rows?.length) writeHomeCache(bootstrap);
   }, [bootstrap]);
+
+  if (typeof window !== "undefined" && bootstrap?.hero?.contentId) {
+    window.__flixitHomeHero = bootstrap.hero;
+  }
 
   const rows = useMemo(
     () => normalizeRows(bootstrap?.rows || [], filterMediaType),
