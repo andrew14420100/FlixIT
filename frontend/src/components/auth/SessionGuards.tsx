@@ -6,28 +6,25 @@ import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
 import BlockIcon from "@mui/icons-material/Block";
 import ForcedPasswordModal from "./ForcedPasswordModal";
-import { fetchNotificationsShared, POLL_MS } from "src/hooks/useNotifications";
+import { fetchNotificationsShared, subscribeNotificationRefresh } from "src/hooks/useNotifications";
 
-// Session-level guards reuse the same notification payload already needed by
-// the header, so the shell never opens a second identical request in parallel.
 export default function SessionGuards() {
   const [mustReset, setMustReset] = useState(false);
   const [banned, setBanned] = useState(() => sessionStorage.getItem("flixit_banned_reason"));
 
   useEffect(() => {
     if (!localStorage.getItem("user_token")) return;
+    let cancelled = false;
     const check = async () => {
       if (document.visibilityState === "hidden") return;
       const data = await fetchNotificationsShared(false);
-      if (data) setMustReset(Boolean(data.must_reset_password));
+      if (!cancelled && data) setMustReset(Boolean(data.must_reset_password));
     };
     check();
-    const id = window.setInterval(check, POLL_MS);
-    const onVisibility = () => document.visibilityState === "visible" && check();
-    document.addEventListener("visibilitychange", onVisibility);
+    const unsubscribe = subscribeNotificationRefresh(check);
     return () => {
-      window.clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisibility);
+      cancelled = true;
+      unsubscribe?.();
     };
   }, []);
 
