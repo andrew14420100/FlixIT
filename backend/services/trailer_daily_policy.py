@@ -130,11 +130,75 @@ def _merge_discovered_provider_pages(doc: dict) -> tuple[dict, bool]:
     return pages, changed
 
 
+def _install_fast_artwork_catalog() -> None:
+    """Use the committed SC catalogue before any remote artwork provider.
+
+    The old frontend downloaded and parsed the whole multi-megabyte catalogue on
+    every cold browser session.  The backend already ships the same catalogue,
+    so keep that index server-side.  For catalogue hits the expensive Netflix /
+    Apple / Prime / IMDb provider pass is skipped; misses retain the old fallback.
+    """
+    try:
+        import services.artwork_card_policy as card_policy
+        from services.official_artwork import OfficialArtworkResolver
+        from services.sc_artwork_catalog import CATALOG, install_sc_catalog, _role_url
+
+        install_sc_catalog(card_policy)
+        if getattr(OfficialArtworkResolver, "_flixit_fast_sc_base_installed", False):
+            return
+
+        original_base_providers = OfficialArtworkResolver._providers
+
+        async def base_providers_only_on_catalog_miss(
+            self: OfficialArtworkResolver,
+            identity: dict,
+            media_type: str,
+            tmdb_id: int,
+            *,
+            force: bool,
+        ):
+            try:
+                await CATALOG.ensure(self._http())
+                candidates = CATALOG.candidates(identity)
+                if candidates:
+                    ranked = sorted(
+                        (
+                            (float(card_policy._match_score(row, identity)), row)
+                            for row in candidates
+                        ),
+                        key=lambda pair: pair[0],
+                        reverse=True,
+                    )
+                    confidence, match = ranked[0]
+                    if confidence >= 0.62 and (
+                        _role_url(match, "landscape") or _role_url(match, "poster")
+                    ):
+                        return []
+            except Exception:
+                pass
+            return await original_base_providers(
+                self,
+                identity,
+                media_type,
+                tmdb_id,
+                force=force,
+            )
+
+        OfficialArtworkResolver._providers = base_providers_only_on_catalog_miss
+        OfficialArtworkResolver._flixit_fast_sc_base_installed = True
+    except Exception:
+        # Artwork acceleration is optional; trailer resolution must never fail
+        # because the local artwork catalogue is unavailable.
+        pass
+
+
 def install_trailer_daily_policy() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
     _INSTALLED = True
+
+    _install_fast_artwork_catalog()
 
     # Keep the ranking rule identical everywhere the resolver imports pick_best.
     try:
