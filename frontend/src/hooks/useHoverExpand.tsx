@@ -11,7 +11,7 @@ const OPEN_DURATION_MS = 280;
 const CLOSE_DURATION_MS = 220;
 const OPACITY_OPEN_MS = 70;
 const OPACITY_CLOSE_MS = 120;
-const LEAVE_GRACE_MS = 160;
+const LEAVE_GRACE_MS = 240;
 const VIEWPORT_GUTTER = 4;
 const EASE = "cubic-bezier(.21,0,.07,1)";
 
@@ -94,8 +94,8 @@ function measureEdges(element: HTMLElement, rect: DOMRect) {
 /**
  * SC-style hover expansion shared by all public rails.
  * Geometry is captured once at open time so ordinary pointer movement never
- * drags the preview around. A short leave grace lets the pointer travel from
- * the source tile into the portal without the preview disappearing.
+ * drags the preview around. Closing is allowed only after the pointer has
+ * actually left both the source tile and the expanded preview.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -145,14 +145,25 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     closeTimerRef.current = setTimeout(finishClose, CLOSE_DURATION_MS + 20);
   }, [open, closing, clearOpenTimer, clearCloseTimer, finishClose]);
 
+  const pointerStillOnHoverSurface = useCallback(() => {
+    if (typeof document === "undefined") return false;
+    const source = ref.current;
+    if (source?.isConnected && source.matches?.(":hover")) return true;
+    return !!document.querySelector(".previewModal--container:hover");
+  }, [ref]);
+
   const scheduleClose = useCallback(() => {
     clearOpenTimer();
     clearCloseTimer();
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null;
+      if (pointerStillOnHoverSurface()) {
+        setIntent(true);
+        return;
+      }
       requestClose();
     }, LEAVE_GRACE_MS);
-  }, [clearOpenTimer, clearCloseTimer, requestClose]);
+  }, [clearOpenTimer, clearCloseTimer, pointerStillOnHoverSurface, requestClose]);
 
   const openFrom = useCallback((element: HTMLElement | null, event?: any) => {
     if (!element || typeof window === "undefined") return;
@@ -202,22 +213,29 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     scheduleClose();
   }, [scheduleClose, ref]);
 
-  // Entering the portal must cancel the delayed close even for existing card
-  // components that do not explicitly wire onOverlayEnter yet.
+  // Pointer events on either interactive surface always cancel a pending close.
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
-    const keepOpenOverPreview = (event: PointerEvent) => {
+    const keepOpen = (event: PointerEvent) => {
       const target = event.target;
-      if (isDomElement(target) && target.closest(".previewModal--container")) {
+      if (!isDomElement(target)) return;
+      if (
+        target.closest(".previewModal--container") ||
+        (ref.current && ref.current.contains(target))
+      ) {
         clearCloseTimer();
         setIntent(true);
       }
     };
 
-    document.addEventListener("pointerover", keepOpenOverPreview, true);
-    return () => document.removeEventListener("pointerover", keepOpenOverPreview, true);
-  }, [open, clearCloseTimer]);
+    document.addEventListener("pointermove", keepOpen, true);
+    document.addEventListener("pointerover", keepOpen, true);
+    return () => {
+      document.removeEventListener("pointermove", keepOpen, true);
+      document.removeEventListener("pointerover", keepOpen, true);
+    };
+  }, [open, clearCloseTimer, ref]);
 
   // Real page scrolling should never leave a fixed preview floating over a
   // different rail. Close it immediately, without a closing translation.
