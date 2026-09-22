@@ -21,8 +21,9 @@ const CACHE_PREFIX = "flix-home-smart-v10";
 const WATCH_AGAIN_DAYS = 28;
 const RECENT_DAYS = 14;
 const MAX_HISTORY = 12;
-const MAX_ROW_ITEMS = 160;
-const CLAIM_LIMIT = 60;
+const MAX_ROW_ITEMS = 60;
+const CLAIM_LIMIT = 50;
+const SMART_PAGES = 3;
 
 const toMediaType = (type) =>
   type === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
@@ -138,8 +139,7 @@ async function fetchJson(url, fallback = null) {
     const separator = url.includes("?") ? "&" : "?";
     const bucket = romeDailyBucket();
     const response = await fetch(`${url}${separator}_flix_window=${encodeURIComponent(bucket)}`, {
-      cache: "no-store",
-      headers: { "Cache-Control": "no-cache" },
+      headers: { Accept: "application/json" },
     });
     return response.ok ? await response.json() : fallback;
   } catch {
@@ -151,26 +151,26 @@ async function genrePool(genreId, mediaType) {
   if (!genreId) return [];
   const slug = toSlug(mediaType);
   const pages = await Promise.all(
-    Array.from({ length: 10 }, (_, index) => index + 1).map((page) =>
+    Array.from({ length: SMART_PAGES }, (_, index) => index + 1).map((page) =>
       fetchJson(
         `/api/public/tmdb/genre/${genreId}/${slug}?page=${page}`,
         { items: [] }
       )
     )
   );
-  return normalize(pages.flatMap((part) => part?.items || []), slug);
+  return normalize(pages.flatMap((part) => part?.items || []), slug).slice(0, MAX_ROW_ITEMS);
 }
 
 async function freshCataloguePool() {
   const urls = ["/api/public/homepage/latest"];
-  for (let page = 1; page <= 8; page += 1) {
+  for (let page = 1; page <= SMART_PAGES; page += 1) {
     urls.push(`/api/public/tmdb/now_playing?page=${page}`);
     urls.push(`/api/public/tmdb/on_the_air?page=${page}`);
   }
   const parts = await Promise.all(
     urls.map((url) => fetchJson(url, { items: [] }))
   );
-  return normalize(parts.flatMap((part) => part?.items || []));
+  return normalize(parts.flatMap((part) => part?.items || [])).slice(0, MAX_ROW_ITEMS * 2);
 }
 
 function removeTaken(items, taken) {
@@ -178,9 +178,7 @@ function removeTaken(items, taken) {
   const selected = source.filter((item) => !taken.has(itemKey(item)));
   const seen = new Set(selected.map(itemKey));
 
-  // Dedupe is preferred, but it must not empty a smart section. Reuse that
-  // section's own candidates only when necessary to keep a deep artwork pool.
-  if (selected.length < 100) {
+  if (selected.length < MAX_ROW_ITEMS) {
     for (const item of source) {
       const key = itemKey(item);
       if (!key || seen.has(key)) continue;
@@ -307,7 +305,7 @@ export default function HomeSmartSections() {
 
       if (recentHistory.length) {
         const details = await Promise.all(
-          recentHistory.slice(0, 8).map(async (history) => {
+          recentHistory.slice(0, 5).map(async (history) => {
             const mediaType = toMediaType(history.media_type);
             try {
               const detail = await loadDetails(
@@ -330,7 +328,7 @@ export default function HomeSmartSections() {
         if (sourceDetail?.detail) {
           const pools = await Promise.all(
             (sourceDetail.detail.genres || [])
-              .slice(0, 2)
+              .slice(0, 1)
               .map((genre) => genrePool(genre.id, sourceDetail.mediaType))
           );
           const watched = new Set(recentHistory.map(itemKey));
