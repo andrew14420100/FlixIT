@@ -1,0 +1,205 @@
+/* Final desktop Netflix billboard lock.
+   Loaded after all legacy SC sheets so the measured Netflix hero geometry wins. */
+
+@media (min-width: 900px) {
+  [data-testid="home-page"] {
+    padding-top: 80px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard {
+    position: relative !important;
+    z-index: 1 !important;
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    max-width: 2440px !important;
+    aspect-ratio: 1505.14 / 690.43 !important;
+    margin: 8px 60px 32px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    border: 0 !important;
+    border-radius: 24px !important;
+    background: #111 !important;
+    box-shadow: rgba(0, 0, 0, .45) 10px 20px 32px 0 !important;
+    font-size: 16px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard::after {
+    display: none !important;
+    content: none !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] [data-testid="hero-backdrop"],
+  [data-testid="home-page"] [data-testid="hero-section"] [data-testid="hero-trailer"] {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] [data-testid="hero-backdrop"] {
+    object-fit: cover !important;
+    object-position: 50% 0% !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-video-layer {
+    overflow: hidden !important;
+    transform: scale(1.002) !important;
+    transform-origin: 50% 50% !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-video-layer video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center top !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-content,
+  [data-testid="home-page"] [data-testid="hero-content"].netflix-home-content {
+    position: absolute !important;
+    inset: 40px !important;
+    width: auto !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-end !important;
+    align-items: stretch !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-logo"].netflix-home-logo {
+    display: block !important;
+    width: 33vw !important;
+    height: auto !important;
+    max-width: 541.2px !important;
+    max-height: 234.583px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    object-fit: contain !important;
+    object-position: left bottom !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-attributes {
+    width: 100% !important;
+    height: 32px !important;
+    margin: 16px 0 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    font-size: 16px !important;
+    font-weight: 400 !important;
+    line-height: normal !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-age {
+    min-height: 24px !important;
+    padding: 2px 7px !important;
+    border: 1px solid rgba(255,255,255,.62) !important;
+    border-radius: 4px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-overview"].netflix-home-metadata {
+    width: 36vw !important;
+    max-width: 590.4px !important;
+    max-height: 84px !important;
+    margin: 12px 0 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    font-size: 20px !important;
+    font-weight: 400 !important;
+    line-height: 28px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-actions-row {
+    width: 100% !important;
+    height: 48px !important;
+    margin: 32px 0 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-actions {
+    height: 48px !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-play-button"].netflix-home-action,
+  [data-testid="home-page"] [data-testid="hero-info-button"].netflix-home-action {
+    min-width: 0 !important;
+    min-height: 40px !important;
+    height: 40px !important;
+    margin: 0 !important;
+    padding: 6px 16px !important;
+    border: 0 !important;
+    border-radius: 9999px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    font-size: 16px !important;
+    font-weight: 500 !important;
+    line-height: 16px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-play-button"].netflix-home-action {
+    color: #000 !important;
+    background: #fff !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-info-button"].netflix-home-action {
+    color: #fff !important;
+    background: rgba(128,128,128,.40) !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-section"] .netflix-home-action svg {
+    width: 20px !important;
+    height: 20px !important;
+    flex: 0 0 20px !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-controls"].netflix-home-volume-wrap {
+    position: absolute !important;
+    top: 40px !important;
+    right: 40px !important;
+    bottom: auto !important;
+    left: auto !important;
+    width: 32px !important;
+    height: 32px !important;
+    margin: 0 !important;
+    z-index: 7 !important;
+  }
+
+  [data-testid="home-page"] [data-testid="hero-audio-toggle"].netflix-home-volume-button,
+  [data-testid="home-page"] .netflix-home-replay-button {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    padding: 0 !important;
+    border: 1px solid rgba(255,255,255,.55) !important;
+    border-radius: 50% !important;
+    color: #fff !important;
+    background: rgba(20,20,20,.46) !important;
+    backdrop-filter: blur(4px) !important;
+  }
+
+  [data-testid="home-page"] [data-testid="home-rows"] {
+    position: relative !important;
+    z-index: 12 !important;
+    width: 100% !important;
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+    background: transparent !important;
+  }
+}
