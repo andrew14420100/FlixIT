@@ -1,0 +1,94 @@
+/*
+ * Desktop section geometry measured against the supplied SC reference screenshot.
+ * This file is loaded after ScHomeViewportTuning.css and only refines section
+ * spacing, card gaps, headings and Top-10 rank presentation.
+ */
+
+@media (min-width: 900px) {
+  [data-testid="home-page"] {
+    --sc-home-gutter: 4%;
+    --sc-card-gap-half: 3.5px;
+    --sc-row-title: clamp(19px, 1.08vw, 21px);
+    --sc-row-gap: clamp(44px, 3.125vw, 60px);
+  }
+
+  /* Titles: same left axis, compact line height and SC-like gap to the cards. */
+  [data-testid="home-page"] .slider-row .row-header,
+  [data-testid="home-page"] .top10-row .row-header {
+    min-height: 24px !important;
+    margin: 0 0 14px !important;
+    padding-left: var(--sc-home-gutter) !important;
+    padding-right: var(--sc-home-gutter) !important;
+  }
+
+  [data-testid="home-page"] .slider-row .row-header .label,
+  [data-testid="home-page"] .top10-row .row-header .label {
+    font-size: var(--sc-row-title) !important;
+    font-weight: 700 !important;
+    line-height: 1.08 !important;
+    letter-spacing: -.01em !important;
+    color: #e5e5e5 !important;
+  }
+
+  /* SC rows have about a seven-pixel visual gap between 16:9 cards. Shift the
+     slick viewport half a gap left so the first image edge, not its slide box,
+     lands exactly on the 4% section axis. */
+  [data-testid="home-page"] .slider-row:not(.top10-row) .slick-list {
+    width: calc(100% - (var(--sc-home-gutter) - var(--sc-card-gap-half))) !important;
+    margin-left: calc(var(--sc-home-gutter) - var(--sc-card-gap-half)) !important;
+    margin-right: 0 !important;
+  }
+
+  [data-testid="home-page"] .slider-row:not(.top10-row) .slider-item {
+    padding-left: var(--sc-card-gap-half) !important;
+    padding-right: var(--sc-card-gap-half) !important;
+  }
+
+  /* Keep the section-to-section vertical rhythm from the supplied screenshot. */
+  [data-testid="home-page"] .slider-row,
+  [data-testid="home-page"] #continua.slider-row,
+  [data-testid="home-page"] .slider-row.compact-row,
+  [data-testid="home-page"] .top10-row {
+    margin-bottom: var(--sc-row-gap) !important;
+  }
+
+  /* TOP 10: SC uses one half of each slide for the huge outlined numeral and
+     one half for the 2:3 poster. The numeral is fully opaque, black-filled and
+     outlined in medium gray. */
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-root {
+    height: 0 !important;
+    padding: 37.5% 0 !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-rank,
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-poster-wrap {
+    width: 50% !important;
+    height: 100% !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-rank-svg {
+    width: 100% !important;
+    height: 100% !important;
+    opacity: 1 !important;
+    overflow: visible !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-rank-path {
+    fill: #0d0d0d !important;
+    stroke: #4a4a4a !important;
+    stroke-width: 4px !important;
+    stroke-linejoin: square !important;
+    vector-effect: non-scaling-stroke !important;
+  }
+
+  [data-testid="home-page"] .top10-row .netflix-ranked-card-poster-wrap {
+    border-radius: 2px !important;
+  }
+
+  /* Page markers sit on the same right 4% axis as SC. */
+  [data-testid="home-page"] .slider-row .tab-indicator,
+  [data-testid="home-page"] .top10-row .tab-indicator {
+    margin-left: auto !important;
+    margin-right: 0 !important;
+  }
+}
