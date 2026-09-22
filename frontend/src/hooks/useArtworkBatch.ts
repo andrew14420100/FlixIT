@@ -133,25 +133,39 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     return map;
   }, [data]);
 
-  useEffect(() => {
-    if (!data.length) return;
+  // Resolve each title once per row update. HomepageSlider calls isReady for
+  // every card and hover cards call getResolved again; rebuilding fallback URLs
+  // and running the artwork merge on every call was unnecessary main-thread
+  // work on a 20-row Home.
+  const resolvedByKey = useMemo(() => {
+    const map = new Map<string, any>();
     normalized.forEach((entry) => {
-      const official = byKey.get(entry.key);
-      if (!official) return;
       const fallback = buildMediaAssetFallback(entry.item, entry.type);
-      queryClient.setQueryData(
-        ["media-assets", MEDIA_ASSET_QUALITY_VERSION, entry.type, entry.id],
+      const official = byKey.get(entry.key);
+      map.set(
+        entry.key,
         official?.active ? mergeOfficialArtwork(fallback, official) : fallback
       );
     });
-  }, [data, byKey, normalized, queryClient]);
+    return map;
+  }, [normalized, byKey]);
+
+  useEffect(() => {
+    if (!data.length) return;
+    normalized.forEach((entry) => {
+      const resolved = resolvedByKey.get(entry.key);
+      if (!resolved) return;
+      queryClient.setQueryData(
+        ["media-assets", MEDIA_ASSET_QUALITY_VERSION, entry.type, entry.id],
+        resolved
+      );
+    });
+  }, [data, normalized, resolvedByKey, queryClient]);
 
   const getResolved = (item: any) => {
     const entry = normalizeItem(item);
     if (!entry) return null;
-    const fallback = buildMediaAssetFallback(item, entry.type);
-    const official = byKey.get(entry.key);
-    return official?.active ? mergeOfficialArtwork(fallback, official) : fallback;
+    return resolvedByKey.get(entry.key) || null;
   };
 
   const isReady = (item: any, targetRole: "landscape" | "poster" = "landscape") => {
