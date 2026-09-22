@@ -246,6 +246,16 @@ export default function NetflixRankedCardWithHover({
     }, [suppressHover, isMobile, onEnter]
   );
 
+  const handlePosterEnter = useCallback(() => {
+    /*
+     * Trigger from the visible Top 10 poster but intentionally let useHoverExpand
+     * measure the full ranked tile (ref.current). This keeps the expanded box the
+     * same width family as the normal row cards instead of measuring only the
+     * 50%-wide portrait poster.
+     */
+    handleEnter();
+  }, [handleEnter]);
+
   const trailerUrl = assets?.resolved_trailer?.enabled && assets?.resolved_trailer?.available
     ? (assets?.resolved_trailer?.trailer_url ||
        assets?.resolved_trailer?.trailer_key ||
@@ -274,8 +284,6 @@ export default function NetflixRankedCardWithHover({
       <div
         ref={ref}
         className="netflix-ranked-card-root"
-        onMouseEnter={handleEnter}
-        onMouseLeave={isMobile ? undefined : onLeave}
         data-testid={`netflix-ranked-card-${normalizedId}`}
       >
         <a
@@ -291,7 +299,11 @@ export default function NetflixRankedCardWithHover({
               className="netflix-ranked-card-rank-svg"
             />
           </div>
-          <div className="netflix-ranked-card-poster-wrap">
+          <div
+            className="netflix-ranked-card-poster-wrap"
+            onMouseEnter={handlePosterEnter}
+            onMouseLeave={isMobile ? undefined : onLeave}
+          >
             {posterUrl ? (
               <img
                 src={posterUrl}
