@@ -8,6 +8,7 @@ interface HeroSettings {
   customBackdrop: string | null;
   seasonLabel: string | null;
   mediaType: 'movie' | 'tv';
+  updatedAt?: string | null;
   detail?: any;
   assets?: any;
 }
@@ -28,17 +29,31 @@ function bootstrappedHero() {
   return value?.contentId ? value : null;
 }
 
+function heroRevision(hero: HeroSettings | null | undefined) {
+  if (!hero?.contentId) return 'standalone';
+  return [
+    hero.updatedAt || '',
+    hero.contentId || '',
+    hero.mediaType || '',
+    hero.customTitle || '',
+    hero.customBackdrop || '',
+  ].join('|');
+}
+
 /**
- * The Home bootstrap hydrates the hero inline so opening Home does not start a
- * second request. Detail/navigation pages can still use this hook standalone.
+ * Home supplies the current Hero inline through the bootstrap payload. The
+ * revision is part of the query key so an admin change can never be masked by
+ * the previous React Query entry. Assets returned by the backend are preserved:
+ * this is important for the SC logo/backdrop selected for the Hero.
  */
 export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
   const hydrated = initialHero?.contentId ? initialHero : bootstrappedHero();
+  const revision = heroRevision(hydrated);
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v2', profile, viewport],
+    queryKey: ['hero-settings-v3', profile, viewport, revision],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
@@ -48,14 +63,12 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
         if (!response.ok) return null;
         const data = await response.json();
         if (!data?.contentId) return null;
-        const { assets: _legacyVisualAssets, ...editorial } = data;
         return {
-          ...editorial,
-          assets: null,
+          ...data,
           mediaType: data.mediaType || 'tv',
         };
       } catch {
-        return null;
+        return hydrated || null;
       }
     },
     initialData: hydrated?.contentId
@@ -65,11 +78,11 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
         }
       : undefined,
     initialDataUpdatedAt: hydrated?.contentId ? Date.now() : undefined,
-    staleTime: 5 * 60 * 1000,
+    staleTime: hydrated?.contentId ? 10 * 60 * 1000 : 0,
     gcTime: 60 * 60 * 1000,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    refetchOnMount: false,
+    refetchOnWindowFocus: !hydrated,
+    refetchOnReconnect: !hydrated,
+    refetchOnMount: hydrated ? false : 'always',
     retry: 1,
   });
 }

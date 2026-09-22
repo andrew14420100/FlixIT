@@ -1,9 +1,7 @@
 """Persistent, cache-first Home snapshot for FlixIT.
 
-The public Home used to assemble itself in the browser with many independent
-catalogue/artwork requests. This service builds the visible Home once on the
-backend, stores the last good snapshot in MongoDB and serves stale data
-immediately while a refresh happens in the background.
+Rows stay cache-first, while Hero editorial changes are detected independently so
+an admin update is visible immediately without rebuilding the whole Home.
 """
 from __future__ import annotations
 
@@ -16,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter
 
 SNAPSHOT_KEY = "public-home-v1"
-SNAPSHOT_VERSION = "instant-home-v1"
+SNAPSHOT_VERSION = "instant-home-v2-hero-live"
 FRESH_FOR = timedelta(minutes=10)
 MAX_STALE_AGE = timedelta(days=3)
 MAX_ROWS = 18
@@ -211,9 +209,6 @@ def _ordered_sections(core) -> list[dict]:
         admin = []
     templates = [dict(row) for row in getattr(core, "AVAILABLE_SECTIONS", []) if isinstance(row, dict)]
 
-    # Start with the recognisable SC-style high-value rows, then respect the
-    # admin order and finally fill from templates. Duplicate logical rows are
-    # removed before any network work starts.
     preferred_types = ("top10", "trending", "latest")
     source = []
     for wanted in preferred_types:
@@ -255,8 +250,112 @@ async def _attach_artwork(rows: list[dict]) -> None:
                 if isinstance(artwork, dict):
                     item["__artwork"] = artwork
     except Exception:
-        # Artwork remains fully recoverable by the existing card batch hook.
         return
+
+
+def _hero_fingerprint(hero: dict | None) -> tuple[str, ...]:
+    hero = hero or {}
+    return tuple(
+        str(hero.get(key) or "")
+        for key in (
+            "contentId",
+            "mediaType",
+            "customTitle",
+            "customDescription",
+            "customBackdrop",
+            "seasonLabel",
+            "updatedAt",
+        )
+    )
+
+
+def _current_hero_settings(core) -> dict:
+    try:
+        return core.hero_settings.find_one({}, {"_id": 0}) or {}
+    except Exception:
+        return {}
+
+
+async def _hydrate_hero_artwork(hero: dict | None) -> dict | None:
+    if not isinstance(hero, dict) or not hero.get("contentId"):
+        return hero
+    result = dict(hero)
+    try:
+        from services.performance_api import _bundle
+        from services.sc_artwork_catalog import CATALOG
+
+        if not CATALOG.loaded:
+            await asyncio.to_thread(CATALOG.load)
+        detail = result.get("detail") if isinstance(result.get("detail"), dict) else {}
+        identity = {
+            "tmdbId": int(result.get("contentId")),
+            "type": "tv" if result.get("mediaType") == "tv" else "movie",
+            "title": detail.get("name") or detail.get("title") or result.get("customTitle") or "",
+            "name": detail.get("name") or detail.get("title") or result.get("customTitle") or "",
+            "original_title": detail.get("original_name") or detail.get("original_title") or "",
+            "release_date": detail.get("release_date") or "",
+            "first_air_date": detail.get("first_air_date") or "",
+        }
+        artwork = _bundle(identity)
+        if isinstance(artwork, dict) and artwork.get("active"):
+            existing = result.get("assets") if isinstance(result.get("assets"), dict) else {}
+            hero_backdrop = (
+                artwork.get("hero_backdrop_url")
+                or artwork.get("detail_backdrop_url")
+                or artwork.get("backdrop_url")
+            )
+            result["assets"] = {
+                **existing,
+                "logo_path": artwork.get("logo_url") or existing.get("logo_path"),
+                "fallback_logo_path": existing.get("fallback_logo_path"),
+                "backdrop_path": hero_backdrop or existing.get("backdrop_path"),
+                "hero_backdrop_path": hero_backdrop or existing.get("hero_backdrop_path"),
+                "detail_backdrop_path": artwork.get("detail_backdrop_url") or hero_backdrop or existing.get("detail_backdrop_path"),
+                "poster_path": artwork.get("poster_url") or existing.get("poster_path"),
+                "logo_source": artwork.get("logo_source") or existing.get("logo_source"),
+                "hero_backdrop_source": artwork.get("hero_backdrop_source") or existing.get("hero_backdrop_source"),
+            }
+    except Exception:
+        pass
+    return result
+
+
+async def _load_current_hero(app) -> dict | None:
+    hero = await _call_public(app, "/api/public/hero")
+    return await _hydrate_hero_artwork(hero or None)
+
+
+def _persist_snapshot_payload(core, payload: dict, generated: datetime | None) -> None:
+    try:
+        core.db["home_snapshots"].update_one(
+            {"key": SNAPSHOT_KEY},
+            {
+                "$set": {
+                    "payload": payload,
+                    "generated_at": generated or _now(),
+                }
+            },
+            upsert=True,
+        )
+    except Exception:
+        pass
+
+
+async def _refresh_cached_hero_if_needed(app, core, payload: dict, generated: datetime | None) -> dict:
+    current_settings = _current_hero_settings(core)
+    cached_hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
+    if _hero_fingerprint(current_settings) == _hero_fingerprint(cached_hero):
+        return payload
+
+    fresh_hero = await _load_current_hero(app)
+    if not fresh_hero:
+        return payload
+
+    updated = dict(payload)
+    updated["version"] = SNAPSHOT_VERSION
+    updated["hero"] = fresh_hero
+    _persist_snapshot_payload(core, updated, generated)
+    return updated
 
 
 async def _build_snapshot(app, core) -> dict:
@@ -271,7 +370,7 @@ async def _build_snapshot(app, core) -> dict:
         rows = await asyncio.gather(*(one(section) for section in sections))
         rows = [row for row in rows if row.get("items")]
         await _attach_artwork(rows)
-        hero = await _call_public(app, "/api/public/hero")
+        hero = await _load_current_hero(app)
         generated = _now()
         payload = {
             "version": SNAPSHOT_VERSION,
@@ -334,11 +433,10 @@ def install_home_bootstrap(app) -> bool:
         payload, generated = _read_snapshot(core)
         now = _now()
         if payload and generated:
+            payload = await _refresh_cached_hero_if_needed(app, core, payload, generated)
             age = now - generated
             if age < FRESH_FOR:
                 return payload
-            # Never make a returning visitor wait for a rebuild. A recent last
-            # good snapshot is returned immediately and refreshed in background.
             if age < MAX_STALE_AGE:
                 _schedule_refresh(app, core)
                 return payload

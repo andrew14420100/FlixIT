@@ -12,7 +12,7 @@ import Top10Slider from "src/components/Top10Slider";
 import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_URL = "/api/public/home-bootstrap";
-const HOME_CACHE_KEY = "flix-home-bootstrap-v1";
+const HOME_CACHE_KEY = "flix-home-bootstrap-v2";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
 
@@ -89,7 +89,7 @@ export function Component() {
 
   const initialCache = useMemo(() => readHomeCache(), []);
   const { data: bootstrap } = useQuery({
-    queryKey: ["home-bootstrap-v1"],
+    queryKey: ["home-bootstrap-v2"],
     queryFn: async ({ signal }: any) => {
       const response = await fetch(HOME_BOOTSTRAP_URL, {
         signal,
@@ -104,9 +104,12 @@ export function Component() {
     initialDataUpdatedAt: initialCache?.savedAt || 0,
     staleTime: HOME_STALE_MS,
     gcTime: HOME_GC_MS,
-    refetchOnMount: true,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    // Keep the instant local snapshot for first paint, but always verify it
+    // against the backend when Home mounts or the tab regains focus. This makes
+    // an admin Hero change visible immediately without rebuilding every row.
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
     retry: 1,
   });
 
