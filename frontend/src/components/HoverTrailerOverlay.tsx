@@ -14,7 +14,7 @@ const EASE = "cubic-bezier(.22,.61,.36,1)";
  * SC/Netflix-style hover preview.
  * The SC cover is the stable surface while the trailer waits/buffers. Only the
  * actual `playing` event starts the deliberately visible crossfade into video
- * and the title-logo entrance. Titles without a trailer simply keep the cover.
+ * and the title-logo entrance. Titles without a trailer keep cover + logo.
  */
 export default function HoverTrailerOverlay({
   url,
@@ -87,7 +87,8 @@ export default function HoverTrailerOverlay({
 
   if ((!url && !coverUrl) || failed) return null;
 
-  const showLogo = playing && logoVisible;
+  const staticNoTrailer = !url;
+  const showLogo = !!logoUrl && (staticNoTrailer || (playing && logoVisible));
 
   return (
     <div
