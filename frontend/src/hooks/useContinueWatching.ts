@@ -21,10 +21,15 @@ const LOCAL_STORAGE_KEY = 'netflix_continue_watching';
 const USERNAME_KEY = 'netflix_username';
 const TOKEN_KEY = 'user_token';
 const LIVE_REFRESH_MS = 2 * 60 * 1000;
+const TOKEN_CHECK_MS = 10_000;
 const PROGRESS_EVENT = 'flix-watch-progress-changed';
 
 function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
 }
 
 async function apiFetch(path: string, options?: RequestInit) {
@@ -48,9 +53,6 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
 }
 
-// Every mounted hook (Home, Hero, Detail, hover) shares the same request.  The
-// previous implementation invalidated this memo from each interval/focus
-// listener, causing a burst of identical authenticated requests.
 let progressMemo: { at: number; promise: Promise<any> } | null = null;
 const PROGRESS_MEMO_MS = 20 * 1000;
 function fetchProgressShared(force = false) {
@@ -87,9 +89,77 @@ function saveToLocalStorage(items: ContinueWatchingItem[]) {
   } catch {}
 }
 
+// One passive-sync runtime for every hook instance. Previously Hero, Home,
+// Detail and Watch each installed their own focus/online/storage listeners plus
+// two intervals. Requests were memoized, but the browser still woke every copy
+// and ran duplicated React state work. Subscribers now share one runtime.
+const passiveSubscribers = new Set<() => void>();
+let passiveCleanup: (() => void) | null = null;
+let lastObservedToken: string | null = null;
+
+function notifyPassiveSubscribers() {
+  passiveSubscribers.forEach((callback) => {
+    try { callback(); } catch {}
+  });
+}
+
+function ensurePassiveRuntime() {
+  if (passiveCleanup || typeof window === 'undefined') return;
+  lastObservedToken = getToken();
+
+  const sync = () => notifyPassiveSubscribers();
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') sync();
+  };
+  const onStorage = (event: StorageEvent) => {
+    if (!event.key || event.key === TOKEN_KEY || event.key === LOCAL_STORAGE_KEY || event.key === USERNAME_KEY) {
+      if (event.key === TOKEN_KEY) invalidateProgressMemo();
+      sync();
+    }
+  };
+
+  const refreshInterval = window.setInterval(sync, LIVE_REFRESH_MS);
+  const tokenInterval = window.setInterval(() => {
+    const nextToken = getToken();
+    if (nextToken !== lastObservedToken) {
+      lastObservedToken = nextToken;
+      invalidateProgressMemo();
+      sync();
+    }
+  }, TOKEN_CHECK_MS);
+
+  window.addEventListener('focus', sync, { passive: true });
+  window.addEventListener('online', sync, { passive: true });
+  window.addEventListener('storage', onStorage);
+  window.addEventListener(PROGRESS_EVENT, sync as EventListener);
+  document.addEventListener('visibilitychange', onVisibility);
+
+  passiveCleanup = () => {
+    window.clearInterval(refreshInterval);
+    window.clearInterval(tokenInterval);
+    window.removeEventListener('focus', sync);
+    window.removeEventListener('online', sync);
+    window.removeEventListener('storage', onStorage);
+    window.removeEventListener(PROGRESS_EVENT, sync as EventListener);
+    document.removeEventListener('visibilitychange', onVisibility);
+    passiveCleanup = null;
+  };
+}
+
+function subscribePassiveSync(callback: () => void) {
+  passiveSubscribers.add(callback);
+  ensurePassiveRuntime();
+  return () => {
+    passiveSubscribers.delete(callback);
+    if (passiveSubscribers.size === 0) passiveCleanup?.();
+  };
+}
+
 export function useContinueWatching() {
   const [items, setItems] = useState<ContinueWatchingItem[]>(() => readLocalStorage());
-  const [username, setUsername] = useState<string>('Utente');
+  const [username, setUsername] = useState<string>(() => {
+    try { return localStorage.getItem(USERNAME_KEY) || 'Utente'; } catch { return 'Utente'; }
+  });
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(!!getToken());
 
   const applyPayload = useCallback((data: any) => {
@@ -99,7 +169,7 @@ export function useContinueWatching() {
     }
     if (data?.username) {
       setUsername(data.username);
-      localStorage.setItem(USERNAME_KEY, data.username);
+      try { localStorage.setItem(USERNAME_KEY, data.username); } catch {}
     }
   }, []);
 
@@ -108,7 +178,7 @@ export function useContinueWatching() {
     if (!token) {
       setIsLoggedIn(false);
       setItems(readLocalStorage());
-      setUsername(localStorage.getItem(USERNAME_KEY) || 'Utente');
+      try { setUsername(localStorage.getItem(USERNAME_KEY) || 'Utente'); } catch { setUsername('Utente'); }
       return null;
     }
 
@@ -123,49 +193,7 @@ export function useContinueWatching() {
     refresh(false);
   }, [refresh]);
 
-  useEffect(() => {
-    // Passive synchronisation always uses the shared memo. Mutations explicitly
-    // invalidate it before broadcasting PROGRESS_EVENT, so the first listener
-    // fetches fresh data and all other mounted listeners reuse that promise.
-    const sync = () => refresh(false);
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') sync();
-    };
-    const onStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === TOKEN_KEY || event.key === LOCAL_STORAGE_KEY || event.key === USERNAME_KEY) {
-        sync();
-      }
-    };
-
-    const interval = window.setInterval(sync, LIVE_REFRESH_MS);
-    window.addEventListener('focus', sync);
-    window.addEventListener('online', sync);
-    window.addEventListener('storage', onStorage);
-    window.addEventListener(PROGRESS_EVENT, sync as EventListener);
-    document.addEventListener('visibilitychange', onVisibility);
-
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener('focus', sync);
-      window.removeEventListener('online', sync);
-      window.removeEventListener('storage', onStorage);
-      window.removeEventListener(PROGRESS_EVENT, sync as EventListener);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [refresh]);
-
-  useEffect(() => {
-    let lastToken = getToken();
-    const interval = window.setInterval(() => {
-      const nextToken = getToken();
-      if (nextToken !== lastToken) {
-        lastToken = nextToken;
-        invalidateProgressMemo();
-        refresh(false);
-      }
-    }, 10_000);
-    return () => window.clearInterval(interval);
-  }, [refresh]);
+  useEffect(() => subscribePassiveSync(() => { refresh(false); }), [refresh]);
 
   const saveProgress = useCallback(
     async (item: Omit<ContinueWatchingItem, 'updated_at'>) => {
@@ -180,7 +208,6 @@ export function useContinueWatching() {
           saveToLocalStorage(filtered);
           return filtered;
         }
-
         if (item.progress < 10) return prev;
 
         const updated = [fullItem, ...filtered].slice(0, 20);
@@ -224,7 +251,7 @@ export function useContinueWatching() {
 
   const updateUsername = useCallback((name: string) => {
     setUsername(name);
-    localStorage.setItem(USERNAME_KEY, name);
+    try { localStorage.setItem(USERNAME_KEY, name); } catch {}
   }, []);
 
   return {
