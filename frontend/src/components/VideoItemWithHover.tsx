@@ -124,6 +124,8 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     video?.__artwork?.backdrop_url,
     video?.__artwork?.titled_backdrop_url
   );
+  const embeddedScPoster = firstUsableArtwork(video?.__artwork?.poster_url);
+
   const legacyLandscape = firstUsableArtwork(
     video?.netflix_artwork_url,
     video?.netflixArtworkUrl,
@@ -152,12 +154,13 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   );
   const automaticPoster = firstUsableArtwork(
     automaticAssets?.poster_path,
-    automaticAssets?.poster,
-    video?.__artwork?.poster_url
+    automaticAssets?.poster
   );
+  const explicitScPoster = firstUsableArtwork(video?.mobile_sc_poster_url);
+  const automaticScPoster = automaticAssets?.poster_source === "streamingcommunity"
+    ? automaticPoster
+    : null;
 
-  // SC web uses horizontal catalogue cards on both desktop and phone. Keep one
-  // geometry across breakpoints so rows do not reflow from poster to landscape.
   const landscapeCandidates = useMemo(
     () => unique([
       embeddedScLandscape,
@@ -168,7 +171,21 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     [embeddedScLandscape, automaticLandscape, mappedBackdrop, legacyLandscape]
   );
 
-  const imageCandidates = landscapeCandidates;
+  // SC mobile uses vertical posters. Prefer the exact SC poster embedded by the
+  // bootstrap/catalog, then SC resolver output; only use the mapped poster as a
+  // visual fallback so a valid title never becomes an empty mobile slot.
+  const posterCandidates = useMemo(
+    () => unique([
+      embeddedScPoster,
+      explicitScPoster,
+      automaticScPoster,
+      mappedPoster,
+      automaticPoster,
+    ]),
+    [embeddedScPoster, explicitScPoster, automaticScPoster, mappedPoster, automaticPoster]
+  );
+
+  const imageCandidates = isMobile ? posterCandidates : landscapeCandidates;
   const title = automaticAssets?.title || video?.title || video?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${id}`;
 
@@ -230,7 +247,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   );
   const hoverArtwork = heroLandscape || automaticLandscape || embeddedScLandscape || mappedBackdrop || legacyLandscape;
   const hoverCoverUrl = embeddedScLandscape || automaticLandscape || mappedBackdrop || legacyLandscape || hoverArtwork;
-  const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
+  const hoverPoster = embeddedScPoster || automaticPoster || mappedPoster || hoverArtwork;
 
   useEffect(() => {
     if (!nearViewport || !hoverLogoUrl || typeof Image === "undefined") return;
@@ -240,7 +257,9 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     image.src = hoverLogoUrl;
   }, [nearViewport, hoverLogoUrl]);
 
-  const staticReady = imageCandidates.length > 0 && !!automaticAssets?.card_ready;
+  const staticReady = isMobile
+    ? posterCandidates.length > 0
+    : landscapeCandidates.length > 0 && !!automaticAssets?.card_ready;
   if (!staticReady) return null;
 
   return (
