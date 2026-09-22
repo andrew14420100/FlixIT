@@ -6,9 +6,9 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import ComingSoonPage, { PLACEHOLDER_SECTIONS } from "src/pages/ComingSoonPage";
 
-// Admin bundle is code-split: nothing from src/admin is loaded until an /admin route is visited.
 const adminChunk = () => import("src/admin/lazyRoutes");
 const adminPage = (name) => () => adminChunk().then((m) => ({ Component: m[name] }));
+const homePage = () => import("src/pages/HomePage");
 
 function ErrorPage() {
   return (
@@ -26,12 +26,14 @@ const router = createBrowserRouter([
     element: <MainLayout />,
     errorElement: <ErrorPage />,
     children: [
-      { path: MAIN_PATH.root, element: <Navigate to={`/${MAIN_PATH.browse}`} /> },
-      { path: MAIN_PATH.browse, lazy: () => import("src/pages/HomePage") },
-      { path: `${MAIN_PATH.browse}/genre/movie`, lazy: () => import("src/pages/HomePage") },
-      { path: `${MAIN_PATH.browse}/genre/tv`, lazy: () => import("src/pages/HomePage") },
-      { path: `${MAIN_PATH.browse}/latest`, lazy: () => import("src/pages/HomePage") },
-      { path: `${MAIN_PATH.browse}/trending`, lazy: () => import("src/pages/HomePage") },
+      // Avoid a client-side / -> /browse redirect on hard refresh. Both URLs
+      // render the same lazy Home chunk and share the same bootstrap/cache.
+      { index: true, lazy: homePage },
+      { path: MAIN_PATH.browse, lazy: homePage },
+      { path: `${MAIN_PATH.browse}/genre/movie`, lazy: homePage },
+      { path: `${MAIN_PATH.browse}/genre/tv`, lazy: homePage },
+      { path: `${MAIN_PATH.browse}/latest`, lazy: homePage },
+      { path: `${MAIN_PATH.browse}/trending`, lazy: homePage },
       { path: "my-list", lazy: () => import("src/pages/MyListPage") },
       { path: "film", lazy: () => import("src/pages/FilmPage") },
       { path: "serie-tv", lazy: () => import("src/pages/SeriePage") },
