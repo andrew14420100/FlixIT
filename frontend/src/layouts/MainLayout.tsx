@@ -13,8 +13,6 @@ import AuthModal from "src/components/auth/AuthModal";
 import SessionGuards from "src/components/auth/SessionGuards";
 import MobileGlobalBottomNav from "src/components/mobile/MobileGlobalBottomNav";
 import ScCdnRecovery from "src/components/mobile/ScCdnRecovery";
-import HomeHeroRuntimeFixes from "src/components/HomeHeroRuntimeFixes";
-import NetflixHomeAmbientExact from "src/components/NetflixHomeAmbientExact";
 import { GlobalPlayGlyphNormalizer } from "src/components/PlayGlyph";
 import "src/components/mobile/mobile-sc-exact.css";
 import "src/components/mobile/mobile-home-reference.css";
@@ -36,9 +34,10 @@ import "src/components/NetflixHeroFinal.css";
 import "src/components/NetflixHeroSelections.css";
 import "src/components/LogoVisibilityRecovery.css";
 
-// Route-specific helpers stay out of the initial shell. This is especially
-// important on mobile: Home, Detail and Watch no longer download each other's
-// DOM runtimes before the user actually opens those routes.
+// Route-specific runtimes stay out of routes that never need them. This matters
+// especially for Watch: playback should not parse Home observers/ambient code.
+const HomeHeroRuntimeFixes = lazy(() => import("src/components/HomeHeroRuntimeFixes"));
+const NetflixHomeAmbientExact = lazy(() => import("src/components/NetflixHomeAmbientExact"));
 const MobileSCExperience = lazy(() => import("src/components/mobile/MobileSCExperience"));
 const MobileSCExactAssets = lazy(() => import("src/components/mobile/MobileSCExactAssets"));
 const MobileHomeReferenceRuntime = lazy(() => import("src/components/mobile/MobileHomeReferenceRuntime"));
@@ -87,11 +86,11 @@ export default function MainLayout() {
       <ScCdnRecovery />
       <GlobalPlayGlyphNormalizer />
       <MainHeader />
-      <HomeHeroRuntimeFixes />
-      <NetflixHomeAmbientExact />
       <MobileGlobalBottomNav />
 
       <Suspense fallback={null}>
+        {isHome && !isMobile ? <HomeHeroRuntimeFixes /> : null}
+        {isHome && !isMobile ? <NetflixHomeAmbientExact /> : null}
         {isMobile && !isWatch ? <MobileSCExperience /> : null}
         {isMobile && !isWatch ? <MobileSCExactAssets /> : null}
         {isMobile && isHome ? <MobileHomeReferenceRuntime /> : null}
