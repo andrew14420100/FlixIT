@@ -89,10 +89,45 @@ function saveToLocalStorage(items: ContinueWatchingItem[]) {
   } catch {}
 }
 
-// One passive-sync runtime for every hook instance. Previously Hero, Home,
-// Detail and Watch each installed their own focus/online/storage listeners plus
-// two intervals. Requests were memoized, but the browser still woke every copy
-// and ran duplicated React state work. Subscribers now share one runtime.
+// Serialize/coalesce writes per logical title/episode. WatchPage persists every
+// 15 seconds and can also persist on hide/unmount; a slow network must not turn
+// those calls into overlapping POSTs. While one request is running we keep only
+// the newest payload, which is the only progress value that matters.
+type ProgressWriteState = { latest: any; running: Promise<any> | null };
+const progressWrites = new Map<string, ProgressWriteState>();
+
+function progressWriteKey(item: any) {
+  return `${item?.media_type || 'movie'}:${item?.tmdb_id || 0}:${item?.season || 0}:${item?.episode || 0}`;
+}
+
+function enqueueProgressWrite(item: any) {
+  const key = progressWriteKey(item);
+  let state = progressWrites.get(key);
+  if (!state) {
+    state = { latest: null, running: null };
+    progressWrites.set(key, state);
+  }
+  state.latest = item;
+  if (state.running) return state.running;
+
+  state.running = (async () => {
+    while (state?.latest) {
+      const next = state.latest;
+      state.latest = null;
+      await apiFetch('/api/auth/watch-progress', {
+        method: 'POST',
+        body: JSON.stringify(next),
+        keepalive: true,
+      });
+    }
+  })().finally(() => {
+    const current = progressWrites.get(key);
+    if (current === state) progressWrites.delete(key);
+  });
+
+  return state.running;
+}
+
 const passiveSubscribers = new Set<() => void>();
 let passiveCleanup: (() => void) | null = null;
 let lastObservedToken: string | null = null;
@@ -215,16 +250,12 @@ export function useContinueWatching() {
         return updated;
       });
 
-      if (getToken()) {
-        await apiFetch('/api/auth/watch-progress', {
-          method: 'POST',
-          body: JSON.stringify(item),
-          keepalive: true,
-        });
-      }
+      if (getToken()) await enqueueProgressWrite(item);
 
+      // Local state/localStorage already contain the newest position. Invalidating
+      // the memo is enough for the next page/focus refresh. Broadcasting here used
+      // to force an immediate GET after every 15-second POST during playback.
       invalidateProgressMemo();
-      broadcastProgressChanged();
     },
     []
   );
