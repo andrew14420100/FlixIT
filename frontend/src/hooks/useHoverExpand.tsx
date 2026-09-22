@@ -202,6 +202,23 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     scheduleClose();
   }, [scheduleClose, ref]);
 
+  // Entering the portal must cancel the delayed close even for existing card
+  // components that do not explicitly wire onOverlayEnter yet.
+  useEffect(() => {
+    if (!open || typeof document === "undefined") return;
+
+    const keepOpenOverPreview = (event: PointerEvent) => {
+      const target = event.target;
+      if (isDomElement(target) && target.closest(".previewModal--container")) {
+        clearCloseTimer();
+        setIntent(true);
+      }
+    };
+
+    document.addEventListener("pointerover", keepOpenOverPreview, true);
+    return () => document.removeEventListener("pointerover", keepOpenOverPreview, true);
+  }, [open, clearCloseTimer]);
+
   // Real page scrolling should never leave a fixed preview floating over a
   // different rail. Close it immediately, without a closing translation.
   useEffect(() => {
