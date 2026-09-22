@@ -4,16 +4,25 @@ import { createPortal } from "react-dom";
 import "src/components/NetflixMiniModalExact.css";
 import "src/components/NetflixMotionOverrides.css";
 
+/*
+ * SC hover behaviour rebuilt from the supplied reference video.
+ *
+ * Principles:
+ * - one hover owner for the whole page, including the opening delay;
+ * - short intent delay;
+ * - one FLIP expansion from the exact source-card rectangle;
+ * - final geometry is frozen for the lifetime of the preview;
+ * - moving inside card/preview never restarts or repositions it;
+ * - moving to another card cancels the previous pending/open preview first.
+ */
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
-const OPEN_DELAY_MS = 180;
-const OPEN_DURATION_MS = 280;
-const CLOSE_DURATION_MS = 200;
-const OPACITY_OPEN_MS = 70;
-const OPACITY_CLOSE_MS = 100;
-const LEAVE_GRACE_MS = 220;
+const OPEN_DELAY_MS = 135;
+const OPEN_DURATION_MS = 155;
+const CLOSE_DURATION_MS = 105;
+const LEAVE_GRACE_MS = 125;
 const VIEWPORT_GUTTER = 4;
-const POINTER_PAD = 10;
+const POINTER_PAD = 8;
 const EASE = "cubic-bezier(.21,0,.07,1)";
 
 type HoverEdge = "left" | "center" | "right";
@@ -22,8 +31,6 @@ type AnchorData = {
   cardRect: DOMRect;
   modalWidth: number;
   anchor: HTMLElement | null;
-  pointerX?: number;
-  pointerY?: number;
   rowStart?: number;
   rowEnd?: number;
   edge?: HoverEdge;
@@ -31,14 +38,9 @@ type AnchorData = {
 
 type ActiveHover = {
   owner: symbol;
-  forceClose: () => void;
+  cancel: () => void;
 } | null;
 
-/*
- * SC behaviour: there is one hover owner for the whole page, including the
- * short opening delay. Claiming a new card immediately cancels both an open
- * preview and a still-pending preview from another card.
- */
 let activeHover: ActiveHover = null;
 
 function isDomNode(value: any): value is Node {
@@ -49,6 +51,12 @@ function isDomElement(value: any): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
 }
 
+function updatePointer(ref: any, event?: any) {
+  if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
+    ref.current = { x: Number(event.clientX), y: Number(event.clientY) };
+  }
+}
+
 function pointInsideRect(x: number, y: number, rect?: DOMRect | null, pad = 0) {
   if (!rect || !Number.isFinite(x) || !Number.isFinite(y)) return false;
   return (
@@ -57,12 +65,6 @@ function pointInsideRect(x: number, y: number, rect?: DOMRect | null, pad = 0) {
     y >= rect.top - pad &&
     y <= rect.bottom + pad
   );
-}
-
-function updatePointer(ref: any, event?: any) {
-  if (Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)) {
-    ref.current = { x: Number(event.clientX), y: Number(event.clientY) };
-  }
 }
 
 function findRow(element: HTMLElement | null) {
@@ -126,12 +128,11 @@ function measureEdges(element: HTMLElement, rect: DOMRect) {
 }
 
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
-  const ownerRef = useRef(Symbol("flix-hover-owner"));
+  const ownerRef = useRef(Symbol("flix-sc-hover"));
   const openTimerRef = useRef<any>(null);
   const closeTimerRef = useRef<any>(null);
   const pointerRef = useRef({ x: -1, y: -1 });
   const openRef = useRef(false);
-  const closingRef = useRef(false);
 
   const [intent, setIntent] = useState(false);
   const [open, setOpen] = useState(false);
@@ -155,41 +156,33 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     clearCloseTimer();
   }, [clearOpenTimer, clearCloseTimer]);
 
-  const finishClose = useCallback(() => {
+  /* Immediate reset is used when ownership changes to another card. */
+  const resetImmediately = useCallback(() => {
     clearTimers();
     openRef.current = false;
-    closingRef.current = false;
 
     if (activeHover?.owner === ownerRef.current) activeHover = null;
 
     setIntent(false);
-    setOpen(false);
     setClosing(false);
+    setOpen(false);
     setPosition(null);
   }, [clearTimers]);
 
-  const claimOwnership = useCallback(() => {
+  const claim = useCallback(() => {
     if (activeHover?.owner === ownerRef.current) return;
 
     const previous = activeHover;
     activeHover = null;
-    previous?.forceClose?.();
+    previous?.cancel?.();
 
     activeHover = {
       owner: ownerRef.current,
-      forceClose: finishClose,
+      cancel: resetImmediately,
     };
-  }, [finishClose]);
+  }, [resetImmediately]);
 
-  const cancelClosing = useCallback(() => {
-    clearCloseTimer();
-    if (!closingRef.current) return;
-    closingRef.current = false;
-    setClosing(false);
-    setIntent(true);
-  }, [clearCloseTimer]);
-
-  const pointerIsOnSurface = useCallback(() => {
+  const pointerIsOnOurSurface = useCallback(() => {
     if (typeof document === "undefined") return false;
     if (activeHover?.owner !== ownerRef.current) return false;
 
@@ -201,7 +194,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       return true;
     }
 
-    // Singleton ownership means the only mounted mini modal belongs to us.
+    // There is only one preview by construction, therefore this is ours.
     const preview = document.querySelector(".previewModal--container") as HTMLElement | null;
     if (preview?.isConnected && pointInsideRect(x, y, preview.getBoundingClientRect(), POINTER_PAD)) {
       return true;
@@ -214,77 +207,91 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     return false;
   }, [ref]);
 
-  const requestClose = useCallback(() => {
+  const finishAnimatedClose = useCallback(() => {
+    clearTimers();
+    openRef.current = false;
+
+    if (activeHover?.owner === ownerRef.current) activeHover = null;
+
+    setIntent(false);
+    setClosing(false);
+    setOpen(false);
+    setPosition(null);
+  }, [clearTimers]);
+
+  const closeAnimated = useCallback(() => {
     clearOpenTimer();
-    if (!openRef.current || closingRef.current) {
-      if (!openRef.current) finishClose();
+
+    if (!openRef.current) {
+      resetImmediately();
       return;
     }
 
-    closingRef.current = true;
+    if (closing) return;
     setIntent(false);
     setClosing(true);
     clearCloseTimer();
 
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null;
-      finishClose();
-    }, CLOSE_DURATION_MS + 20);
-  }, [clearOpenTimer, clearCloseTimer, finishClose]);
+      finishAnimatedClose();
+    }, CLOSE_DURATION_MS + 16);
+  }, [closing, clearOpenTimer, clearCloseTimer, finishAnimatedClose, resetImmediately]);
 
   const scheduleClose = useCallback(() => {
     if (activeHover?.owner !== ownerRef.current) {
-      finishClose();
+      resetImmediately();
       return;
     }
     if (!openRef.current || closeTimerRef.current) return;
 
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null;
-      if (pointerIsOnSurface()) {
-        cancelClosing();
+      if (pointerIsOnOurSurface()) {
+        setClosing(false);
         setIntent(true);
         return;
       }
-      requestClose();
+      closeAnimated();
     }, LEAVE_GRACE_MS);
-  }, [pointerIsOnSurface, cancelClosing, requestClose, finishClose]);
+  }, [pointerIsOnOurSurface, closeAnimated, resetImmediately]);
 
   const openFrom = useCallback((element: HTMLElement | null, event?: any) => {
     if (!element || typeof window === "undefined") return;
 
     updatePointer(pointerRef, event);
-    claimOwnership();
+    claim();
     clearCloseTimer();
-    cancelClosing();
+    setClosing(false);
     setIntent(true);
 
-    // Same card: never replay the opening animation.
-    if (openRef.current || openTimerRef.current) return;
+    // Same card while pending/open: keep it alive without replaying anything.
+    if (openTimerRef.current || openRef.current) return;
 
     openTimerRef.current = setTimeout(() => {
       openTimerRef.current = null;
 
-      // Moving to another card during the delay invalidates this opening.
       if (activeHover?.owner !== ownerRef.current || !element.isConnected) return;
 
+      // A pending hover may only open while the pointer is still on its source.
       const rect = element.getBoundingClientRect();
-      const measured = measureEdges(element, rect);
+      const { x, y } = pointerRef.current;
+      if (!pointInsideRect(x, y, rect, POINTER_PAD)) {
+        resetImmediately();
+        return;
+      }
 
+      const measured = measureEdges(element, rect);
       openRef.current = true;
-      closingRef.current = false;
-      setClosing(false);
       setPosition({
         cardRect: rect,
         modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
         anchor: element,
-        pointerX: pointerRef.current.x,
-        pointerY: pointerRef.current.y,
         ...measured,
       });
       setOpen(true);
     }, OPEN_DELAY_MS);
-  }, [claimOwnership, clearCloseTimer, cancelClosing]);
+  }, [claim, clearCloseTimer, resetImmediately]);
 
   const onEnter = useCallback((event?: any) => {
     openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
@@ -293,24 +300,24 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const onLeave = useCallback((event?: any) => {
     updatePointer(pointerRef, event);
 
-    // Leaving before the popup appears cancels this pending card immediately.
+    // During intent delay SC simply cancels the opening when the source is left.
     if (!openRef.current) {
-      finishClose();
+      resetImmediately();
       return;
     }
 
-    // Once expanded, do not trust the source mouseleave alone: the popup itself
-    // overlaps the source card. The combined surface decides whether to close.
+    // The expanded preview overlaps the source, so mouseleave alone is not a
+    // close signal. Give the pointer a short bridge into the preview.
     scheduleClose();
-  }, [finishClose, scheduleClose]);
+  }, [resetImmediately, scheduleClose]);
 
   const onOverlayEnter = useCallback((event?: any) => {
     if (activeHover?.owner !== ownerRef.current) return;
     updatePointer(pointerRef, event);
     clearCloseTimer();
-    cancelClosing();
+    setClosing(false);
     setIntent(true);
-  }, [clearCloseTimer, cancelClosing]);
+  }, [clearCloseTimer]);
 
   const onOverlayLeave = useCallback((event?: any) => {
     if (activeHover?.owner !== ownerRef.current) return;
@@ -319,15 +326,18 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     const related = event?.relatedTarget;
     if (isDomNode(related) && ref.current?.contains(related)) {
       clearCloseTimer();
-      cancelClosing();
+      setClosing(false);
+      setIntent(true);
       return;
     }
 
     scheduleClose();
-  }, [ref, clearCloseTimer, cancelClosing, scheduleClose]);
+  }, [ref, clearCloseTimer, scheduleClose]);
 
-  // While open, pointer movement can only keep/close this preview. It can never
-  // change geometry or restart the opening animation.
+  /*
+   * Pointer movement only decides persistence. No geometry is ever read or
+   * written here, so an open SC preview cannot drift vertically/horizontally.
+   */
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
@@ -335,13 +345,13 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       pointerRef.current = { x: event.clientX, y: event.clientY };
 
       if (activeHover?.owner !== ownerRef.current) {
-        finishClose();
+        resetImmediately();
         return;
       }
 
-      if (pointerIsOnSurface()) {
+      if (pointerIsOnOurSurface()) {
         clearCloseTimer();
-        cancelClosing();
+        setClosing(false);
         setIntent(true);
         return;
       }
@@ -351,7 +361,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
     document.addEventListener("pointermove", onPointerMove, true);
     return () => document.removeEventListener("pointermove", onPointerMove, true);
-  }, [open, pointerIsOnSurface, clearCloseTimer, cancelClosing, scheduleClose, finishClose]);
+  }, [open, pointerIsOnOurSurface, clearCloseTimer, scheduleClose, resetImmediately]);
 
   useEffect(() => () => {
     clearTimers();
@@ -371,7 +381,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     onLeave,
     onOverlayEnter,
     onOverlayLeave,
-    closePreview: requestClose,
+    closePreview: closeAnimated,
   };
 }
 
@@ -386,15 +396,15 @@ export function ExpandOverlay({
 }: any) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const [geometry, setGeometry] = useState<any>(null);
-  const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
+  const [phase, setPhase] = useState<"measure" | "from" | "open" | "close">("measure");
 
+  /* Final rectangle is measured once per opening and then frozen. */
   const calculateGeometry = useCallback(() => {
     const node = modalRef.current;
     const card = position?.cardRect as DOMRect | undefined;
     if (!node || !card || typeof window === "undefined") return null;
 
     const modalRect = node.getBoundingClientRect();
-    const scale = 1 / SCALE_FACTOR;
     const fallback = Math.max(16, Math.round(window.innerWidth * 0.04));
     const rowStart = Number.isFinite(position?.rowStart) ? Number(position.rowStart) : fallback;
     const rowEnd = Number.isFinite(position?.rowEnd)
@@ -417,16 +427,20 @@ export function ExpandOverlay({
     const left = Math.round(Math.min(Math.max(desiredLeft, minLeft), maxLeft));
     const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
 
-    let scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
-    if (edge === "left") scaledLeft = left;
-    if (edge === "right") scaledLeft = left + modalRect.width - modalRect.width * scale;
-    const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
+    /*
+     * True FLIP transform: at t=0 the modal's width and top-left map exactly
+     * onto the original card. The transform then resolves to identity.
+     */
+    const startScale = card.width / modalRect.width;
+    const startX = Math.round(card.left - left);
+    const startY = Math.round(card.top - top);
 
     return {
       left,
       top,
-      resetX: Math.round(card.left - scaledLeft),
-      resetY: Math.round(card.top - scaledTop),
+      startScale,
+      startX,
+      startY,
       edge,
     };
   }, [position]);
@@ -437,15 +451,23 @@ export function ExpandOverlay({
     setGeometry(null);
     setPhase("measure");
 
-    let frame = requestAnimationFrame(() => {
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
       const next = calculateGeometry();
       if (!next) return;
+
       setGeometry(next);
-      setPhase("reset");
-      frame = requestAnimationFrame(() => setPhase("open"));
+      setPhase("from");
+
+      // A second frame guarantees the browser paints the exact source-card
+      // geometry before starting SC's fast expansion.
+      secondFrame = requestAnimationFrame(() => setPhase("open"));
     });
 
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
   }, [position, calculateGeometry]);
 
   useEffect(() => {
@@ -479,18 +501,28 @@ export function ExpandOverlay({
   const left = geometry?.left ?? fallbackLeft;
   const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
 
-  let transform = "translate3d(0,0,0) scale(1)";
+  const sourceTransform = geometry
+    ? `translate3d(${geometry.startX}px, ${geometry.startY}px, 0) scale(${geometry.startScale})`
+    : "translate3d(0,0,0) scale(1)";
+
+  let transform = sourceTransform;
   let opacity = 0;
   let transition = "none";
+  let pointerEvents: any = "none";
 
-  if (phase === "reset" && geometry) {
-    transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
-  } else if (phase === "open" && geometry) {
+  if (phase === "from" && geometry) {
     opacity = 1;
-    transition = `transform ${OPEN_DURATION_MS}ms ${EASE}, opacity ${OPACITY_OPEN_MS}ms linear`;
+    pointerEvents = "auto";
+  } else if (phase === "open" && geometry) {
+    transform = "translate3d(0,0,0) scale(1)";
+    opacity = 1;
+    pointerEvents = "auto";
+    transition = `transform ${OPEN_DURATION_MS}ms ${EASE}`;
   } else if (phase === "close" && geometry) {
-    transform = `translate3d(${geometry.resetX}px, ${geometry.resetY}px, 0) scale(${1 / SCALE_FACTOR})`;
-    transition = `transform ${CLOSE_DURATION_MS}ms ${EASE}, opacity ${OPACITY_CLOSE_MS}ms linear`;
+    transform = sourceTransform;
+    opacity = 0;
+    pointerEvents = "none";
+    transition = `transform ${CLOSE_DURATION_MS}ms ${EASE}, opacity ${Math.min(80, CLOSE_DURATION_MS)}ms linear`;
   }
 
   const handleOverlayClick = (event: any) => {
@@ -501,12 +533,6 @@ export function ExpandOverlay({
     ) return;
     onClick?.(event);
   };
-
-  const transformOrigin = edge === "left"
-    ? "0% 50%"
-    : edge === "right"
-      ? "100% 50%"
-      : "50% 50%";
 
   return createPortal(
     <div className="flix-netflix-preview-portal">
@@ -527,18 +553,18 @@ export function ExpandOverlay({
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
           position: "fixed",
           width: `${modalWidth}px`,
-          transformOrigin,
+          transformOrigin: "0 0",
           top: `${Math.round(top)}px`,
           left: `${Math.round(left)}px`,
           transform,
           zIndex: 10000,
           opacity,
           transition,
-          pointerEvents: phase === "measure" ? "none" : "auto",
+          pointerEvents,
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden",
           perspective: "1000px",
-          willChange: "transform, opacity",
+          willChange: phase === "open" || phase === "close" ? "transform, opacity" : "auto",
         }}
       >
         {children}
