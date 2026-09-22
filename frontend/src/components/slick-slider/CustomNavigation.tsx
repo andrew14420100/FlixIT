@@ -23,9 +23,7 @@ const ArrowStyle = styled(Box)(({ theme }) => ({
   userSelect: "none",
   WebkitTapHighlightColor: "transparent",
 
-  ".slider-row:hover &": {
-    opacity: 1,
-  },
+  ".slider-row:hover &": { opacity: 1 },
 
   "& svg": {
     fontSize: "clamp(25px, 2.25vw, 42px)",
@@ -39,13 +37,11 @@ const ArrowStyle = styled(Box)(({ theme }) => ({
     background: "rgba(20,20,20,.72)",
   },
 
-  "&:hover svg": {
-    transform: "scale(1.22)",
-  },
+  "&:hover svg": { transform: "scale(1.22)" },
 
-  [theme.breakpoints.down("sm")]: {
-    display: "none",
-  },
+  // SC touch layout is swipe-only; desktop navigation handles would cover the
+  // first/last poster and make the mobile composition look broken.
+  [theme.breakpoints.down("md")]: { display: "none" },
 }));
 
 interface CustomNaviationProps {
@@ -66,8 +62,6 @@ export default function CustomNavigation({
   activeSlideIndex,
 }: CustomNaviationProps) {
   const stopMouseDown = (event: any) => {
-    // Prevent a navigation handle press from becoming a drag/click on the card
-    // underneath it. This mirrors Netflix's edge-handle interaction.
     event.preventDefault();
     event.stopPropagation();
   };
