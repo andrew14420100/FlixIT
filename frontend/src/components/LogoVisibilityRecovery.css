@@ -1,0 +1,45 @@
+/* Final visibility guard for the FlixIT header wordmark and Home Hero title logo.
+   Loaded after the Home/Netflix override styles so later visual tuning cannot
+   accidentally hide either logo. */
+
+[data-testid="main-header"] .flixit-logo,
+[data-testid="main-header"] [data-testid="header-logo-link"] {
+  display: flex !important;
+  align-items: center !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: relative !important;
+  z-index: 5 !important;
+  flex: 0 0 auto !important;
+}
+
+[data-testid="main-header"] [data-testid="header-logo-svg"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: auto !important;
+  height: 36px !important;
+  min-width: 140px !important;
+  overflow: visible !important;
+}
+
+[data-testid="home-page"] [data-testid="hero-logo"].netflix-home-logo {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: relative !important;
+  z-index: 6 !important;
+}
+
+[data-testid="home-page"] [data-testid="hero-title-fallback"] {
+  display: inline-block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: relative !important;
+  z-index: 6 !important;
+}
+
+[data-testid="home-page"] .netflix-home-brand-mark {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
