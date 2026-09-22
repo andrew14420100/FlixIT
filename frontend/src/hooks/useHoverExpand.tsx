@@ -5,25 +5,23 @@ import "src/components/NetflixMiniModalExact.css";
 import "src/components/NetflixMotionOverrides.css";
 
 /*
- * SC hover behaviour rebuilt from the supplied reference video.
+ * StreamingCommunity-style hover controller.
  *
- * Principles:
- * - one hover owner for the whole page, including the opening delay;
- * - short intent delay;
- * - one FLIP expansion from the exact source-card rectangle;
- * - final geometry is frozen for the lifetime of the preview;
- * - moving inside card/preview never restarts or repositions it;
- * - moving to another card cancels the previous pending/open preview first.
+ * The supplied SC computed styles establish the important animation contract:
+ * - final top/left/width already belong to the dialog;
+ * - transform-origin: center center;
+ * - final transform: translateY(0px) scale(1);
+ * - transition: transform 200ms;
+ * - opacity stays at 1;
+ * - one preview at a time.
  */
 const SCALE_FACTOR = 1.5;
 const MIN_MODAL_WIDTH = 320;
 const OPEN_DELAY_MS = 135;
-const OPEN_DURATION_MS = 155;
-const CLOSE_DURATION_MS = 105;
-const LEAVE_GRACE_MS = 125;
+const TRANSFORM_DURATION_MS = 200;
+const LEAVE_GRACE_MS = 150;
 const VIEWPORT_GUTTER = 4;
 const POINTER_PAD = 8;
-const EASE = "cubic-bezier(.21,0,.07,1)";
 
 type HoverEdge = "left" | "center" | "right";
 
@@ -156,7 +154,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     clearCloseTimer();
   }, [clearOpenTimer, clearCloseTimer]);
 
-  /* Immediate reset is used when ownership changes to another card. */
   const resetImmediately = useCallback(() => {
     clearTimers();
     openRef.current = false;
@@ -194,7 +191,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       return true;
     }
 
-    // There is only one preview by construction, therefore this is ours.
     const preview = document.querySelector(".previewModal--container") as HTMLElement | null;
     if (preview?.isConnected && pointInsideRect(x, y, preview.getBoundingClientRect(), POINTER_PAD)) {
       return true;
@@ -235,7 +231,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null;
       finishAnimatedClose();
-    }, CLOSE_DURATION_MS + 16);
+    }, TRANSFORM_DURATION_MS + 16);
   }, [closing, clearOpenTimer, clearCloseTimer, finishAnimatedClose, resetImmediately]);
 
   const scheduleClose = useCallback(() => {
@@ -265,7 +261,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     setClosing(false);
     setIntent(true);
 
-    // Same card while pending/open: keep it alive without replaying anything.
     if (openTimerRef.current || openRef.current) return;
 
     openTimerRef.current = setTimeout(() => {
@@ -273,7 +268,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
       if (activeHover?.owner !== ownerRef.current || !element.isConnected) return;
 
-      // A pending hover may only open while the pointer is still on its source.
       const rect = element.getBoundingClientRect();
       const { x, y } = pointerRef.current;
       if (!pointInsideRect(x, y, rect, POINTER_PAD)) {
@@ -300,14 +294,11 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const onLeave = useCallback((event?: any) => {
     updatePointer(pointerRef, event);
 
-    // During intent delay SC simply cancels the opening when the source is left.
     if (!openRef.current) {
       resetImmediately();
       return;
     }
 
-    // The expanded preview overlaps the source, so mouseleave alone is not a
-    // close signal. Give the pointer a short bridge into the preview.
     scheduleClose();
   }, [resetImmediately, scheduleClose]);
 
@@ -334,10 +325,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     scheduleClose();
   }, [ref, clearCloseTimer, scheduleClose]);
 
-  /*
-   * Pointer movement only decides persistence. No geometry is ever read or
-   * written here, so an open SC preview cannot drift vertically/horizontally.
-   */
   useEffect(() => {
     if (!open || typeof document === "undefined") return;
 
@@ -398,7 +385,11 @@ export function ExpandOverlay({
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "from" | "open" | "close">("measure");
 
-  /* Final rectangle is measured once per opening and then frozen. */
+  /*
+   * SC sets the dialog at its final top/left/width and animates only transform.
+   * We therefore calculate those final coordinates once and never change them
+   * until the preview is removed.
+   */
   const calculateGeometry = useCallback(() => {
     const node = modalRef.current;
     const card = position?.cardRect as DOMRect | undefined;
@@ -416,6 +407,7 @@ export function ExpandOverlay({
     if (edge === "left") desiredLeft = rowStart;
     if (edge === "right") desiredLeft = rowEnd - modalRect.width;
 
+    /* Keep the media/card centre as the visual expansion anchor. */
     const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
     const minLeft = edge === "left" ? rowStart : VIEWPORT_GUTTER;
     const rightGutter = edge === "right"
@@ -427,20 +419,23 @@ export function ExpandOverlay({
     const left = Math.round(Math.min(Math.max(desiredLeft, minLeft), maxLeft));
     const top = Math.round(Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop));
 
+    const startScale = Math.max(0.01, card.width / modalRect.width);
+
     /*
-     * True FLIP transform: at t=0 the modal's width and top-left map exactly
-     * onto the original card. The transform then resolves to identity.
+     * With center-center transform origin, scale preserves the dialog centre.
+     * translateY only compensates if viewport clamping moved the final dialog
+     * away from the source card's centre. This mirrors SC's translateY+scale
+     * transform rather than translating on both axes.
      */
-    const startScale = card.width / modalRect.width;
-    const startX = Math.round(card.left - left);
-    const startY = Math.round(card.top - top);
+    const sourceCenterY = card.top + card.height / 2;
+    const finalCenterY = top + modalRect.height / 2;
+    const startTranslateY = Math.round(sourceCenterY - finalCenterY);
 
     return {
       left,
       top,
       startScale,
-      startX,
-      startY,
+      startTranslateY,
       edge,
     };
   }, [position]);
@@ -459,8 +454,6 @@ export function ExpandOverlay({
       setGeometry(next);
       setPhase("from");
 
-      // A second frame guarantees the browser paints the exact source-card
-      // geometry before starting SC's fast expansion.
       secondFrame = requestAnimationFrame(() => setPhase("open"));
     });
 
@@ -501,28 +494,24 @@ export function ExpandOverlay({
   const left = geometry?.left ?? fallbackLeft;
   const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
 
-  const sourceTransform = geometry
-    ? `translate3d(${geometry.startX}px, ${geometry.startY}px, 0) scale(${geometry.startScale})`
-    : "translate3d(0,0,0) scale(1)";
+  const startTransform = geometry
+    ? `translateY(${geometry.startTranslateY}px) scale(${geometry.startScale})`
+    : "translateY(0px) scale(1)";
 
-  let transform = sourceTransform;
-  let opacity = 0;
+  let transform = startTransform;
   let transition = "none";
   let pointerEvents: any = "none";
 
   if (phase === "from" && geometry) {
-    opacity = 1;
     pointerEvents = "auto";
   } else if (phase === "open" && geometry) {
-    transform = "translate3d(0,0,0) scale(1)";
-    opacity = 1;
+    transform = "translateY(0px) scale(1)";
+    transition = `transform ${TRANSFORM_DURATION_MS}ms`;
     pointerEvents = "auto";
-    transition = `transform ${OPEN_DURATION_MS}ms ${EASE}`;
   } else if (phase === "close" && geometry) {
-    transform = sourceTransform;
-    opacity = 0;
+    transform = startTransform;
+    transition = `transform ${TRANSFORM_DURATION_MS}ms`;
     pointerEvents = "none";
-    transition = `transform ${CLOSE_DURATION_MS}ms ${EASE}, opacity ${Math.min(80, CLOSE_DURATION_MS)}ms linear`;
   }
 
   const handleOverlayClick = (event: any) => {
@@ -545,26 +534,36 @@ export function ExpandOverlay({
         data-testid={testId}
         data-phase={phase}
         data-edge={edge}
-        className="previewModal--container has-smaller-buttons mini-modal"
+        className="previewModal--container preview-dialog has-smaller-buttons mini-modal"
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         onClick={handleOverlayClick}
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
-          position: "fixed",
+          position: "absolute",
           width: `${modalWidth}px`,
-          transformOrigin: "0 0",
           top: `${Math.round(top)}px`,
           left: `${Math.round(left)}px`,
           transform,
-          zIndex: 10000,
-          opacity,
+          transformOrigin: "center center",
           transition,
+          opacity: 1,
+          zIndex: 150,
+          borderRadius: ".4em",
+          boxShadow: "rgba(0, 0, 0, 0.75) 0px 3px 10px",
+          fontFamily: '"Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif',
+          fontSize: ".87vw",
+          lineHeight: "inherit",
+          color: "var(--color-text, #e8e8e8)",
+          userSelect: "none",
+          boxSizing: "border-box",
+          borderWidth: 0,
+          borderStyle: "solid",
+          borderColor: "#e5e7eb",
           pointerEvents,
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden",
-          perspective: "1000px",
-          willChange: phase === "open" || phase === "close" ? "transform, opacity" : "auto",
+          willChange: phase === "open" || phase === "close" ? "transform" : "auto",
         }}
       >
         {children}
