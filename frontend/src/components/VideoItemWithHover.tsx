@@ -86,7 +86,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     if (!node || typeof IntersectionObserver === "undefined") { setNearViewport(true); return; }
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) { setNearViewport(true); observer.disconnect(); }
-    }, { rootMargin: "220px 360px" });
+    }, { rootMargin: "260px 420px" });
     observer.observe(node);
     return () => observer.disconnect();
   }, []);
@@ -94,8 +94,6 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const { open, intent, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
 
   const automaticAssets = useAutomaticMediaAssets({ ...video, id }, mType, nearViewport || intent || open || isMobile);
-  // Warm trailer + fallback logo before hover. Playback itself is still gated by
-  // TRAILER_HOVER_DELAY_MS below, so prefetched cards no longer start instantly.
   const deferredAssets = useDeferredMediaAssets({ ...video, id }, mType, nearViewport || intent || open);
   const assets = useMemo(() => ({ ...(automaticAssets || {}), ...(deferredAssets || {}) }), [automaticAssets, deferredAssets]);
 
@@ -128,13 +126,10 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const exactScPoster = explicitScPoster || (
     automaticAssets?.poster_source === "streamingcommunity" ? automaticPoster : null
   );
-  const posterCandidates = useMemo(() => unique([
-    exactScPoster,
-  ]), [exactScPoster]);
+  const posterCandidates = useMemo(() => unique([exactScPoster]), [exactScPoster]);
 
   const usePosterCard = isMobile;
   const imageCandidates = usePosterCard ? posterCandidates : landscapeCandidates;
-
   const title = automaticAssets?.title || video?.title || video?.name || "";
   const detailHref = `/${MAIN_PATH.browse}/${typeSlug}/${id}`;
 
@@ -179,7 +174,17 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   );
   const hoverLogoUrl = scHoverLogo || firstLogo(deferredAssets?.logo_path, deferredAssets?.fallback_logo_path);
   const hoverArtwork = heroLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
+  const hoverCoverUrl = automaticLandscape || mappedBackdrop || (legacyLandscapeEmbedded ? legacyLandscape : null) || hoverArtwork;
   const hoverPoster = automaticPoster || mappedPoster || hoverArtwork;
+
+  useEffect(() => {
+    if (!nearViewport || !hoverLogoUrl || typeof Image === "undefined") return;
+    const image = new Image();
+    image.decoding = "async";
+    image.fetchPriority = "high";
+    image.src = hoverLogoUrl;
+  }, [nearViewport, hoverLogoUrl]);
+
   const staticReady = usePosterCard
     ? !!exactScPoster
     : imageCandidates.length > 0 && !!automaticAssets?.card_ready;
@@ -219,7 +224,13 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
             onDetail={goDetail}
             watch={watch}
           />
-          <HoverTrailerOverlay url={trailerUrl} logoUrl={hoverLogoUrl} delay={trailerDelay} onOpen={goDetail} />
+          <HoverTrailerOverlay
+            url={trailerUrl}
+            logoUrl={hoverLogoUrl}
+            coverUrl={hoverCoverUrl}
+            delay={trailerDelay}
+            onOpen={goDetail}
+          />
         </ExpandOverlay>
       ) : null}
     </>
