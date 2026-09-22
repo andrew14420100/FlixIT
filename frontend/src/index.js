@@ -16,18 +16,23 @@ import { extendedApi } from "./store/slices/configuration";
 import palette from "./theme/palette";
 import router from "./routes";
 import MainLoadingScreen from "./components/MainLoadingScreen";
-import { installEpisodeAvailabilityFilter } from "./lib/installEpisodeAvailabilityFilter";
 
-installEpisodeAvailabilityFilter();
-store.dispatch(extendedApi.endpoints.getConfiguration.initiate(undefined));
+// Availability is now annotated by the backend and enhanced only on TV detail
+// routes. The previous global fetch interceptor blocked every season response
+// while it opened one player request per episode, which was a major source of
+// slow Detail loads and duplicated network work.
+queueMicrotask(() => {
+  store.dispatch(extendedApi.endpoints.getConfiguration.initiate(undefined));
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000,
-      gcTime: 10 * 60 * 1000,
+      staleTime: 10 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
       refetchOnWindowFocus: false,
       refetchOnMount: false,
+      refetchOnReconnect: false,
       retry: 1,
     },
   },
