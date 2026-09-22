@@ -1,34 +1,34 @@
 // @ts-nocheck
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import "src/components/NetflixMiniModalExact.css";
 import "src/components/NetflixMotionOverrides.css";
 import "src/components/NetflixHoverMotionExact.css";
 
 /*
- * Netflix mini-modal motion reconstructed from the user's live Netflix captures.
- * Captured opening state:
- *   width: source width * 1.5 (366px from a ~244px card)
- *   transform-origin: 50% 50%
- *   transform: translateX(0px) translateY(0px) scale(.666667) translateZ(0px)
- *   box-shadow: none
- *   opacity: 1
+ * Netflix mini-modal motion reconstructed from the user's live frame capture.
  *
- * Captured final state:
- *   transform: none
- *   box-shadow: rgba(0,0,0,.75) 0 3px 10px
- *   opacity: 1
+ * Directly observed:
+ * - the modal is first measured offscreen at top/left -9999px with opacity 0;
+ * - final width is 1.5x the source card (366px from a 244px card);
+ * - the visible opening keyframe starts at scale(.666667);
+ * - the opening keyframe has a positive translateY (56px in the 366px sample);
+ * - transform is updated inline every frame while computed CSS transition is 0s;
+ * - opacity fades in separately, almost linearly over ~50ms;
+ * - the shadow is already present while the opening opacity is still 0;
+ * - the separately captured close animation is opacity 1 -> 0, 150ms linear, fill both.
  *
- * Web Animations inspection from Netflix:
- *   duration: 150ms
- *   easing: linear
- *   two keyframes
- *
- * The 300ms hover-intent delay is kept separate from the 150ms Netflix motion.
+ * The opening transform curve below uses Netflix's motion bezier already present
+ * in the supplied/reconstructed Netflix CSS and is driven by rAF, not a CSS
+ * transition. 300ms matches the measured early transform samples closely.
  */
 const OPEN_DELAY_MS = 300;
-const TRANSFORM_DURATION_MS = 150;
+const OPEN_MOTION_MS = 300;
+const OPEN_OPACITY_DELAY_MS = 7;
+const OPEN_OPACITY_MS = 50;
+const CLOSE_FADE_MS = 150;
 const INITIAL_SCALE = 0.666667;
+const NETFLIX_SHADOW = "rgba(0, 0, 0, 0.75) 0px 3px 10px";
 
 type AnchorData = {
   offsetX: number;
@@ -39,12 +39,58 @@ type AnchorData = {
   anchor: HTMLElement | null;
 };
 
+type MotionGeometry = {
+  top: number;
+  left: number;
+  modalWidth: number;
+  modalHeight: number;
+  playerHeight: number;
+  startTranslateY: number;
+  transformOrigin: string;
+};
+
 function isElement(value: any): value is Element {
   return typeof Element !== "undefined" && value instanceof Element;
 }
 
 function hasPreview() {
   return typeof document !== "undefined" && !!document.querySelector(".preview-wrap");
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
+}
+
+/* Evaluate cubic-bezier(.21, 0, .07, 1) by solving x(t) and returning y(t). */
+function netflixMotionProgress(progress: number) {
+  const x = clamp01(progress);
+  if (x <= 0 || x >= 1) return x;
+
+  const x1 = 0.21;
+  const y1 = 0;
+  const x2 = 0.07;
+  const y2 = 1;
+  let low = 0;
+  let high = 1;
+  let t = x;
+
+  for (let i = 0; i < 18; i += 1) {
+    t = (low + high) / 2;
+    const inv = 1 - t;
+    const bx =
+      3 * inv * inv * t * x1 +
+      3 * inv * t * t * x2 +
+      t * t * t;
+    if (bx < x) low = t;
+    else high = t;
+  }
+
+  const inv = 1 - t;
+  return (
+    3 * inv * inv * t * y1 +
+    3 * inv * t * t * y2 +
+    t * t * t
+  );
 }
 
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
@@ -92,7 +138,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     removeTimerRef.current = setTimeout(() => {
       removeTimerRef.current = null;
       finishClose();
-    }, TRANSFORM_DURATION_MS);
+    }, CLOSE_FADE_MS);
   }, [clearOpenTimer, clearRemoveTimer, finishClose]);
 
   const onEnter = useCallback((event?: any) => {
@@ -103,7 +149,10 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     clearRemoveTimer();
     setIntent(true);
 
-    if (openRef.current) return;
+    if (openRef.current) {
+      setClosing(false);
+      return;
+    }
 
     openTimerRef.current = setTimeout(() => {
       openTimerRef.current = null;
@@ -131,8 +180,6 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const onLeave = useCallback((event?: any) => {
     const related = event?.relatedTarget;
 
-    // Keep the preview alive while the pointer crosses directly from the
-    // source card into the teleported mini-modal.
     if (isElement(related) && related.closest(".preview-wrap")) return;
 
     clearOpenTimer();
@@ -141,6 +188,10 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
 
   const onOverlayEnter = useCallback(() => {
     clearRemoveTimer();
+    if (openRef.current) {
+      setClosing(false);
+      setIntent(true);
+    }
   }, [clearRemoveTimer]);
 
   const onOverlayLeave = useCallback(() => {
@@ -178,53 +229,182 @@ export function ExpandOverlay({
   children,
   testId,
 }: any) {
-  const [ready, setReady] = useState(false);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const openRafRef = useRef<number>(0);
+  const closeAnimationRef = useRef<Animation | null>(null);
+  const [geometry, setGeometry] = useState<MotionGeometry | null>(null);
 
-  useEffect(() => {
-    setReady(false);
-    let secondFrame = 0;
-    const firstFrame = requestAnimationFrame(() => {
-      // Paint Netflix's captured 2/3-scale keyframe first, then run the
-      // captured 150ms linear transform to the final state.
-      secondFrame = requestAnimationFrame(() => setReady(true));
+  const cancelOpenMotion = useCallback(() => {
+    if (openRafRef.current) {
+      cancelAnimationFrame(openRafRef.current);
+      openRafRef.current = 0;
+    }
+  }, []);
+
+  const cancelCloseMotion = useCallback(() => {
+    if (closeAnimationRef.current) {
+      closeAnimationRef.current.cancel();
+      closeAnimationRef.current = null;
+    }
+  }, []);
+
+  /* Netflix first mounts/measures the full modal offscreen. */
+  useLayoutEffect(() => {
+    const node = modalRef.current;
+    if (!position || !node || typeof window === "undefined") return;
+
+    cancelOpenMotion();
+    cancelCloseMotion();
+    setGeometry(null);
+
+    node.dataset.phase = "measure";
+    node.style.transition = "none";
+    node.style.top = "-9999px";
+    node.style.left = "-9999px";
+    node.style.transform = "none";
+    node.style.transformOrigin = "50% 50%";
+    node.style.opacity = "0";
+    node.style.boxShadow = "none";
+
+    const modalRect = node.getBoundingClientRect();
+    const player = node.querySelector(".previewModal--player_container") as HTMLElement | null;
+    const playerHeight = player?.getBoundingClientRect().height || position.height / INITIAL_SCALE;
+    const modalHeight = modalRect.height || node.offsetHeight || playerHeight;
+    const modalWidth = position.modalWidth;
+
+    const sourceLeft = position.offsetX + window.scrollX;
+    const sourceRight = sourceLeft + position.width;
+    const sourceCenterX = sourceLeft + position.width / 2;
+    const sourceCenterY = position.offsetY + position.height / 2;
+
+    let left = sourceCenterX - modalWidth / 2;
+    let transformOrigin = "50% 50%";
+
+    // For true viewport-edge cards, grow inward so the scaled first frame still
+    // lies exactly on the source tile. Normal cards keep Netflix's 50% 50% origin.
+    if (left < window.scrollX) {
+      left = sourceLeft;
+      transformOrigin = "0% 50%";
+    } else if (left + modalWidth > window.scrollX + window.innerWidth) {
+      left = sourceRight - modalWidth;
+      transformOrigin = "100% 50%";
+    }
+
+    const top = sourceCenterY - modalHeight / 2;
+
+    // This reproduces the captured +56px start translation. It is not a magic
+    // constant: it aligns the scaled 16:9 player portion with the source card
+    // while the larger info panel is already mounted below it.
+    const startTranslateY = INITIAL_SCALE * Math.max(0, modalHeight - playerHeight) / 2;
+
+    setGeometry({
+      top,
+      left,
+      modalWidth,
+      modalHeight,
+      playerHeight,
+      startTranslateY,
+      transformOrigin,
     });
+  }, [position, cancelOpenMotion, cancelCloseMotion]);
 
-    return () => {
-      cancelAnimationFrame(firstFrame);
-      if (secondFrame) cancelAnimationFrame(secondFrame);
+  /* Frame-driven opening: Netflix mutates inline transform, with CSS transition 0s. */
+  useLayoutEffect(() => {
+    const node = modalRef.current;
+    if (!geometry || !node || closing || typeof window === "undefined") return;
+
+    cancelOpenMotion();
+    cancelCloseMotion();
+
+    node.dataset.phase = "opening";
+    node.style.transition = "none";
+    node.style.opacity = "0";
+    node.style.boxShadow = NETFLIX_SHADOW;
+    node.style.transformOrigin = geometry.transformOrigin;
+    node.style.transform = `translateY(${geometry.startTranslateY}px) scale(${INITIAL_SCALE}) translateZ(0px)`;
+    node.style.willChange = "transform, opacity";
+
+    let startTime: number | null = null;
+
+    const tick = (timestamp: number) => {
+      if (startTime === null) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+      const rawProgress = clamp01(elapsed / OPEN_MOTION_MS);
+      const motionProgress = netflixMotionProgress(rawProgress);
+      const scale = INITIAL_SCALE + (1 - INITIAL_SCALE) * motionProgress;
+      const translateY = geometry.startTranslateY * (1 - motionProgress);
+      const opacity = clamp01((elapsed - OPEN_OPACITY_DELAY_MS) / OPEN_OPACITY_MS);
+
+      node.style.transform = `translateX(0px) translateY(${translateY}px) scale(${scale}) translateZ(0px)`;
+      node.style.opacity = String(opacity);
+
+      if (rawProgress < 1) {
+        openRafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      openRafRef.current = 0;
+      node.style.transform = "none";
+      node.style.opacity = "1";
+      node.style.willChange = "transform";
+      node.dataset.phase = "open";
     };
-  }, [position]);
+
+    // Keep the measured first keyframe paintable for one frame before motion.
+    openRafRef.current = requestAnimationFrame(tick);
+
+    return cancelOpenMotion;
+  }, [geometry, closing, cancelOpenMotion, cancelCloseMotion]);
+
+  /* The captured Netflix close animation is a 150ms linear opacity fade only. */
+  useLayoutEffect(() => {
+    const node = modalRef.current;
+    if (!geometry || !node) return;
+
+    if (!closing) {
+      cancelCloseMotion();
+      if (node.dataset.phase === "close") {
+        node.style.opacity = "1";
+        node.dataset.phase = "open";
+      }
+      return;
+    }
+
+    cancelOpenMotion();
+    cancelCloseMotion();
+    node.dataset.phase = "close";
+    node.style.transform = "none";
+    node.style.opacity = "1";
+
+    if (typeof node.animate === "function") {
+      const animation = node.animate(
+        [{ opacity: "1" }, { opacity: "0" }],
+        {
+          duration: CLOSE_FADE_MS,
+          easing: "linear",
+          fill: "both",
+          iterations: 1,
+        }
+      );
+      closeAnimationRef.current = animation;
+    } else {
+      node.style.transition = `opacity ${CLOSE_FADE_MS}ms linear`;
+      requestAnimationFrame(() => {
+        node.style.opacity = "0";
+      });
+    }
+
+    return cancelCloseMotion;
+  }, [closing, geometry, cancelOpenMotion, cancelCloseMotion]);
+
+  useEffect(() => () => {
+    cancelOpenMotion();
+    cancelCloseMotion();
+  }, [cancelOpenMotion, cancelCloseMotion]);
 
   if (!position || typeof document === "undefined" || typeof window === "undefined") return null;
 
-  const viewportWidth = window.innerWidth;
-  const modalWidth = Math.round(position.width * 1.5);
-
-  // The scaled 2/3 mini-modal is exactly the source-card width. Position the
-  // modal so its center keyframe grows out of the source card, while edge cards
-  // stay inside the catalogue viewport.
-  let left = position.offsetX;
-  let transformOrigin = "left center";
-
-  if (left > (viewportWidth / 100) * 70) {
-    left -= position.width / 2;
-    transformOrigin = "right center";
-  } else if (left > (viewportWidth / 100) * 5) {
-    left -= position.width / 4;
-    transformOrigin = "50% 50%";
-  }
-
-  // Preserve the existing vertical anchor while removing SC's synthetic
-  // translateY motion. Netflix's captured transform starts at translateY(0).
-  const top = Math.round(position.offsetY - (position.height / 3) * 2);
-  const expanded = ready && !closing;
-
-  const initialTransform = `translateX(0px) translateY(0px) scale(${INITIAL_SCALE}) translateZ(0px)`;
-  const transform = expanded ? "none" : initialTransform;
-  const phase = closing ? "close" : expanded ? "open" : "opening";
-  const shadow = expanded
-    ? "rgba(0, 0, 0, 0.75) 0px 3px 10px"
-    : "none";
+  const modalWidth = Math.round(position.modalWidth);
 
   const handleOverlayClick = (event: any) => {
     const target = event?.target;
@@ -250,12 +430,13 @@ export function ExpandOverlay({
       }}
     >
       <div
+        ref={modalRef}
         role="dialog"
         aria-modal="true"
         tabIndex={-1}
         data-uia="modal-motion-container-MINI_MODAL"
         data-testid={testId}
-        data-phase={phase}
+        data-phase={geometry ? (closing ? "close" : "opening") : "measure"}
         data-motion="netflix"
         className="previewModal--container has-smaller-buttons mini-modal"
         onMouseEnter={onMouseEnter}
@@ -263,27 +444,27 @@ export function ExpandOverlay({
         onClick={handleOverlayClick}
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
-          ["--flix-netflix-shadow" as any]: shadow,
+          ["--flix-netflix-shadow" as any]: geometry ? NETFLIX_SHADOW : "none",
           position: "absolute",
           zIndex: 3,
           borderRadius: "6px",
-          top: `${top}px`,
-          left: `${Math.round(left)}px`,
+          top: geometry ? `${geometry.top}px` : "-9999px",
+          left: geometry ? `${geometry.left}px` : "-9999px",
           width: `${modalWidth}px`,
-          transform,
-          transformOrigin,
-          transition: `transform ${TRANSFORM_DURATION_MS}ms linear`,
-          opacity: 1,
-          boxShadow: shadow,
+          transform: "none",
+          transformOrigin: geometry?.transformOrigin || "50% 50%",
+          transition: "none",
+          opacity: geometry ? 1 : 0,
+          boxShadow: geometry ? NETFLIX_SHADOW : "none",
           fontFamily: '"Netflix Sans", "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, sans-serif',
           fontSize: "16px",
           lineHeight: "var(--base-line-height)",
           userSelect: "none",
           boxSizing: "inherit",
-          pointerEvents: "auto",
+          pointerEvents: geometry ? "auto" : "none",
           backfaceVisibility: "hidden",
           WebkitBackfaceVisibility: "hidden",
-          willChange: "transform",
+          willChange: "transform, opacity",
         }}
       >
         {children}
