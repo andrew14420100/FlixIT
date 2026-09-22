@@ -14,12 +14,17 @@ const OPACITY_CLOSE_MS = 120;
 const VIEWPORT_GUTTER = 4;
 const EASE = "cubic-bezier(.21,0,.07,1)";
 
+type HoverEdge = "left" | "center" | "right";
+
 type AnchorData = {
   cardRect: DOMRect;
   modalWidth: number;
   anchor: HTMLElement | null;
   pointerX?: number;
   pointerY?: number;
+  rowStart?: number;
+  rowEnd?: number;
+  edge?: HoverEdge;
 };
 
 function isDomNode(value: any): value is Node {
@@ -40,7 +45,8 @@ function pointInsideRect(x: number, y: number, rect?: DOMRect | null) {
  * Once opened, the preview is visually locked in the viewport. Page/ancestor
  * scrolling never drags the preview along with the card. Scroll only checks
  * whether the pointer still intersects the source card; once it does not, the
- * preview closes. Edge cards expand inward, matching SC carousel behaviour.
+ * preview closes. The first visible card uses the real row-title x-axis as its
+ * expansion origin, so title, card and hover remain perfectly aligned.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -99,12 +105,29 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
       openTimerRef.current = setTimeout(() => {
         if (!element.isConnected) return;
         const rect = element.getBoundingClientRect();
+        const row = element.closest(".slider-row") as HTMLElement | null;
+        const header = row?.querySelector(".row-header") as HTMLElement | null;
+        const headerRect = header?.getBoundingClientRect();
+        const rowRect = row?.getBoundingClientRect();
+        const rowStart = headerRect?.left ?? rect.left;
+        const rowEnd = rowRect?.right ?? window.innerWidth - rowStart;
+        const edgeTolerance = Math.max(18, Math.round(rect.width * 0.16));
+        const edge: HoverEdge =
+          Math.abs(rect.left - rowStart) <= edgeTolerance
+            ? "left"
+            : Math.abs(rowEnd - rect.right) <= edgeTolerance
+              ? "right"
+              : "center";
+
         setPosition({
           cardRect: rect,
           modalWidth: Math.max(Math.round(rect.width * SCALE_FACTOR), MIN_MODAL_WIDTH),
           anchor: element,
           pointerX,
           pointerY,
+          rowStart,
+          rowEnd,
+          edge,
         });
         setOpen(true);
       }, OPEN_DELAY_MS);
@@ -148,7 +171,7 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     closing,
     position,
     width: position?.modalWidth,
-    align: "center",
+    align: position?.edge || "center",
     onEnter,
     onLeave,
     onOverlayLeave,
@@ -190,30 +213,32 @@ export function ExpandOverlay({
 
     const modalRect = node.getBoundingClientRect();
     const scale = 1 / SCALE_FACTOR;
-    const rowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
-    const edgeThreshold = rowGutter + 22;
+    const fallbackRowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
+    const rowStart = Number.isFinite(position?.rowStart)
+      ? Number(position.rowStart)
+      : fallbackRowGutter;
+    const rowEnd = Number.isFinite(position?.rowEnd)
+      ? Number(position.rowEnd)
+      : window.innerWidth - fallbackRowGutter;
+    const edge = (position?.edge || "center") as HoverEdge;
 
     const centeredLeft = card.left + card.width / 2 - modalRect.width / 2;
     let desiredLeft = centeredLeft;
 
-    // First card: keep the left edge near the catalogue gutter so expansion
-    // happens mostly toward the right, like SC. Mirror it on the far right.
-    if (card.left <= edgeThreshold) {
-      desiredLeft = Math.max(rowGutter, card.left);
-    } else if (card.right >= window.innerWidth - edgeThreshold) {
-      desiredLeft = Math.min(
-        card.right - modalRect.width,
-        window.innerWidth - rowGutter - modalRect.width
-      );
+    // The first card is pinned to the exact x-axis of the row title. Its modal
+    // grows only inward/rightward. The last card mirrors the same behaviour.
+    if (edge === "left") {
+      desiredLeft = rowStart;
+    } else if (edge === "right") {
+      desiredLeft = rowEnd - modalRect.width;
     }
 
     const desiredTop = card.top + card.height / 2 - modalRect.height / 2;
-
-    const minLeft = card.left <= edgeThreshold ? rowGutter : VIEWPORT_GUTTER;
+    const minLeft = edge === "left" ? rowStart : VIEWPORT_GUTTER;
+    const maxRightGutter = edge === "right" ? Math.max(0, window.innerWidth - rowEnd) : VIEWPORT_GUTTER;
     const maxLeft = Math.max(
       minLeft,
-      window.innerWidth - modalRect.width -
-        (card.right >= window.innerWidth - edgeThreshold ? rowGutter : VIEWPORT_GUTTER)
+      window.innerWidth - modalRect.width - maxRightGutter
     );
     const maxTop = Math.max(
       VIEWPORT_GUTTER,
@@ -225,13 +250,15 @@ export function ExpandOverlay({
       Math.min(Math.max(desiredTop, VIEWPORT_GUTTER), maxTop)
     );
 
-    const scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
+    let scaledLeft = left + (modalRect.width - modalRect.width * scale) / 2;
+    if (edge === "left") scaledLeft = left;
+    if (edge === "right") scaledLeft = left + modalRect.width - modalRect.width * scale;
     const scaledTop = top + (modalRect.height - modalRect.height * scale) / 2;
     const resetX = Math.round(card.left - scaledLeft);
     const resetY = Math.round(card.top - scaledTop);
 
-    return { left, top, resetX, resetY };
-  }, [currentCardRect]);
+    return { left, top, resetX, resetY, edge };
+  }, [currentCardRect, position]);
 
   useLayoutEffect(() => {
     if (!position || !modalRef.current || typeof window === "undefined") return;
@@ -310,13 +337,22 @@ export function ExpandOverlay({
 
   const card = currentCardRect() || (position.cardRect as DOMRect);
   const modalWidth = position.modalWidth || MIN_MODAL_WIDTH;
-  const rowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
-  const fallbackLeft = card.left <= rowGutter + 22
-    ? Math.max(rowGutter, card.left)
-    : Math.min(
-        Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
-        Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
-      );
+  const fallbackRowGutter = Math.max(16, Math.round(window.innerWidth * 0.04));
+  const rowStart = Number.isFinite(position?.rowStart)
+    ? Number(position.rowStart)
+    : fallbackRowGutter;
+  const rowEnd = Number.isFinite(position?.rowEnd)
+    ? Number(position.rowEnd)
+    : window.innerWidth - fallbackRowGutter;
+  const edge = (position?.edge || "center") as HoverEdge;
+  const fallbackLeft = edge === "left"
+    ? rowStart
+    : edge === "right"
+      ? Math.max(VIEWPORT_GUTTER, rowEnd - modalWidth)
+      : Math.min(
+          Math.max(card.left + card.width / 2 - modalWidth / 2, VIEWPORT_GUTTER),
+          Math.max(VIEWPORT_GUTTER, window.innerWidth - modalWidth - VIEWPORT_GUTTER)
+        );
   const left = geometry?.left ?? fallbackLeft;
   const top = geometry?.top ?? Math.max(VIEWPORT_GUTTER, card.top);
 
@@ -342,6 +378,8 @@ export function ExpandOverlay({
     onClick?.(event);
   };
 
+  const transformOrigin = edge === "left" ? "0% 50%" : edge === "right" ? "100% 50%" : "50% 50%";
+
   return createPortal(
     <div className="flix-netflix-preview-portal">
       <div
@@ -352,13 +390,14 @@ export function ExpandOverlay({
         data-uia="modal-motion-container-MINI_MODAL"
         data-testid={testId}
         data-phase={phase}
+        data-edge={edge}
         className="previewModal--container has-smaller-buttons mini-modal"
         onMouseLeave={onMouseLeave}
         onClick={handleOverlayClick}
         style={{
           ["--flix-mini-modal-width" as any]: `${modalWidth}px`,
           width: `${modalWidth}px`,
-          transformOrigin: "50% 50%",
+          transformOrigin,
           top: `${Math.round(top)}px`,
           left: `${Math.round(left)}px`,
           transform,
