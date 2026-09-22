@@ -11,6 +11,7 @@ const OPEN_DURATION_MS = 280;
 const CLOSE_DURATION_MS = 220;
 const OPACITY_OPEN_MS = 70;
 const OPACITY_CLOSE_MS = 120;
+const LEAVE_GRACE_MS = 160;
 const VIEWPORT_GUTTER = 4;
 const EASE = "cubic-bezier(.21,0,.07,1)";
 
@@ -92,9 +93,9 @@ function measureEdges(element: HTMLElement, rect: DOMRect) {
 
 /**
  * SC-style hover expansion shared by all public rails.
- * The card/row geometry is captured once, when the hover opens. The preview
- * then lives in a fixed portal and must not follow the source card when the
- * page scrolls vertically.
+ * Geometry is captured once at open time so ordinary pointer movement never
+ * drags the preview around. A short leave grace lets the pointer travel from
+ * the source tile into the portal without the preview disappearing.
  */
 export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   const openTimerRef = useRef<any>(null);
@@ -130,6 +131,11 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     setPosition(null);
   }, []);
 
+  const closeImmediately = useCallback(() => {
+    clearTimers();
+    finishClose();
+  }, [clearTimers, finishClose]);
+
   const requestClose = useCallback(() => {
     clearOpenTimer();
     setIntent(false);
@@ -138,6 +144,15 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     clearCloseTimer();
     closeTimerRef.current = setTimeout(finishClose, CLOSE_DURATION_MS + 20);
   }, [open, closing, clearOpenTimer, clearCloseTimer, finishClose]);
+
+  const scheduleClose = useCallback(() => {
+    clearOpenTimer();
+    clearCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null;
+      requestClose();
+    }, LEAVE_GRACE_MS);
+  }, [clearOpenTimer, clearCloseTimer, requestClose]);
 
   const openFrom = useCallback((element: HTMLElement | null, event?: any) => {
     if (!element || typeof window === "undefined") return;
@@ -165,21 +180,42 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
   }, [clearTimers]);
 
   const onEnter = useCallback((event?: any) => {
+    clearCloseTimer();
     openFrom((event?.currentTarget || ref.current) as HTMLElement | null, event);
-  }, [openFrom, ref]);
+  }, [clearCloseTimer, openFrom, ref]);
 
   const onLeave = useCallback((event?: any) => {
     clearOpenTimer();
     const related = event?.relatedTarget;
     if (isDomElement(related) && related.closest(".previewModal--container")) return;
-    requestClose();
-  }, [clearOpenTimer, requestClose]);
+    scheduleClose();
+  }, [clearOpenTimer, scheduleClose]);
+
+  const onOverlayEnter = useCallback(() => {
+    clearCloseTimer();
+    setIntent(true);
+  }, [clearCloseTimer]);
 
   const onOverlayLeave = useCallback((event?: any) => {
     const related = event?.relatedTarget;
     if (isDomNode(related) && ref.current?.contains(related)) return;
-    requestClose();
-  }, [requestClose, ref]);
+    scheduleClose();
+  }, [scheduleClose, ref]);
+
+  // Real page scrolling should never leave a fixed preview floating over a
+  // different rail. Close it immediately, without a closing translation.
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+
+    const onPageScroll = () => closeImmediately();
+    window.addEventListener("scroll", onPageScroll, true);
+    window.visualViewport?.addEventListener?.("scroll", onPageScroll);
+
+    return () => {
+      window.removeEventListener("scroll", onPageScroll, true);
+      window.visualViewport?.removeEventListener?.("scroll", onPageScroll);
+    };
+  }, [open, closeImmediately]);
 
   useEffect(() => clearTimers, [clearTimers]);
 
@@ -194,18 +230,19 @@ export function useHoverExpand(ref: React.RefObject<HTMLElement>) {
     align: position?.edge || "center",
     onEnter,
     onLeave,
+    onOverlayEnter,
     onOverlayLeave,
     closePreview: requestClose,
   };
 }
 
-export function ExpandOverlay({ position, closing = false, onMouseLeave, onClick, children, testId }: any) {
+export function ExpandOverlay({ position, closing = false, onMouseEnter, onMouseLeave, onClick, children, testId }: any) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const [geometry, setGeometry] = useState<any>(null);
   const [phase, setPhase] = useState<"measure" | "reset" | "open" | "close">("measure");
 
-  // IMPORTANT: use only the snapshot captured at open time. Reading
-  // anchor.getBoundingClientRect() here would make the preview follow the page.
+  // Use the opening snapshot only. Pointer movement inside the expanded card
+  // must never change its top/left coordinates.
   const currentCardRect = useCallback(
     () => position?.cardRect as DOMRect | undefined,
     [position]
@@ -250,8 +287,6 @@ export function ExpandOverlay({ position, closing = false, onMouseLeave, onClick
     };
   }, [currentCardRect, position]);
 
-  // Calculate the final viewport position once per hover opening. No scroll,
-  // pointermove, resize or visualViewport listener is allowed to rewrite it.
   useLayoutEffect(() => {
     if (!position || !modalRef.current || typeof window === "undefined") return;
     setGeometry(null);
@@ -325,6 +360,7 @@ export function ExpandOverlay({ position, closing = false, onMouseLeave, onClick
         data-phase={phase}
         data-edge={edge}
         className="previewModal--container has-smaller-buttons mini-modal"
+        onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         onClick={handleOverlayClick}
         style={{
