@@ -32,6 +32,14 @@ const PLAY_TEST_IDS = new Set([
   "PlayCircleIcon",
   "PlayCircleOutlineIcon",
 ]);
+const PLAY_ICON_SELECTOR = [
+  'svg[data-testid="PlayArrowIcon"]',
+  'svg[data-testid="PlayArrowRoundedIcon"]',
+  'svg[data-testid="PlayCircleIcon"]',
+  'svg[data-testid="PlayCircleOutlineIcon"]',
+  'svg[data-testid^="PlayArrow"]',
+  'svg[data-testid^="PlayCircle"]',
+].join(',');
 
 function looksLikePlayControl(svg: SVGSVGElement) {
   const testId = svg.getAttribute("data-testid") || "";
@@ -67,16 +75,18 @@ function normalizePlaySvg(svg: SVGSVGElement) {
 }
 
 function scanPlayIcons(scope: ParentNode = document) {
-  const nodes: SVGSVGElement[] = [];
-  if (scope instanceof SVGSVGElement) nodes.push(scope);
-  scope.querySelectorAll?.("svg").forEach((node: any) => nodes.push(node));
-  nodes.forEach(normalizePlaySvg);
+  if (scope instanceof SVGSVGElement) {
+    normalizePlaySvg(scope);
+    return;
+  }
+  scope.querySelectorAll?.(PLAY_ICON_SELECTOR).forEach((node: any) => normalizePlaySvg(node));
 }
 
 /**
- * MUI and the player render play icons from several components. New nodes are
- * normalized once when they enter the DOM. Watching aria/title/data-testid
- * mutations document-wide was unnecessary and expensive on card-heavy pages.
+ * MUI play icons can be introduced by lazy routes. Watch only newly-added nodes,
+ * but query specifically for known Play SVGs instead of rescanning every SVG in
+ * every carousel/card subtree. Custom FlixIT PlayGlyph instances already have
+ * the correct path and require no observer work.
  */
 export function GlobalPlayGlyphNormalizer() {
   useEffect(() => {
@@ -100,7 +110,14 @@ export function GlobalPlayGlyphNormalizer() {
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         record.addedNodes.forEach((node) => {
-          if (node instanceof Element) schedule(node);
+          if (!(node instanceof Element)) return;
+          if (node instanceof SVGSVGElement) {
+            if (node.matches(PLAY_ICON_SELECTOR)) schedule(node);
+            return;
+          }
+          if (node.matches?.('button, a, [role="button"]') || node.querySelector?.(PLAY_ICON_SELECTOR)) {
+            schedule(node);
+          }
         });
       }
     });
