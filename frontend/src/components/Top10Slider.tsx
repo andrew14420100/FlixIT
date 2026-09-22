@@ -49,6 +49,17 @@ function top10Key(item: any) {
   return `${type}-${id}`;
 }
 
+function tmdbPosterFallback(value: any) {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^\/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp)$/i.test(raw)) {
+    return `https://image.tmdb.org/t/p/w780${raw}`;
+  }
+  return null;
+}
+
 export default function Top10Slider({ title, items }) {
   const sliderRef = useRef<Slider>(null);
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -62,8 +73,6 @@ export default function Top10Slider({ title, items }) {
   const up600 = useMediaQuery("(min-width:600px)");
   const tiles = up1536 ? 6 : up1200 ? 5 : up900 ? 4 : up600 ? 3 : 2;
 
-  // The bootstrap owns ranking and ordering. Do not append a second async
-  // trending/popular pool here: SC's row is stable from first paint.
   const candidates = useMemo(() => {
     const seen = new Set<string>();
     return (items || [])
@@ -77,8 +86,29 @@ export default function Top10Slider({ title, items }) {
   }, [items]);
 
   const artworkBatch = useArtworkBatch(candidates, candidates.length > 0);
+
+  // Resolve the poster once at row level and pass that exact URL to the ranked
+  // card. Previously isReady() could approve a title from batch data while the
+  // child mounted with the unhydrated original item, leaving the poster area
+  // empty. SC artwork remains first choice; TMDB is only the final visual
+  // fallback so a Top 10 slot never renders as a blank grey block.
   const published = useMemo(
-    () => candidates.filter((item) => artworkBatch.isReady(item, "poster")).slice(0, 10),
+    () => candidates
+      .map((item) => {
+        const resolved = artworkBatch.getResolved(item);
+        const scPoster = resolved?.poster_path || resolved?.poster || resolved?.poster_url || item?.__artwork?.poster_url;
+        const fallbackPoster = tmdbPosterFallback(item?.poster_path || item?.poster);
+        const poster = scPoster || fallbackPoster;
+        if (!poster) return null;
+        return {
+          ...item,
+          netflix_ranked_artwork_url: poster,
+          poster_path: poster,
+          __resolved_top10_poster: poster,
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 10),
     [candidates, artworkBatch.data]
   );
 
@@ -177,11 +207,7 @@ export default function Top10Slider({ title, items }) {
         "&:hover": { zIndex: 100 },
       }}
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        className="row-header"
-      >
+      <Stack direction="row" alignItems="center" className="row-header">
         <Typography className="label" sx={{ fontWeight: 700, color: "#e8e8e8" }}>
           {title}
         </Typography>
@@ -213,12 +239,7 @@ export default function Top10Slider({ title, items }) {
             onPrevious={() => sliderRef.current?.slickPrev()}
             activeSlideIndex={activeSlideIndex}
           >
-            <StyledSlider
-              ref={sliderRef}
-              {...settings}
-              padding={ARROW_MAX_WIDTH}
-              theme={theme}
-            >
+            <StyledSlider ref={sliderRef} {...settings} padding={ARROW_MAX_WIDTH} theme={theme}>
               {published.map((item, publishedIndex) => {
                 const id = item.id || item.tmdbId || item.tmdb_id;
                 const mediaType =
