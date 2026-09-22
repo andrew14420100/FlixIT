@@ -100,7 +100,16 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     return () => observer.disconnect();
   }, []);
 
-  const { open, intent, closing, position, onEnter, onLeave, onOverlayLeave } = useHoverExpand(ref);
+  const {
+    open,
+    intent,
+    closing,
+    position,
+    onEnter,
+    onLeave,
+    onOverlayEnter,
+    onOverlayLeave,
+  } = useHoverExpand(ref);
 
   const automaticAssets = useAutomaticMediaAssets(
     { ...video, id },
@@ -281,6 +290,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
         <ExpandOverlay
           position={position}
           closing={closing}
+          onMouseEnter={onOverlayEnter}
           onMouseLeave={onOverlayLeave}
           onClick={goDetail}
           testId={`hover-overlay-${id}`}
