@@ -46,6 +46,17 @@ function warmImage(url: any, priority: "high" | "auto" = "auto") {
   image.src = src;
 }
 
+function warmCriticalHero(hero: any) {
+  if (!hero) return;
+  warmImage(hero?.assets?.logo_path || hero?.assets?.fallback_logo_path, "high");
+  warmImage(
+    hero?.customBackdrop ||
+      hero?.assets?.hero_backdrop_path ||
+      hero?.assets?.backdrop_path,
+    "high"
+  );
+}
+
 function itemKey(item) {
   const id = Number(item?.tmdbId || item?.tmdb_id || item?.id || 0);
   if (!id) return "";
@@ -84,34 +95,41 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
     .filter((row) => row.items.length > 0);
 }
 
-async function fetchHomeBootstrap(signal?: AbortSignal) {
-  const globalScope = typeof window !== "undefined" ? (window as any) : null;
-  if (globalScope?.__flixitHomeBootstrapPromise) {
-    return globalScope.__flixitHomeBootstrapPromise;
-  }
+let sharedHomeBootstrapPromise: Promise<any> | null = null;
+function fetchHomeBootstrap(_signal?: AbortSignal) {
+  if (sharedHomeBootstrapPromise) return sharedHomeBootstrapPromise;
 
   const request = fetch(HOME_BOOTSTRAP_URL, {
-    signal,
     headers: { Accept: "application/json" },
   }).then(async (response) => {
     if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
     const data = await response.json();
     if (!Array.isArray(data?.rows)) throw new Error("Home bootstrap non valido");
+    warmCriticalHero(data?.hero);
     return data;
   });
 
-  if (globalScope) {
-    globalScope.__flixitHomeBootstrapPromise = request.finally(() => {
-      window.setTimeout(() => {
-        if (globalScope.__flixitHomeBootstrapPromise === request) {
-          globalScope.__flixitHomeBootstrapPromise = null;
-        }
-      }, 1500);
-    });
-    return globalScope.__flixitHomeBootstrapPromise;
-  }
-  return request;
+  const shared = request.finally(() => {
+    window.setTimeout(() => {
+      if (sharedHomeBootstrapPromise === shared) {
+        sharedHomeBootstrapPromise = null;
+      }
+    }, 1500);
+  });
+  sharedHomeBootstrapPromise = shared;
+  return shared;
 }
+
+// Re-visits: warm the cached Hero before the component tree mounts.
+const MODULE_HOME_CACHE = typeof window !== "undefined" ? readHomeCache() : null;
+if (MODULE_HOME_CACHE?.data?.hero) warmCriticalHero(MODULE_HOME_CACHE.data.hero);
+
+// First visits: start the single Home request as soon as this route module is
+// evaluated. React Query reuses the same promise, so there is no duplicate call.
+const EARLY_HOME_BOOTSTRAP_PROMISE =
+  typeof window !== "undefined"
+    ? fetchHomeBootstrap().catch(() => null)
+    : null;
 
 export async function loader() {
   return null;
@@ -167,10 +185,16 @@ export function Component() {
     [continueItems]
   );
 
-  const initialCache = useMemo(() => readHomeCache(), []);
+  const initialCache = useMemo(() => MODULE_HOME_CACHE || readHomeCache(), []);
   const { data: bootstrap } = useQuery({
     queryKey: ["home-bootstrap-v4-fuller"],
-    queryFn: ({ signal }: any) => fetchHomeBootstrap(signal),
+    queryFn: async ({ signal }: any) => {
+      const early = EARLY_HOME_BOOTSTRAP_PROMISE
+        ? await EARLY_HOME_BOOTSTRAP_PROMISE
+        : null;
+      if (early?.rows) return early;
+      return fetchHomeBootstrap(signal);
+    },
     initialData: initialCache?.data,
     initialDataUpdatedAt: initialCache?.savedAt || 0,
     staleTime: HOME_STALE_MS,
@@ -195,9 +219,6 @@ export function Component() {
     bootstrap?.hero?.assets?.backdrop_path ||
     null;
 
-  // Warm critical Hero imagery as soon as the bootstrap object exists. The Hero
-  // component mounts with the same URLs, so these requests are reused from the
-  // browser cache instead of starting after the first paint.
   useEffect(() => {
     warmImage(heroLogoUrl, "high");
     warmImage(heroBackdropUrl, "high");
