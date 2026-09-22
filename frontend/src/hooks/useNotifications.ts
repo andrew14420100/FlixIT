@@ -7,6 +7,8 @@ const EMPTY = { items: [], unread: 0, must_reset_password: false, role: "user" }
 const SHARED_NOTIFICATION_TTL_MS = 15 * 1000;
 
 let notificationsMemo = null;
+const notificationSubscribers = new Set<() => void>();
+let notificationRuntimeCleanup: (() => void) | null = null;
 
 export function authHeaders() {
   return { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("user_token") || ""}` };
@@ -49,11 +51,6 @@ async function requestNotifications(token) {
   }
 }
 
-/**
- * Header and SessionGuards need the same payload. Coalesce them so mounting the
- * shell does not issue two identical authenticated requests, and keep a very
- * short memo window so security/session changes are still observed promptly.
- */
 export function fetchNotificationsShared(force = false) {
   const token = localStorage.getItem("user_token") || "";
   if (!token) return Promise.resolve(null);
@@ -72,8 +69,43 @@ export function fetchNotificationsShared(force = false) {
   return promise;
 }
 
-// Notifications are low urgency. Poll once a minute only while the document is
-// visible; focus/visibility immediately refreshes after the user comes back.
+function notifySubscribers() {
+  notificationSubscribers.forEach((callback) => {
+    try { callback(); } catch {}
+  });
+}
+
+function ensureNotificationRuntime() {
+  if (notificationRuntimeCleanup || typeof window === "undefined") return;
+
+  const tick = () => {
+    if (document.visibilityState === "visible") notifySubscribers();
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === "visible") notifySubscribers();
+  };
+
+  const interval = window.setInterval(tick, POLL_MS);
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("focus", tick, { passive: true });
+
+  notificationRuntimeCleanup = () => {
+    window.clearInterval(interval);
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("focus", tick);
+    notificationRuntimeCleanup = null;
+  };
+}
+
+export function subscribeNotificationRefresh(callback: () => void) {
+  notificationSubscribers.add(callback);
+  ensureNotificationRuntime();
+  return () => {
+    notificationSubscribers.delete(callback);
+    if (notificationSubscribers.size === 0) notificationRuntimeCleanup?.();
+  };
+}
+
 export function useNotifications() {
   const [state, setState] = useState(EMPTY);
   const loggedIn = !!localStorage.getItem("user_token");
@@ -87,21 +119,14 @@ export function useNotifications() {
   useEffect(() => {
     if (!loggedIn) return;
     refresh();
-    const id = window.setInterval(refresh, POLL_MS);
-    const onVisibility = () => document.visibilityState === "visible" && refresh();
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", refresh, { passive: true });
-    return () => {
-      window.clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", refresh);
-    };
+    return subscribeNotificationRefresh(refresh);
   }, [loggedIn, refresh]);
 
   const markRead = useCallback(async (ids) => {
     setState((s) => ({ ...s, unread: ids ? Math.max(0, s.unread - ids.length) : 0, items: s.items.map((n) => (!ids || ids.includes(n.id) ? { ...n, read: true } : n)) }));
     invalidateNotificationsMemo();
     await fetch(`${API_URL}/api/notifications/read`, { method: "POST", headers: authHeaders(), body: JSON.stringify({ ids }) }).catch(() => {});
+    notifySubscribers();
   }, []);
 
   return { ...state, loggedIn, refresh, markRead };
