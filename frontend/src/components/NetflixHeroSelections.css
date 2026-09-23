@@ -50,7 +50,9 @@
     font-family: "Netflix Sans", "Helvetica Neue", "Segoe UI", Roboto, Ubuntu, sans-serif !important;
   }
 
-  /* Netflix renders the video as absolute 100% x 100%, cover, center top. */
+  /* Netflix renders the video as absolute full-bleed. Some direct trailer
+     files include thin cinematic bars inside the source, so keep a small
+     center crop that fills the Hero completely instead of exposing them. */
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard [data-testid="hero-backdrop"],
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard .netflix-home-video-layer {
     position: absolute !important;
@@ -83,8 +85,9 @@
     min-width: 100% !important;
     min-height: 100% !important;
     object-fit: cover !important;
-    object-position: center top !important;
-    transform: none !important;
+    object-position: center center !important;
+    transform: scale(1.10) !important;
+    transform-origin: center center !important;
   }
 
   [data-testid="home-page"] [data-testid="hero-section"].netflix-home-billboard.flixit-hero-video-playing [data-testid="hero-backdrop"] {
