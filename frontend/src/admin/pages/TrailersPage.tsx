@@ -45,6 +45,23 @@ function qualityLabel(candidate: any) {
   return `${q}${candidate.hdr ? candidate.dolby_vision ? " Dolby Vision" : " HDR" : " SDR"}`;
 }
 
+function isItalianCandidate(candidate: any) {
+  const lang = String(candidate?.audio_language || candidate?.language || "")
+    .trim()
+    .toLowerCase()
+    .replace("_", "-");
+  return (
+    lang === "it" ||
+    lang === "ita" ||
+    lang.startsWith("it-") ||
+    lang.startsWith("ita-") ||
+    lang === "italian" ||
+    lang === "italiano" ||
+    lang === "italiana" ||
+    lang.startsWith("italian-")
+  );
+}
+
 export default function TrailersPage() {
   const [mediaType, setMediaType] = useState("movie");
   const [tmdbId, setTmdbId] = useState("");
@@ -139,8 +156,12 @@ export default function TrailersPage() {
   };
 
   const alternatives = data?.alternatives || [];
+  const italianAlternatives = alternatives.filter(isItalianCandidate);
+  const fallbackAlternatives = alternatives.filter((candidate: any) => !isItalianCandidate(candidate));
+  const displayedAlternatives = [...italianAlternatives, ...fallbackAlternatives];
   const automaticId = data?.selected?.candidate_id;
   const manualId = data?.manual?.candidate?.candidate_id;
+  const selectedItalian = italianAlternatives.find((candidate: any) => candidate.candidate_id === automaticId);
 
   return (
     <Box data-testid="trailers-admin-page">
@@ -202,19 +223,24 @@ export default function TrailersPage() {
 
           <Paper sx={{ p: 2.5, bgcolor: "#141414", color: "#fff" }}>
             <Typography sx={{ fontWeight: 700, mb: 1 }}>Alternative valide</Typography>
-            <Typography sx={{ color: "grey.500", mb: 2, fontSize: 13 }}>Selezione automatica: {data?.selected ? `${data.selected.source} — ${qualityLabel(data.selected)} — ${data.selected.audio_language || "lingua n/d"}` : "nessun trailer >=1080p verificato"}</Typography>
+            <Typography sx={{ color: "grey.500", mb: 1, fontSize: 13 }}>Selezione automatica: {data?.selected ? `${data.selected.source} — ${qualityLabel(data.selected)} — ${data.selected.audio_language || "lingua n/d"}` : "nessun trailer verificato"}</Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 2 }}>
+              <Chip size="small" label={`Italiani: ${italianAlternatives.length}`} color={italianAlternatives.length ? "success" : "default"} />
+              <Chip size="small" label={`Fallback: ${fallbackAlternatives.length}`} />
+              {selectedItalian && <Chip size="small" label="Automatico: ITALIANO" color="success" />}
+            </Stack>
             <TableContainer>
               <Table size="small">
                 <TableHead><TableRow><TableCell>Provider</TableCell><TableCell>Tipo</TableCell><TableCell>Qualità</TableCell><TableCell>Lingua</TableCell><TableCell>Bitrate</TableCell><TableCell>Codec</TableCell><TableCell>Confidence</TableCell><TableCell>Stato</TableCell><TableCell /></TableRow></TableHead>
                 <TableBody>
-                  {alternatives.map((c: any) => (
+                  {displayedAlternatives.map((c: any) => (
                     <TableRow key={c.candidate_id} selected={c.candidate_id === automaticId || c.candidate_id === manualId}>
                       <TableCell>{c.source}</TableCell><TableCell>{c.trailer_type}</TableCell><TableCell>{qualityLabel(c)}</TableCell><TableCell>{c.audio_language || "—"}</TableCell><TableCell>{c.bitrate ? `${(c.bitrate / 1_000_000).toFixed(1)} Mbps` : "—"}</TableCell><TableCell>{c.codec || "—"}</TableCell><TableCell>{Math.round((c.confidence || 0) * 100)}%</TableCell>
-                      <TableCell>{c.candidate_id === manualId ? <Chip size="small" label="MANUALE" color="warning" /> : c.candidate_id === automaticId ? <Chip size="small" label="SELEZIONATO AUTOMATICAMENTE" color="success" /> : ""}</TableCell>
+                      <TableCell>{c.candidate_id === manualId ? <Chip size="small" label="MANUALE" color="warning" /> : c.candidate_id === automaticId ? <Chip size="small" label={isItalianCandidate(c) ? "SELEZIONATO · IT" : "SELEZIONATO · FALLBACK"} color={isItalianCandidate(c) ? "success" : "warning"} /> : ""}</TableCell>
                       <TableCell><Button size="small" startIcon={<PlayCircleOutlineIcon />} onClick={() => setManual(c.candidate_id)}>Scegli</Button></TableCell>
                     </TableRow>
                   ))}
-                  {!alternatives.length && <TableRow><TableCell colSpan={9} sx={{ color: "grey.500", textAlign: "center", py: 4 }}>Nessuna alternativa valida ancora risolta.</TableCell></TableRow>}
+                  {!displayedAlternatives.length && <TableRow><TableCell colSpan={9} sx={{ color: "grey.500", textAlign: "center", py: 4 }}>Nessuna alternativa valida ancora risolta.</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </TableContainer>
