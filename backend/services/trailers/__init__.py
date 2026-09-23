@@ -65,6 +65,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "fallback_resolution": 720,
             "upscaling": False,
             "automatic": True,
+            "italian_only": True,
         }
 
     def _language(value) -> str:
@@ -77,15 +78,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             or lang.startswith("it-")
             or lang in {"ita", "italian", "italiano", "italiana"}
             or lang.startswith("italian-")
-        )
-
-    def _is_english_language(value) -> bool:
-        lang = _language(value)
-        return bool(
-            lang == "en"
-            or lang.startswith("en-")
-            or lang in {"eng", "english", "inglese"}
-            or lang.startswith("english-")
         )
 
     @router.get("/api/public/trailer-config")
@@ -101,9 +93,11 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "fallback_resolution": cfg["fallback_resolution"],
             "upscaling": cfg["upscaling"],
             "automatic": True,
+            "italian_only": True,
+            "fallback_language": None,
             "theryston_enabled": True,
             "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
-            "language_priority": ["it-IT", "ita", "it", "en"],
+            "language_priority": ["it-IT", "ita", "it"],
         }
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
@@ -121,16 +115,13 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
 
         selected = result.get("selected") or {}
         selected_url = selected.get("trailer_url") or selected.get("manifest_url")
-        selected_language = selected.get("audio_language")
-        allowed_language = (
-            _is_italian_language(selected_language)
-            or _is_english_language(selected_language)
-            or result.get("source") == "manual"
-        )
+        selected_language = selected.get("audio_language") or selected.get("language")
+        allowed_language = _is_italian_language(selected_language)
 
-        # No Admin action is needed. The resolver continuously refreshes the
-        # catalogue in the background, preferring Italian and native 2160p.
-        if selected_url and allowed_language:
+        # Public playback is Italian-only. The resolver wrapper already rejects
+        # localized pages whose actual media audio is original/English/unknown;
+        # this endpoint keeps the same invariant as a final guard.
+        if selected_url and allowed_language and result.get("language_verified") is not False:
             return {
                 "trailer_key": selected_url,
                 "trailer_url": selected_url,
@@ -146,8 +137,10 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "preferred_resolution": 2160,
                 "minimum_resolution": 1080,
                 "fallback_resolution": 720,
-                "language": selected_language or ("manual" if result.get("source") == "manual" else None),
-                "language_priority": ["it-IT", "ita", "it", "en"],
+                "language": selected_language,
+                "language_priority": ["it-IT", "ita", "it"],
+                "italian_only": True,
+                "language_verified": True,
                 "automatic": True,
                 "youtube": False,
             }
@@ -167,7 +160,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "preferred_resolution": 2160,
             "minimum_resolution": 1080,
             "fallback_resolution": 720,
-            "language_priority": ["it-IT", "ita", "it", "en"],
+            "language_priority": ["it-IT", "ita", "it"],
+            "italian_only": True,
+            "language_verified": False,
+            "fallback_language": None,
+            "reason": result.get("reason") or "italian_audio_unavailable",
+            "refresh_pending": result.get("refresh_pending", False),
             "automatic": True,
             "youtube": False,
         }
