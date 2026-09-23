@@ -99,18 +99,41 @@ const router = createBrowserRouter([
   { path: "*", element: <ErrorPage /> },
 ]);
 
-// Once Home has had a chance to paint, warm the two chunks users most commonly
-// open next. This does not block first paint and makes card -> Detail -> Player
-// navigation feel much closer to an already-loaded native app.
+function canWarmLikelyNextRoutes() {
+  if (typeof navigator === "undefined") return true;
+  const connection =
+    (navigator as any).connection ||
+    (navigator as any).mozConnection ||
+    (navigator as any).webkitConnection;
+  if (!connection) return true;
+  if (connection.saveData) return false;
+  const effectiveType = String(connection.effectiveType || "").toLowerCase();
+  return effectiveType !== "slow-2g" && effectiveType !== "2g";
+}
+
+// Warm Detail and Watch only after the initial document has fully loaded. On
+// constrained or data-saver connections the browser should spend bandwidth on
+// Hero/card images and API data instead of speculative JavaScript chunks.
 if (typeof window !== "undefined" && isHomeRoute(window.location.pathname)) {
   const warmLikelyNextRoutes = () => {
+    if (!canWarmLikelyNextRoutes() || document.visibilityState === "hidden") return;
     import("src/pages/DetailPage").catch(() => {});
     import("src/pages/WatchPage").catch(() => {});
   };
-  if ("requestIdleCallback" in window) {
-    (window as any).requestIdleCallback(warmLikelyNextRoutes, { timeout: 3500 });
+
+  const scheduleWarm = () => {
+    if (!canWarmLikelyNextRoutes()) return;
+    if ("requestIdleCallback" in window) {
+      (window as any).requestIdleCallback(warmLikelyNextRoutes, { timeout: 6000 });
+    } else {
+      window.setTimeout(warmLikelyNextRoutes, 4000);
+    }
+  };
+
+  if (document.readyState === "complete") {
+    scheduleWarm();
   } else {
-    window.setTimeout(warmLikelyNextRoutes, 2000);
+    window.addEventListener("load", scheduleWarm, { once: true });
   }
 }
 
