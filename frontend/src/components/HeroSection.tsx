@@ -22,9 +22,38 @@ const DEFAULT_FEATURED_ID = 202208;
 const DEFAULT_FEATURED_TYPE = MEDIA_TYPE.Tv;
 const TRAILER_DELAY_MS = 2000;
 const STREAM_CACHE_PREFIX = "watch_stream_cache:";
+const TMDB_HERO_LOGO_BASE = "https://image.tmdb.org/t/p/original";
 
 function firstValue(...values: any[]) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function heroLogoUrl(value: any) {
+  const raw =
+    typeof value === "string"
+      ? value
+      : typeof value?.url === "string"
+      ? value.url
+      : "";
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  if (/^https?:\/\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) {
+    return text;
+  }
+  // The public Hero endpoint already returns the official TMDB title-logo path
+  // when one exists. Card artwork intentionally rejects TMDB imagery, but the
+  // Hero title treatment is a separate identity asset and must not disappear
+  // just because its path is relative.
+  if (text.startsWith("/")) return `${TMDB_HERO_LOGO_BASE}${text}`;
+  return null;
+}
+
+function firstHeroLogo(...values: any[]) {
+  for (const value of values) {
+    const resolved = heroLogoUrl(value);
+    if (resolved) return resolved;
+  }
+  return null;
 }
 
 function cachePrefetchedStream(typeSlug: string, id: number, data: any) {
@@ -55,9 +84,14 @@ function cachePrefetchedStream(typeSlug: string, id: number, data: any) {
 }
 
 function initialHeroLogo(hero: any) {
-  return tmdbImageUrl(
-    hero?.assets?.logo_path || hero?.assets?.fallback_logo_path,
-    "original"
+  return firstHeroLogo(
+    hero?.assets?.logo_path,
+    hero?.assets?.logo_url,
+    hero?.assets?.fallback_logo_path,
+    hero?.logo_path,
+    hero?.logoUrl,
+    hero?.detail?.netflix_logo_url,
+    hero?.detail?.logo_path
   );
 }
 
@@ -269,10 +303,15 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
       ...(automaticAssets || {}),
       ...(inlineAssets || {}),
       logo_path:
-        inlineAssets?.logo_path ||
         automaticAssets?.logo_path ||
+        automaticAssets?.fallback_logo_path ||
+        inlineAssets?.logo_path ||
+        inlineAssets?.logo_url ||
+        inlineAssets?.fallback_logo_path ||
         null,
       fallback_logo_path:
+        inlineAssets?.logo_path ||
+        inlineAssets?.logo_url ||
         inlineAssets?.fallback_logo_path ||
         automaticAssets?.fallback_logo_path ||
         null,
@@ -319,10 +358,25 @@ export default function HeroSection({ mediaType: _mediaType, initialHero = null 
     typeof window !== "undefined" ? window.innerHeight * 0.6 : 600
   );
 
-  const logoPath = tmdbImageUrl(assets?.logo_path, "original");
-  const fallbackLogoPath = tmdbImageUrl(
-    assets?.fallback_logo_path,
-    "original"
+  const logoPath = firstHeroLogo(
+    automaticAssets?.logo_path,
+    automaticAssets?.fallback_logo_path,
+    inlineAssets?.logo_path,
+    inlineAssets?.logo_url,
+    inlineAssets?.fallback_logo_path,
+    heroSettings?.logo_path,
+    heroSettings?.logoUrl,
+    detailData?.netflix_logo_url,
+    detailData?.logo_path,
+    assets?.logo_path
+  );
+  const fallbackLogoPath = firstHeroLogo(
+    inlineAssets?.logo_path,
+    inlineAssets?.logo_url,
+    inlineAssets?.fallback_logo_path,
+    automaticAssets?.fallback_logo_path,
+    detailData?.logo_path,
+    detailData?.netflix_logo_url
   );
 
   const backdropUrl = useMemo(() => {
