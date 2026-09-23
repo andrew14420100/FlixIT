@@ -346,7 +346,6 @@ export default function HomepageSlider({
               >
                 <StyledSlider ref={sliderRef} {...settings} theme={theme}>
                   {renderedItems.map((item, index) => {
-                    const id = item?.id || item?.tmdbId || item?.tmdb_id;
                     const mediaType = item?.type === "tv" || item?.media_type === "tv"
                       ? MEDIA_TYPE.Tv
                       : MEDIA_TYPE.Movie;
@@ -361,13 +360,7 @@ export default function HomepageSlider({
                         }}
                       >
                         <VideoItemWithHover
-                          video={{
-                            ...item,
-                            id,
-                            title: item?.title || item?.name,
-                            name: item?.title || item?.name,
-                            genre_ids: item?.genre_ids || [],
-                          }}
+                          video={item}
                           mediaType={mediaType}
                           watch={item?.watch}
                           suppressHover={isSliding}
