@@ -34,6 +34,15 @@ interface CatalogPageProps {
 const INITIAL_RENDER_LIMIT = 36;
 const RENDER_STEP = 36;
 
+function artworkKey(item: any, mediaType: MEDIA_TYPE) {
+  const id = Number(item?.tmdbId || item?.tmdb_id || item?.id || 0);
+  if (!id) return "";
+  const type = mediaType === MEDIA_TYPE.Tv || item?.type === "tv" || item?.media_type === "tv"
+    ? "tv"
+    : "movie";
+  return `${type}:${id}`;
+}
+
 export default function CatalogPage({ mediaType, title, categories }: CatalogPageProps) {
   const dispatch = useAppDispatch();
   const { data: genres = [] } = useGetGenresQuery(mediaType);
@@ -89,8 +98,16 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
   const availableResults = useAvailableItems(candidateResults, mediaType);
   const artworkBatch = useArtworkBatch(availableResults, availableResults.length > 0);
   const visible = useMemo(
-    () => availableResults.filter((item) => artworkBatch.isReady(item, "landscape")),
-    [availableResults, artworkBatch.data]
+    () => availableResults
+      .filter((item) => artworkBatch.isReady(item, "landscape"))
+      .map((item) => {
+        const raw = artworkBatch.byKey.get(artworkKey(item, mediaType));
+        // Giving the validated batch result directly to the card means its asset
+        // hook can render synchronously and skip a per-card viewport observer /
+        // individual resolver request. Fallback-only items remain untouched.
+        return raw?.active ? { ...item, __artwork: raw } : item;
+      }),
+    [availableResults, artworkBatch.data, mediaType]
   );
 
   const intersectionRef = useRef<HTMLDivElement>(null);
@@ -162,7 +179,7 @@ export default function CatalogPage({ mediaType, title, categories }: CatalogPag
           <Grid container spacing={2} data-testid="catalog-grid">
             {visible.map((video, idx) => (
               <Grid
-                key={`${video.id}_${idx}`}
+                key={`${video.id || video.tmdbId || video.tmdb_id}_${idx}`}
                 item xs={6} sm={4} md={3} lg={2}
                 sx={{
                   zIndex: 1,
