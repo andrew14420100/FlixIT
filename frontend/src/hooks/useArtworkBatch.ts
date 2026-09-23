@@ -9,8 +9,9 @@ import {
 } from "./useAutomaticMediaAssets";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
-const BATCH_VERSION = "sc-artwork-server-batch-v4-memory";
+const BATCH_VERSION = "sc-artwork-server-batch-v5-priority";
 const MAX_VISIBLE_CANDIDATES = 120;
+const PRIMARY_BATCH_SIZE = 24;
 const ARTWORK_STALE_MS = 24 * 60 * 60 * 1000;
 const ARTWORK_MEMORY_MAX = 12000;
 
@@ -26,10 +27,9 @@ type ArtworkMemoryEntry = {
   value: any;
 };
 
-// Batch query keys naturally change when a paginated grid grows. Without a
-// per-title cache, appending page 2 caused page 1 artwork to be requested again
-// inside the new larger signature. Keep the validated backend result by title so
-// Home rows, Film/Serie grids and future pages only request genuinely new ids.
+// Batch query signatures grow while catalogues paginate. Cache each backend
+// result by title so appending a page never re-requests artwork already seen in
+// another row, grid or route during the same session.
 const artworkMemory = new Map<string, ArtworkMemoryEntry>();
 
 function artworkKey(raw: any) {
@@ -155,12 +155,41 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     () => normalized.filter((entry) => !knownKeys.has(entry.key)),
     [normalized, knownKeys]
   );
-  const signature = useMemo(() => missing.map((entry) => entry.key).join("|"), [missing]);
 
-  const batchQuery = useQuery({
-    queryKey: [BATCH_VERSION, signature],
-    queryFn: ({ signal }: any) => fetchBatch(missing, signal),
-    enabled: !!enabled && missing.length > 0,
+  // Do not let a 50-title rail compete with Hero and the first visible cards in
+  // one large request. Resolve the first screenful first, then warm the rest of
+  // the rail only after that request has settled. Total coverage is unchanged,
+  // but initial network/JSON work is substantially less bursty.
+  const primaryMissing = useMemo(() => missing.slice(0, PRIMARY_BATCH_SIZE), [missing]);
+  const backgroundMissing = useMemo(() => missing.slice(PRIMARY_BATCH_SIZE), [missing]);
+  const primarySignature = useMemo(
+    () => primaryMissing.map((entry) => entry.key).join("|"),
+    [primaryMissing]
+  );
+  const backgroundSignature = useMemo(
+    () => backgroundMissing.map((entry) => entry.key).join("|"),
+    [backgroundMissing]
+  );
+
+  const primaryQuery = useQuery({
+    queryKey: [BATCH_VERSION, "primary", primarySignature],
+    queryFn: ({ signal }: any) => fetchBatch(primaryMissing, signal),
+    enabled: !!enabled && primaryMissing.length > 0,
+    staleTime: ARTWORK_STALE_MS,
+    gcTime: ARTWORK_STALE_MS * 7,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+
+  const primarySettled =
+    primaryMissing.length === 0 || primaryQuery.isSuccess || primaryQuery.isError;
+
+  const backgroundQuery = useQuery({
+    queryKey: [BATCH_VERSION, "background", backgroundSignature],
+    queryFn: ({ signal }: any) => fetchBatch(backgroundMissing, signal),
+    enabled: !!enabled && backgroundMissing.length > 0 && primarySettled,
     staleTime: ARTWORK_STALE_MS,
     gcTime: ARTWORK_STALE_MS * 7,
     refetchOnMount: false,
@@ -170,14 +199,15 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
   });
 
   const data = useMemo(() => {
-    const remote = Array.isArray(batchQuery.data?.items) ? batchQuery.data.items : [];
+    const primaryRemote = Array.isArray(primaryQuery.data?.items) ? primaryQuery.data.items : [];
+    const backgroundRemote = Array.isArray(backgroundQuery.data?.items) ? backgroundQuery.data.items : [];
     const map = new Map<string, any>();
-    [...embedded, ...memory, ...remote].forEach((raw: any) => {
+    [...embedded, ...memory, ...primaryRemote, ...backgroundRemote].forEach((raw: any) => {
       const key = artworkKey(raw);
       if (key) map.set(key, raw);
     });
     return [...map.values()];
-  }, [embedded, memory, batchQuery.data]);
+  }, [embedded, memory, primaryQuery.data, backgroundQuery.data]);
 
   const byKey = useMemo(() => {
     const map = new Map<string, any>();
@@ -244,17 +274,22 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     );
   };
 
+  const primaryFetching = primaryMissing.length > 0 && primaryQuery.isFetching;
+  const backgroundFetching = backgroundMissing.length > 0 && backgroundQuery.isFetching;
+
   return {
     data,
     byKey,
     getResolved,
     isReady,
     count: normalized.length,
-    catalogCount: Number(batchQuery.data?.catalog_count || 0),
-    isPending: missing.length > 0 && batchQuery.isPending && !data.length,
-    isFetching: missing.length > 0 && batchQuery.isFetching,
-    primaryPending: missing.length > 0 && batchQuery.isPending,
-    backgroundPending: false,
-    error: batchQuery.error,
+    catalogCount: Number(
+      primaryQuery.data?.catalog_count || backgroundQuery.data?.catalog_count || 0
+    ),
+    isPending: primaryMissing.length > 0 && primaryQuery.isPending && !data.length,
+    isFetching: primaryFetching || backgroundFetching,
+    primaryPending: primaryMissing.length > 0 && primaryQuery.isPending,
+    backgroundPending: backgroundFetching,
+    error: primaryQuery.error || backgroundQuery.error,
   };
 }
