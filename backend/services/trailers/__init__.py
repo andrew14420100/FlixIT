@@ -65,7 +65,8 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "fallback_resolution": 720,
             "upscaling": False,
             "automatic": True,
-            "italian_only": True,
+            "italian_preferred": True,
+            "italian_only": False,
         }
 
     def _language(value) -> str:
@@ -93,11 +94,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "fallback_resolution": cfg["fallback_resolution"],
             "upscaling": cfg["upscaling"],
             "automatic": True,
-            "italian_only": True,
-            "fallback_language": None,
+            "italian_preferred": True,
+            "italian_only": False,
+            "fallback_language": "original-temporary",
             "theryston_enabled": True,
             "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
-            "language_priority": ["it-IT", "ita", "it"],
+            "language_priority": ["it-IT", "ita", "it", "original"],
         }
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
@@ -116,12 +118,13 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         selected = result.get("selected") or {}
         selected_url = selected.get("trailer_url") or selected.get("manifest_url")
         selected_language = selected.get("audio_language") or selected.get("language")
-        allowed_language = _is_italian_language(selected_language)
+        italian = _is_italian_language(selected_language)
+        fallback_original = bool(result.get("fallback_original"))
 
-        # Public playback is Italian-only. The resolver wrapper already rejects
-        # localized pages whose actual media audio is original/English/unknown;
-        # this endpoint keeps the same invariant as a final guard.
-        if selected_url and allowed_language and result.get("language_verified") is not False:
+        # Italian remains the preferred automatic result. When providers have no
+        # verifiable Italian candidate yet, keep the existing trailer visible as
+        # a temporary fallback while the queue continues searching for Italian.
+        if selected_url and (italian or fallback_original):
             return {
                 "trailer_key": selected_url,
                 "trailer_url": selected_url,
@@ -138,9 +141,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "minimum_resolution": 1080,
                 "fallback_resolution": 720,
                 "language": selected_language,
-                "language_priority": ["it-IT", "ita", "it"],
-                "italian_only": True,
-                "language_verified": True,
+                "language_priority": ["it-IT", "ita", "it", "original"],
+                "italian_preferred": True,
+                "italian_only": False,
+                "language_verified": bool(result.get("language_verified")),
+                "fallback_original": fallback_original,
+                "refresh_pending": result.get("refresh_pending", False),
                 "automatic": True,
                 "youtube": False,
             }
@@ -160,11 +166,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "preferred_resolution": 2160,
             "minimum_resolution": 1080,
             "fallback_resolution": 720,
-            "language_priority": ["it-IT", "ita", "it"],
-            "italian_only": True,
+            "language_priority": ["it-IT", "ita", "it", "original"],
+            "italian_preferred": True,
+            "italian_only": False,
             "language_verified": False,
-            "fallback_language": None,
-            "reason": result.get("reason") or "italian_audio_unavailable",
+            "fallback_original": False,
+            "reason": result.get("reason") or "trailer_unavailable",
             "refresh_pending": result.get("refresh_pending", False),
             "automatic": True,
             "youtube": False,
