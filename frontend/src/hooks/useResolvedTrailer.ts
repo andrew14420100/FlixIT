@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "verified-italian-audio-v12";
+const TRAILER_QUERY_VERSION = "auto-italian-first-v13";
 
 function isBlockedVideoHost(value: string) {
   try {
@@ -46,8 +46,9 @@ export function browserSupportsHdr() {
 
 /**
  * Shared public trailer cache for Hero, hover cards and Detail.
- * The backend now exposes only candidates whose audio is verified Italian;
- * original/English audio is intentionally not used as a playback fallback.
+ * The backend prefers verified Italian audio and native quality up to 4K.
+ * If Italian is temporarily unavailable, the existing trailer can remain
+ * visible while the automatic Italian search continues in the background.
  */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
