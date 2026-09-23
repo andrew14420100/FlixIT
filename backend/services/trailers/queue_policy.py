@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import MethodType
 
 
@@ -16,26 +16,44 @@ def _dt(value):
         return None
 
 
-def install_queue_policy(resolver):
-    """Install a cache-aware, resumable policy for large catalogues.
+def _language(value) -> str:
+    return str(value or "").strip().lower().replace("_", "-")
 
-    Only a small number of workers perform provider work concurrently, but the
-    Mongo queue is kept filled in the background. Fresh resolved titles are
-    skipped, active jobs are deduplicated and scanning continues past already
-    resolved rows so an 18k catalogue cannot get stuck on its first page.
+
+def _is_italian(value) -> bool:
+    lang = _language(value)
+    return bool(
+        lang == "it"
+        or lang.startswith("it-")
+        or lang in {"ita", "italian", "italiano", "italiana"}
+        or lang.startswith("italian-")
+    )
+
+
+def _is_english(value) -> bool:
+    lang = _language(value)
+    return bool(
+        lang == "en"
+        or lang.startswith("en-")
+        or lang in {"eng", "english", "inglese"}
+        or lang.startswith("english-")
+    )
+
+
+def install_queue_policy(resolver):
+    """Install a cache-aware, resumable automatic trailer policy.
+
+    No Admin action is required: the catalogue is scanned continuously, missing
+    trailers are resolved first, English results are periodically retried in
+    search of Italian audio, and Italian 1080p results are periodically retried
+    in search of a native 2160p/4K rendition. Provider concurrency remains
+    bounded so this does not turn a large catalogue scan into a request storm.
     """
 
     base_enqueue = resolver.enqueue
 
     def safe_enqueue(self, media_type: str, tmdb_id: int, *, priority: int = 5, reason: str = "catalog"):
-        """Do not let repeated public polling restart a job already in flight.
-
-        Hero/hover/detail can poll the public trailer endpoint while the first
-        extraction is running. The old enqueue implementation changed a
-        `running` job back to `pending`, allowing another worker to claim the
-        same title. Keep active/retrying work intact and only promote the
-        priority of a pending job when useful.
-        """
+        """Do not let repeated public polling restart a job already in flight."""
         media_type = "tv" if media_type == "tv" else "movie"
         tmdb_id = int(tmdb_id)
         job = self.jobs.find_one(
@@ -102,6 +120,9 @@ def install_queue_policy(resolver):
                 {"type": media_type, "tmdbId": tmdb_id},
                 {"_id": 0},
             ) or {}
+
+            # Explicit manual overrides remain respected when present, but they
+            # are never required for automatic operation.
             if (resolved.get("manual") or {}).get("enabled"):
                 skipped += 1
                 continue
@@ -110,17 +131,41 @@ def install_queue_policy(resolver):
             if selected:
                 playback_exp = _dt(selected.get("expires_at") or selected.get("expiresAt"))
                 metadata_exp = _dt(resolved.get("metadataExpiresAt"))
+                resolved_at = _dt(resolved.get("resolvedAt"))
+                age = (now - resolved_at) if resolved_at else timedelta(days=999)
                 height = int(selected.get("height") or selected.get("resolution") or 0)
+                language = selected.get("audio_language") or selected.get("language")
+                italian = _is_italian(language)
+                english = _is_english(language)
+                playback_fresh = not playback_exp or playback_exp > now
+                metadata_fresh = bool(metadata_exp and metadata_exp > now)
 
-                if height >= 1080 and (not playback_exp or playback_exp > now) and metadata_exp and metadata_exp > now:
+                if not playback_fresh:
+                    priority, reason = 1, "playback_expired"
+                elif height < 1080:
+                    priority, reason = 2, "below_1080"
+                elif italian and height >= 2160 and metadata_fresh:
                     skipped += 1
                     continue
-                if height < 1080:
-                    priority, reason = 3, "below_1080"
-                elif playback_exp and playback_exp <= now:
-                    priority, reason = 4, "playback_expired"
+                elif italian and height >= 1080 and metadata_fresh and age < timedelta(hours=72):
+                    # Good Italian Full-HD candidate: keep serving it immediately,
+                    # but retry every few days to discover a newly-published 4K.
+                    skipped += 1
+                    continue
+                elif italian and height >= 1080:
+                    priority, reason = 3, "seek_4k_it"
+                elif english and metadata_fresh and age < timedelta(hours=12):
+                    # English is a valid fallback, but do not leave it permanently
+                    # selected if an Italian trailer appears later.
+                    skipped += 1
+                    continue
+                elif english:
+                    priority, reason = 2, "seek_italian"
+                elif metadata_fresh and age < timedelta(hours=6):
+                    skipped += 1
+                    continue
                 else:
-                    priority, reason = 5, "metadata_expired"
+                    priority, reason = 2, "seek_supported_language"
             else:
                 legacy = self.assets.find_one(
                     {"type": media_type, "tmdbId": tmdb_id},
