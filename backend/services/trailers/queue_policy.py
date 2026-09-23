@@ -45,13 +45,55 @@ def _is_english(value) -> bool:
     )
 
 
+def _candidate_has_verified_italian_audio(candidate: dict) -> bool:
+    """Require evidence that the media audio itself is Italian.
+
+    A localized provider page (for example netflix.com/it or the Italian Apple
+    storefront) is not sufficient evidence: those pages can still expose the
+    original-language trailer. Providers that historically inferred `it-IT`
+    from page locale must also expose explicit manifest/probe evidence here.
+    """
+    if not candidate:
+        return False
+    language = candidate.get("audio_language") or candidate.get("language")
+    if not _is_italian(language):
+        return False
+
+    source = str(candidate.get("source") or "").strip().lower()
+    metadata = candidate.get("metadata") or {}
+
+    if metadata.get("audio_language_inferred") is True:
+        return False
+
+    # Apple storefront/page locale used to be passed as default_language even
+    # when HLS had no LANGUAGE tag. Only accept Apple when the audio group itself
+    # explicitly advertises Italian.
+    if source in {"apple_tv", "apple_itunes_it"}:
+        langs = metadata.get("hls_audio_languages") or []
+        return any(_is_italian(value) for value in langs)
+
+    # Old Netflix cache entries could be labelled it-IT only because the page was
+    # /it/. New candidates carry audio_language_inferred=False when ffprobe found
+    # a real tag, while HLS candidates expose their manifest audio languages.
+    if source == "netflix":
+        if "hls_audio_languages" in metadata:
+            langs = metadata.get("hls_audio_languages") or []
+            return any(_is_italian(value) for value in langs)
+        return metadata.get("audio_language_inferred") is False
+
+    # Prime sets audio_language from its explicit playback audioTracks payload;
+    # Theryston/direct-file candidates get it from ffprobe. Other providers must
+    # at least carry an explicit Italian language value to pass this guard.
+    return True
+
+
 def install_queue_policy(resolver):
     """Install a cache-aware, resumable automatic Italian-only trailer policy.
 
     Public playback is intentionally strict: a trailer is exposed only when the
-    resolved candidate is explicitly marked as Italian audio. Original-language,
-    English and unknown-language candidates can remain in the private candidate
-    cache for diagnostics, but they are never surfaced to Hero/Detail/hover.
+    resolved candidate has verified Italian audio. Original-language, English
+    and unknown-language candidates can remain in the private candidate cache for
+    diagnostics, but they are never surfaced to Hero/Detail/hover.
 
     Missing Italian audio is retried in the background with throttling so a large
     catalogue does not hammer provider endpoints. Italian 1080p results continue
@@ -87,14 +129,14 @@ def install_queue_policy(resolver):
         base_enqueue(media_type, tmdb_id, priority=priority, reason=reason)
 
     def strict_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
-        """Expose Italian audio only; never fall back to original/English audio."""
+        """Expose verified Italian audio only; never fall back to original audio."""
         result = base_public_result(media_type, tmdb_id, hdr_supported=hdr_supported)
         if not result.get("enabled"):
             return result
 
         selected = result.get("selected") or {}
         language = selected.get("audio_language") or selected.get("language")
-        if selected and _is_italian(language):
+        if selected and _candidate_has_verified_italian_audio(selected):
             return {
                 **result,
                 "italian_only": True,
@@ -176,17 +218,16 @@ def install_queue_policy(resolver):
             if selected:
                 playback_exp = _dt(selected.get("expires_at") or selected.get("expiresAt"))
                 height = int(selected.get("height") or selected.get("resolution") or 0)
-                language = selected.get("audio_language") or selected.get("language")
-                italian = _is_italian(language)
+                italian_verified = _candidate_has_verified_italian_audio(selected)
                 playback_fresh = not playback_exp or playback_exp > now
 
-                if not italian:
+                if not italian_verified:
                     # Never serve this candidate publicly. Retry periodically so
                     # an Italian dub can be discovered when a provider publishes it.
                     if metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
                         skipped += 1
                         continue
-                    priority, reason = 1, "seek_italian_required"
+                    priority, reason = 1, "seek_verified_italian"
                 elif not playback_fresh:
                     priority, reason = 1, "playback_expired"
                 elif height < 1080:
