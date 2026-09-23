@@ -48,10 +48,10 @@ def _is_english(value) -> bool:
 def _candidate_has_verified_italian_audio(candidate: dict) -> bool:
     """Require evidence that the media audio itself is Italian.
 
-    A localized provider page (for example netflix.com/it or the Italian Apple
-    storefront) is not sufficient evidence: those pages can still expose the
-    original-language trailer. Providers that historically inferred `it-IT`
-    from page locale must also expose explicit manifest/probe evidence here.
+    A localized provider page alone is not sufficient evidence. When an HLS
+    manifest or a direct-file probe exposes the audio language, that evidence is
+    preferred. Provider-specific metadata may also prove that the selected audio
+    track itself is Italian.
     """
     if not candidate:
         return False
@@ -65,39 +65,28 @@ def _candidate_has_verified_italian_audio(candidate: dict) -> bool:
     if metadata.get("audio_language_inferred") is True:
         return False
 
-    # Apple storefront/page locale used to be passed as default_language even
-    # when HLS had no LANGUAGE tag. Only accept Apple when the audio group itself
-    # explicitly advertises Italian.
     if source in {"apple_tv", "apple_itunes_it"}:
         langs = metadata.get("hls_audio_languages") or []
         return any(_is_italian(value) for value in langs)
 
-    # Old Netflix cache entries could be labelled it-IT only because the page was
-    # /it/. New candidates carry audio_language_inferred=False when ffprobe found
-    # a real tag, while HLS candidates expose their manifest audio languages.
     if source == "netflix":
         if "hls_audio_languages" in metadata:
             langs = metadata.get("hls_audio_languages") or []
             return any(_is_italian(value) for value in langs)
         return metadata.get("audio_language_inferred") is False
 
-    # Prime sets audio_language from its explicit playback audioTracks payload;
-    # Theryston/direct-file candidates get it from ffprobe. Other providers must
-    # at least carry an explicit Italian language value to pass this guard.
     return True
 
 
 def install_queue_policy(resolver):
-    """Install a cache-aware, resumable automatic Italian-only trailer policy.
+    """Install a cache-aware Italian-first trailer policy.
 
-    Public playback is intentionally strict: a trailer is exposed only when the
-    resolved candidate has verified Italian audio. Original-language, English
-    and unknown-language candidates can remain in the private candidate cache for
-    diagnostics, but they are never surfaced to Hero/Detail/hover.
-
-    Missing Italian audio is retried in the background with throttling so a large
-    catalogue does not hammer provider endpoints. Italian 1080p results continue
-    to be revisited periodically in search of a native 2160p/4K rendition.
+    Verified Italian audio is always preferred. If providers have not exposed a
+    verifiable Italian rendition yet, the best already-resolved trailer remains
+    playable instead of making Hero/Detail/hover lose the trailer completely.
+    That fallback is temporary: it is re-queued periodically until an Italian
+    candidate replaces it automatically. Italian 1080p is also revisited later
+    in search of native 2160p/4K.
     """
 
     base_enqueue = resolver.enqueue
@@ -128,8 +117,8 @@ def install_queue_policy(resolver):
 
         base_enqueue(media_type, tmdb_id, priority=priority, reason=reason)
 
-    def strict_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
-        """Expose verified Italian audio only; never fall back to original audio."""
+    def italian_first_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
+        """Prefer verified Italian, but keep a temporary original-language fallback visible."""
         result = base_public_result(media_type, tmdb_id, hdr_supported=hdr_supported)
         if not result.get("enabled"):
             return result
@@ -139,34 +128,50 @@ def install_queue_policy(resolver):
         if selected and _candidate_has_verified_italian_audio(selected):
             return {
                 **result,
-                "italian_only": True,
+                "italian_preferred": True,
+                "italian_only": False,
                 "language_required": "it",
                 "language_verified": True,
+                "fallback_original": False,
             }
 
-        # The underlying resolver may have an English/original candidate cached.
-        # Do not expose it. Trigger a throttled refresh so newly published Italian
-        # audio can replace it without causing a provider request storm.
+        # Keep the already-resolved trailer visible while scheduling a throttled
+        # search for Italian audio. This avoids the regression where every title
+        # lost its trailer merely because providers omitted/failed language tags.
         key = f"{'tv' if media_type == 'tv' else 'movie'}:{int(tmdb_id)}"
         now_mono = time.monotonic()
         last_retry = float(self._italian_public_retry_at.get(key) or 0)
         refresh_pending = False
         if now_mono - last_retry >= PUBLIC_RETRY_THROTTLE_SECONDS:
             self._italian_public_retry_at[key] = now_mono
-            self.enqueue(media_type, tmdb_id, priority=1, reason="italian_audio_required")
+            self.enqueue(media_type, tmdb_id, priority=1, reason="seek_verified_italian")
             refresh_pending = True
+
+        if selected and result.get("available") is not False:
+            return {
+                **result,
+                "italian_preferred": True,
+                "italian_only": False,
+                "language_required": "it",
+                "language_verified": False,
+                "fallback_original": True,
+                "fallback_language": language or "unknown",
+                "refresh_pending": refresh_pending,
+                "reason": "temporary_original_until_italian_available",
+            }
 
         return {
             **result,
             "available": False,
             "selected": None,
             "source": None,
-            "italian_only": True,
+            "italian_preferred": True,
+            "italian_only": False,
             "language_required": "it",
             "language_verified": False,
-            "rejected_language": language or None,
+            "fallback_original": False,
             "refresh_pending": refresh_pending,
-            "reason": "italian_audio_unavailable",
+            "reason": "italian_audio_search_pending",
         }
 
     def enqueue_catalog(self, limit: int = 250):
@@ -222,8 +227,6 @@ def install_queue_policy(resolver):
                 playback_fresh = not playback_exp or playback_exp > now
 
                 if not italian_verified:
-                    # Never serve this candidate publicly. Retry periodically so
-                    # an Italian dub can be discovered when a provider publishes it.
                     if metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
                         skipped += 1
                         continue
@@ -236,16 +239,11 @@ def install_queue_policy(resolver):
                     skipped += 1
                     continue
                 elif height >= 1080 and metadata_fresh and age < timedelta(hours=72):
-                    # Good Italian Full-HD candidate: keep serving it immediately,
-                    # but retry every few days to discover a newly-published 4K.
                     skipped += 1
                     continue
                 else:
                     priority, reason = 3, "seek_4k_it"
             else:
-                # A recent completed search with no selected candidate means the
-                # providers were already checked. Avoid repeating that work every
-                # 45 seconds; retry after the Italian refresh window instead.
                 if resolved_at and metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
                     skipped += 1
                     continue
@@ -266,7 +264,8 @@ def install_queue_policy(resolver):
             "skipped_fresh_or_active": skipped,
             "scanned": scanned,
             "target": wanted,
-            "italian_only": True,
+            "italian_preferred": True,
+            "italian_only": False,
         }
 
     async def catalog_loop(self):
@@ -289,8 +288,6 @@ def install_queue_policy(resolver):
                 if self.logger:
                     self.logger.warning("Trailer catalog queue scan failed: %s", exc)
 
-            # Queue maintenance is cheap and does not contact providers. Workers
-            # remain constrained by TRAILER_RESOLVER_CONCURRENCY.
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=45)
             except asyncio.TimeoutError:
@@ -299,5 +296,5 @@ def install_queue_policy(resolver):
     resolver.enqueue = MethodType(safe_enqueue, resolver)
     resolver.enqueue_catalog = MethodType(enqueue_catalog, resolver)
     resolver._catalog_loop = MethodType(catalog_loop, resolver)
-    resolver.public_result = MethodType(strict_public_result, resolver)
+    resolver.public_result = MethodType(italian_first_public_result, resolver)
     return resolver
