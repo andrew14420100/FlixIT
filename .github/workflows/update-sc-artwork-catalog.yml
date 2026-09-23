@@ -35,14 +35,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Build complete StreamingCommunity artwork index
-        run: python scripts/build_sc_artwork_catalog_v4.py --minimum 18000 --output backend/data/sc_artwork_catalog.json
+        shell: bash
+        run: |
+          set +e
+          python scripts/build_sc_artwork_catalog_v4.py \
+            --minimum 18000 \
+            --output /tmp/sc_artwork_catalog.json
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ] && [ -s /tmp/sc_artwork_catalog.json ]; then
+            echo "SC_BUILD_OK=1" >> "$GITHUB_ENV"
+            echo "Fresh SC artwork catalog built successfully"
+          else
+            echo "SC_BUILD_OK=0" >> "$GITHUB_ENV"
+            echo "::warning::SC artwork source is temporarily unavailable; keeping the last committed valid catalog"
+          fi
+
       - name: Validate catalog coverage
+        if: env.SC_BUILD_OK == '1'
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          path = Path("backend/data/sc_artwork_catalog.json")
+          path = Path("/tmp/sc_artwork_catalog.json")
           data = json.loads(path.read_text(encoding="utf-8"))
           count = int(data.get("count") or 0)
           reported = int(data.get("reported_total_count") or 0)
@@ -63,9 +81,22 @@ jobs:
           if "streamingcommunityz.ninja" in str(cdn).lower():
               raise SystemExit(f"Catalog rejected: deprecated CDN with invalid browser certificate: {cdn}")
           PY
-      - name: Publish same catalog as a static frontend asset
-        run: cp backend/data/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json
+
+      - name: Publish validated catalog
+        if: env.SC_BUILD_OK == '1'
+        run: |
+          cp /tmp/sc_artwork_catalog.json backend/data/sc_artwork_catalog.json
+          cp /tmp/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json
+
+      - name: Keep previous catalog on source outage
+        if: env.SC_BUILD_OK != '1'
+        run: |
+          test -s backend/data/sc_artwork_catalog.json
+          test -s frontend/public/sc-artwork-catalog.json
+          echo "Existing validated catalog retained; next scheduled run will retry automatically."
+
       - name: Commit updated catalog
+        if: env.SC_BUILD_OK == '1'
         run: |
           if git diff --quiet -- backend/data/sc_artwork_catalog.json frontend/public/sc-artwork-catalog.json; then
             echo "Catalog already up to date"
