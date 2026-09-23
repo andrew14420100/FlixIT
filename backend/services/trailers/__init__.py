@@ -61,8 +61,10 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "quality_mode": "max_available",
             "preferred_resolution": 2160,
             "preferred_label": "4K UHD",
-            "minimum_resolution": 720,
+            "minimum_resolution": 1080,
+            "fallback_resolution": 720,
             "upscaling": False,
+            "automatic": True,
         }
 
     def _language(value) -> str:
@@ -70,11 +72,21 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
 
     def _is_italian_language(value) -> bool:
         lang = _language(value)
-        return lang == "it" or lang.startswith("it-")
+        return bool(
+            lang == "it"
+            or lang.startswith("it-")
+            or lang in {"ita", "italian", "italiano", "italiana"}
+            or lang.startswith("italian-")
+        )
 
     def _is_english_language(value) -> bool:
         lang = _language(value)
-        return lang == "en" or lang.startswith("en-")
+        return bool(
+            lang == "en"
+            or lang.startswith("en-")
+            or lang in {"eng", "english", "inglese"}
+            or lang.startswith("english-")
+        )
 
     @router.get("/api/public/trailer-config")
     async def public_trailer_config():
@@ -86,10 +98,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "preferred_resolution": cfg["preferred_resolution"],
             "preferred_label": cfg["preferred_label"],
             "minimum_resolution": cfg["minimum_resolution"],
+            "fallback_resolution": cfg["fallback_resolution"],
             "upscaling": cfg["upscaling"],
+            "automatic": True,
             "theryston_enabled": True,
             "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
-            "language_priority": ["it-IT", "en"],
+            "language_priority": ["it-IT", "ita", "it", "en"],
         }
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
@@ -101,9 +115,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             value = legacy_endpoint(media_type=media_type, tmdb_id=tmdb_id)
             if inspect.isawaitable(value):
                 value = await value
-            # The central resolver being disabled is the only case where the
-            # historical endpoint is preserved. Once enabled, YouTube is never
-            # surfaced by this API.
             if isinstance(value, dict):
                 return {**value, "enabled": False, "resolved": False}
             return value
@@ -117,9 +128,8 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             or result.get("source") == "manual"
         )
 
-        # TrailerResolver already ranks Italian above English and only then
-        # compares trailer type/duration/native quality. The public endpoint must
-        # not throw away the English winner when no Italian candidate exists.
+        # No Admin action is needed. The resolver continuously refreshes the
+        # catalogue in the background, preferring Italian and native 2160p.
         if selected_url and allowed_language:
             return {
                 "trailer_key": selected_url,
@@ -134,7 +144,11 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "stale": result.get("stale", False),
                 "quality_mode": "max_available",
                 "preferred_resolution": 2160,
+                "minimum_resolution": 1080,
+                "fallback_resolution": 720,
                 "language": selected_language or ("manual" if result.get("source") == "manual" else None),
+                "language_priority": ["it-IT", "ita", "it", "en"],
+                "automatic": True,
                 "youtube": False,
             }
 
@@ -151,7 +165,10 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "stale": result.get("stale", bool(selected)),
             "quality_mode": "max_available",
             "preferred_resolution": 2160,
-            "language_priority": ["it-IT", "en"],
+            "minimum_resolution": 1080,
+            "fallback_resolution": 720,
+            "language_priority": ["it-IT", "ita", "it", "en"],
+            "automatic": True,
             "youtube": False,
         }
 
