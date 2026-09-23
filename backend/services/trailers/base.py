@@ -104,6 +104,25 @@ def language_rank(value: Optional[str]) -> int:
     return 1 if _normalized_language(value) else 0
 
 
+def source_rank(value: Optional[str]) -> int:
+    """Prefer localized first-party providers before generic fallbacks.
+
+    This rank is used only after the language pool has been chosen, therefore a
+    non-Italian Apple/Prime/Netflix candidate can never outrank a real Italian
+    candidate from another usable provider.
+    """
+    source = str(value or "").strip().lower()
+    if source in {"apple_tv", "apple_itunes_it", "theryston_apple_tv"}:
+        return 4
+    if source in {"prime_video", "theryston_prime_video"}:
+        return 3
+    if source in {"netflix", "theryston_netflix"}:
+        return 2
+    if source == "imdb":
+        return 1
+    return 0
+
+
 def codec_rank(value: Optional[str]) -> int:
     codec = str(value or "").lower()
     if any(x in codec for x in ("av01", "av1")):
@@ -249,12 +268,7 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Quality ordering inside the already-selected language/type tier.
-
-    Native resolution intentionally comes before duration so a verified official
-    2160p candidate is not displaced by a longer 1080p rendition of the same
-    language/type tier.
-    """
+    """Quality ordering inside the already-selected language/type tier."""
     height = int(candidate.height or 0)
     bitrate = int(candidate.bitrate or 0)
     is_hdr = bool(candidate.hdr or candidate.dolby_vision)
@@ -263,6 +277,7 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
         hdr_score = -1
     return (
         1 if candidate.official else 0,
+        source_rank(candidate.source),
         height,
         duration_rank(candidate),
         hdr_score,
@@ -299,16 +314,27 @@ def _selection_tier(candidate: TrailerCandidate) -> int:
 
 
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
-    """Pick automatically by language/type and then native quality.
+    """Pick the best trailer with Italian as an absolute language priority.
 
-    1080p+ is the normal floor whenever at least one verified candidate reaches
-    it. 720p survives only when every usable provider candidate is below 1080p.
+    A usable Italian candidate is never discarded merely because an English or
+    original-language fallback has a higher resolution. Inside the Italian pool,
+    1080p+ remains preferred when available and 720p is accepted only when that
+    is the best Italian rendition. Original/English candidates are considered
+    only when no usable Italian candidate exists at all.
     """
     usable = [c for c in candidates if candidate_is_usable(c)]
     if not usable:
         return None
-    full_hd_or_better = [c for c in usable if int(c.height or 0) >= PREFERRED_FALLBACK_HEIGHT]
-    pool = full_hd_or_better or usable
+
+    italian = [c for c in usable if is_italian_language(c.audio_language)]
+    language_pool = italian or usable
+
+    full_hd_or_better = [
+        c for c in language_pool
+        if int(c.height or 0) >= PREFERRED_FALLBACK_HEIGHT
+    ]
+    pool = full_hd_or_better or language_pool
+
     return max(
         pool,
         key=lambda c: (
