@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "auto-italian-first-v13";
+const TRAILER_QUERY_VERSION = "native-apple-it-v14";
 
 function isBlockedVideoHost(value: string) {
   try {
@@ -47,8 +47,8 @@ export function browserSupportsHdr() {
 /**
  * Shared public trailer cache for Hero, hover cards and Detail.
  * The backend prefers verified Italian audio and native quality up to 4K.
- * If Italian is temporarily unavailable, the existing trailer can remain
- * visible while the automatic Italian search continues in the background.
+ * Apple discovery now uses the native Italian storefront search for both movie
+ * and TV titles before falling back to international/original-language sources.
  */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
