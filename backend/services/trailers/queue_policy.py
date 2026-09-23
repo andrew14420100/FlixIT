@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from types import MethodType
+
+
+ITALIAN_RETRY_SECONDS = 6 * 60 * 60
+PUBLIC_RETRY_THROTTLE_SECONDS = 30 * 60
 
 
 def _dt(value):
@@ -41,16 +46,21 @@ def _is_english(value) -> bool:
 
 
 def install_queue_policy(resolver):
-    """Install a cache-aware, resumable automatic trailer policy.
+    """Install a cache-aware, resumable automatic Italian-only trailer policy.
 
-    No Admin action is required: the catalogue is scanned continuously, missing
-    trailers are resolved first, English results are periodically retried in
-    search of Italian audio, and Italian 1080p results are periodically retried
-    in search of a native 2160p/4K rendition. Provider concurrency remains
-    bounded so this does not turn a large catalogue scan into a request storm.
+    Public playback is intentionally strict: a trailer is exposed only when the
+    resolved candidate is explicitly marked as Italian audio. Original-language,
+    English and unknown-language candidates can remain in the private candidate
+    cache for diagnostics, but they are never surfaced to Hero/Detail/hover.
+
+    Missing Italian audio is retried in the background with throttling so a large
+    catalogue does not hammer provider endpoints. Italian 1080p results continue
+    to be revisited periodically in search of a native 2160p/4K rendition.
     """
 
     base_enqueue = resolver.enqueue
+    base_public_result = resolver.public_result
+    resolver._italian_public_retry_at = {}
 
     def safe_enqueue(self, media_type: str, tmdb_id: int, *, priority: int = 5, reason: str = "catalog"):
         """Do not let repeated public polling restart a job already in flight."""
@@ -58,7 +68,7 @@ def install_queue_policy(resolver):
         tmdb_id = int(tmdb_id)
         job = self.jobs.find_one(
             {"type": media_type, "tmdbId": tmdb_id},
-            {"_id": 0, "status": 1, "priority": 1, "nextRunAt": 1},
+            {"_id": 0, "status": 1, "priority": 1, "nextRunAt": 1, "updatedAt": 1},
         ) or {}
         status = job.get("status")
 
@@ -74,12 +84,48 @@ def install_queue_policy(resolver):
                 )
             return
 
-        if status == "failed":
-            next_run = _dt(job.get("nextRunAt"))
-            if next_run and next_run > datetime.now(timezone.utc):
-                return
-
         base_enqueue(media_type, tmdb_id, priority=priority, reason=reason)
+
+    def strict_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
+        """Expose Italian audio only; never fall back to original/English audio."""
+        result = base_public_result(media_type, tmdb_id, hdr_supported=hdr_supported)
+        if not result.get("enabled"):
+            return result
+
+        selected = result.get("selected") or {}
+        language = selected.get("audio_language") or selected.get("language")
+        if selected and _is_italian(language):
+            return {
+                **result,
+                "italian_only": True,
+                "language_required": "it",
+                "language_verified": True,
+            }
+
+        # The underlying resolver may have an English/original candidate cached.
+        # Do not expose it. Trigger a throttled refresh so newly published Italian
+        # audio can replace it without causing a provider request storm.
+        key = f"{'tv' if media_type == 'tv' else 'movie'}:{int(tmdb_id)}"
+        now_mono = time.monotonic()
+        last_retry = float(self._italian_public_retry_at.get(key) or 0)
+        refresh_pending = False
+        if now_mono - last_retry >= PUBLIC_RETRY_THROTTLE_SECONDS:
+            self._italian_public_retry_at[key] = now_mono
+            self.enqueue(media_type, tmdb_id, priority=1, reason="italian_audio_required")
+            refresh_pending = True
+
+        return {
+            **result,
+            "available": False,
+            "selected": None,
+            "source": None,
+            "italian_only": True,
+            "language_required": "it",
+            "language_verified": False,
+            "rejected_language": language or None,
+            "refresh_pending": refresh_pending,
+            "reason": "italian_audio_unavailable",
+        }
 
     def enqueue_catalog(self, limit: int = 250):
         wanted = max(1, min(int(limit), 2000))
@@ -121,60 +167,55 @@ def install_queue_policy(resolver):
                 {"_id": 0},
             ) or {}
 
-            # Explicit manual overrides remain respected when present, but they
-            # are never required for automatic operation.
-            if (resolved.get("manual") or {}).get("enabled"):
-                skipped += 1
-                continue
-
             selected = resolved.get("selected") or {}
+            resolved_at = _dt(resolved.get("resolvedAt"))
+            age = (now - resolved_at) if resolved_at else timedelta(days=999)
+            metadata_exp = _dt(resolved.get("metadataExpiresAt"))
+            metadata_fresh = bool(metadata_exp and metadata_exp > now)
+
             if selected:
                 playback_exp = _dt(selected.get("expires_at") or selected.get("expiresAt"))
-                metadata_exp = _dt(resolved.get("metadataExpiresAt"))
-                resolved_at = _dt(resolved.get("resolvedAt"))
-                age = (now - resolved_at) if resolved_at else timedelta(days=999)
                 height = int(selected.get("height") or selected.get("resolution") or 0)
                 language = selected.get("audio_language") or selected.get("language")
                 italian = _is_italian(language)
-                english = _is_english(language)
                 playback_fresh = not playback_exp or playback_exp > now
-                metadata_fresh = bool(metadata_exp and metadata_exp > now)
 
-                if not playback_fresh:
+                if not italian:
+                    # Never serve this candidate publicly. Retry periodically so
+                    # an Italian dub can be discovered when a provider publishes it.
+                    if metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
+                        skipped += 1
+                        continue
+                    priority, reason = 1, "seek_italian_required"
+                elif not playback_fresh:
                     priority, reason = 1, "playback_expired"
                 elif height < 1080:
-                    priority, reason = 2, "below_1080"
-                elif italian and height >= 2160 and metadata_fresh:
+                    priority, reason = 2, "below_1080_it"
+                elif height >= 2160 and metadata_fresh:
                     skipped += 1
                     continue
-                elif italian and height >= 1080 and metadata_fresh and age < timedelta(hours=72):
+                elif height >= 1080 and metadata_fresh and age < timedelta(hours=72):
                     # Good Italian Full-HD candidate: keep serving it immediately,
                     # but retry every few days to discover a newly-published 4K.
                     skipped += 1
                     continue
-                elif italian and height >= 1080:
-                    priority, reason = 3, "seek_4k_it"
-                elif english and metadata_fresh and age < timedelta(hours=12):
-                    # English is a valid fallback, but do not leave it permanently
-                    # selected if an Italian trailer appears later.
-                    skipped += 1
-                    continue
-                elif english:
-                    priority, reason = 2, "seek_italian"
-                elif metadata_fresh and age < timedelta(hours=6):
-                    skipped += 1
-                    continue
                 else:
-                    priority, reason = 2, "seek_supported_language"
+                    priority, reason = 3, "seek_4k_it"
             else:
+                # A recent completed search with no selected candidate means the
+                # providers were already checked. Avoid repeating that work every
+                # 45 seconds; retry after the Italian refresh window instead.
+                if resolved_at and metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
+                    skipped += 1
+                    continue
                 legacy = self.assets.find_one(
                     {"type": media_type, "tmdbId": tmdb_id},
                     {"_id": 0, "trailer_key": 1},
                 ) or {}
                 if legacy.get("trailer_key"):
-                    priority, reason = 2, "legacy_youtube"
+                    priority, reason = 2, "legacy_youtube_rejected"
                 else:
-                    priority, reason = 1, "missing"
+                    priority, reason = 1, "missing_italian"
 
             self.enqueue(media_type, tmdb_id, priority=priority, reason=reason)
             queued += 1
@@ -184,6 +225,7 @@ def install_queue_policy(resolver):
             "skipped_fresh_or_active": skipped,
             "scanned": scanned,
             "target": wanted,
+            "italian_only": True,
         }
 
     async def catalog_loop(self):
@@ -216,4 +258,5 @@ def install_queue_policy(resolver):
     resolver.enqueue = MethodType(safe_enqueue, resolver)
     resolver.enqueue_catalog = MethodType(enqueue_catalog, resolver)
     resolver._catalog_loop = MethodType(catalog_loop, resolver)
+    resolver.public_result = MethodType(strict_public_result, resolver)
     return resolver
