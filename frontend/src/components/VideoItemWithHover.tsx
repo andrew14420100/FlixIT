@@ -83,8 +83,21 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const mType = mediaType || MEDIA_TYPE.Movie;
   const typeSlug = mType === MEDIA_TYPE.Tv ? "tv" : "movie";
   const id = video?.id || video?.tmdbId || video?.tmdb_id;
+  const assetInput = useMemo(() => ({ ...video, id }), [video, id]);
+
+  // Home/bootstrap artwork is already complete and immediately usable. Cards
+  // carrying it do not need their own IntersectionObserver merely to enable an
+  // individual artwork request that useAutomaticMediaAssets will skip anyway.
+  const embeddedStaticReady = useMemo(() => {
+    const embedded = video?.__artwork;
+    if (!embedded || embedded?.active === false) return false;
+    return isMobile
+      ? !!usableArtwork(embedded?.poster_url)
+      : !!firstUsableArtwork(embedded?.backdrop_url, embedded?.titled_backdrop_url);
+  }, [video?.__artwork, isMobile]);
 
   useEffect(() => {
+    if (embeddedStaticReady) return;
     const node = ref.current;
     if (!node || typeof IntersectionObserver === "undefined") {
       setNearViewport(true);
@@ -98,7 +111,7 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     }, { rootMargin: "240px 320px" });
     observer.observe(node);
     return () => observer.disconnect();
-  }, []);
+  }, [embeddedStaticReady]);
 
   const {
     open,
@@ -115,12 +128,12 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   // metadata and preview endpoints are intentionally delayed until actual user
   // intent so an idle Home does not launch hundreds of requests/pollers.
   const automaticAssets = useAutomaticMediaAssets(
-    { ...video, id },
+    assetInput,
     mType,
     nearViewport || intent || open
   );
   const deferredAssets = useDeferredMediaAssets(
-    { ...video, id },
+    assetInput,
     mType,
     intent || open
   );
