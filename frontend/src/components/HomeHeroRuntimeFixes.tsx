@@ -105,7 +105,7 @@ function deriveBadge(hero: any, fallbackText = "") {
 }
 
 function setBadge(callout: HTMLElement, badge: { kind: string; mark: string; text: string }) {
-  callout.dataset.badgeKind = badge.kind;
+  if (callout.dataset.badgeKind !== badge.kind) callout.dataset.badgeKind = badge.kind;
   const mark = callout.querySelector('.netflix-home-callout-mark') as HTMLElement | null;
   if (mark && mark.textContent !== badge.mark) mark.textContent = badge.mark;
 
@@ -146,6 +146,10 @@ function hideAdminBadgeFromMetadata(hero: Element, badgeText: string) {
 /**
  * Presentation-only desktop Hero runtime. It consumes the Hero already embedded
  * in Home bootstrap and never opens a second /api/public/hero request.
+ *
+ * The older version watched src/srcset attributes and rescanned the whole Hero on
+ * every media mutation. The Hero's React state already owns media selection, so
+ * this helper now reacts only to structural/text changes and video events.
  */
 export default function HomeHeroRuntimeFixes() {
   const location = useLocation();
@@ -154,20 +158,21 @@ export default function HomeHeroRuntimeFixes() {
   useEffect(() => {
     if (!isHome || typeof window === "undefined" || window.innerWidth < 900) return;
 
-    const videoEvents = ['playing', 'pause', 'ended', 'waiting', 'stalled', 'emptied', 'loadstart', 'error', 'loadedmetadata'];
-    let raf = 0;
+    const videoEvents = ['playing', 'pause', 'ended', 'waiting', 'stalled', 'emptied', 'loadstart', 'error'];
     let descriptionTimer = 0;
     let currentVideo: HTMLVideoElement | null = null;
     let heroObserver: MutationObserver | null = null;
     let waitObserver: MutationObserver | null = null;
     let boundHero: HTMLElement | null = null;
+    let syncing = false;
 
     const updatePlayingClass = () => {
       if (!boundHero) return;
-      const video = boundHero.querySelector(VIDEO_SELECTOR) as HTMLVideoElement | null;
       const actuallyPlaying = !!(
-        video && !video.paused && !video.ended &&
-        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+        currentVideo &&
+        !currentVideo.paused &&
+        !currentVideo.ended &&
+        currentVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
       );
       boundHero.classList.toggle('flixit-hero-video-playing', actuallyPlaying);
     };
@@ -175,7 +180,11 @@ export default function HomeHeroRuntimeFixes() {
     const bindVideo = () => {
       if (!boundHero) return;
       const video = boundHero.querySelector(VIDEO_SELECTOR) as HTMLVideoElement | null;
-      if (video === currentVideo) return;
+      if (video === currentVideo) {
+        updatePlayingClass();
+        return;
+      }
+
       if (currentVideo) {
         videoEvents.forEach((event) => currentVideo?.removeEventListener(event, updatePlayingClass));
       }
@@ -186,27 +195,27 @@ export default function HomeHeroRuntimeFixes() {
       updatePlayingClass();
     };
 
-    const sync = () => {
-      raf = 0;
-      if (!boundHero) return;
-      bindVideo();
-      const heroSettings = currentHero();
-      hideAdminBadgeFromMetadata(boundHero, String(heroSettings?.seasonLabel || ''));
-      const callouts = Array.from(boundHero.querySelectorAll(CALLOUT_SELECTOR)) as HTMLElement[];
-      const firstLabel = callouts[0]?.querySelector(':scope > span:not(.netflix-home-callout-mark)')?.textContent || '';
-      const badge = deriveBadge(heroSettings, firstLabel);
-      callouts.forEach((callout, index) => {
-        if (index === 0) {
-          callout.classList.remove('flixit-callout-hidden');
-          setBadge(callout, badge);
-        } else {
-          callout.classList.add('flixit-callout-hidden');
-        }
-      });
-    };
-
-    const schedule = () => {
-      if (!raf) raf = window.requestAnimationFrame(sync);
+    const syncPresentation = () => {
+      if (!boundHero || syncing) return;
+      syncing = true;
+      try {
+        bindVideo();
+        const heroSettings = currentHero();
+        hideAdminBadgeFromMetadata(boundHero, String(heroSettings?.seasonLabel || ''));
+        const callouts = Array.from(boundHero.querySelectorAll(CALLOUT_SELECTOR)) as HTMLElement[];
+        const firstLabel = callouts[0]?.querySelector(':scope > span:not(.netflix-home-callout-mark)')?.textContent || '';
+        const badge = deriveBadge(heroSettings, firstLabel);
+        callouts.forEach((callout, index) => {
+          if (index === 0) {
+            callout.classList.remove('flixit-callout-hidden');
+            setBadge(callout, badge);
+          } else {
+            callout.classList.add('flixit-callout-hidden');
+          }
+        });
+      } finally {
+        syncing = false;
+      }
     };
 
     const bindHero = (hero: HTMLElement) => {
@@ -214,7 +223,7 @@ export default function HomeHeroRuntimeFixes() {
       boundHero = hero;
       waitObserver?.disconnect();
       heroObserver?.disconnect();
-      sync();
+      syncPresentation();
 
       hero.classList.remove('flixit-hero-copy-collapsed');
       if (descriptionTimer) window.clearTimeout(descriptionTimer);
@@ -222,12 +231,14 @@ export default function HomeHeroRuntimeFixes() {
         boundHero?.classList.add('flixit-hero-copy-collapsed');
       }, DESCRIPTION_HIDE_MS);
 
-      heroObserver = new MutationObserver(schedule);
+      // React may mount/unmount the trailer after the Hero itself is present and
+      // can replace callout text after a bootstrap refresh. Observe only those
+      // structural/text changes; media attribute churn is intentionally ignored.
+      heroObserver = new MutationObserver(syncPresentation);
       heroObserver.observe(hero, {
         childList: true,
         subtree: true,
-        attributes: true,
-        attributeFilter: ['src', 'srcset'],
+        characterData: true,
       });
     };
 
@@ -242,13 +253,9 @@ export default function HomeHeroRuntimeFixes() {
       waitObserver.observe(document.body, { childList: true, subtree: true });
     }
 
-    window.addEventListener('resize', schedule, { passive: true });
-
     return () => {
       waitObserver?.disconnect();
       heroObserver?.disconnect();
-      window.removeEventListener('resize', schedule);
-      if (raf) window.cancelAnimationFrame(raf);
       if (descriptionTimer) window.clearTimeout(descriptionTimer);
       if (currentVideo) {
         videoEvents.forEach((event) => currentVideo?.removeEventListener(event, updatePlayingClass));
