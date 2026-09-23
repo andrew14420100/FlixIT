@@ -25,6 +25,10 @@ class NetflixTrailerProvider:
     confirmed Netflix ID can come from the existing artwork matcher; if the
     public title page does not expose a directly usable trailer the provider
     simply returns no candidates and the resolver continues with other sources.
+
+    Important: the /it/ page locale is not proof that the media audio itself is
+    Italian. Candidates are therefore labelled Italian only when the manifest or
+    ffprobe exposes an explicit Italian audio language tag.
     """
 
     name = "netflix"
@@ -73,7 +77,7 @@ class NetflixTrailerProvider:
                         matched_year=identity.get("year"),
                         trailer_type="Official Trailer",
                         official=True,
-                        default_language="it-IT",
+                        default_language=None,
                     )
                     for candidate in rows:
                         candidate.duration_seconds = duration
@@ -81,6 +85,7 @@ class NetflixTrailerProvider:
                             **(candidate.metadata or {}),
                             "duration_seconds": duration,
                             "public_page_asset": True,
+                            "audio_language_inferred": False,
                         }
                     return rows
                 probed = await probe_direct_file(direct)
@@ -104,14 +109,18 @@ class NetflixTrailerProvider:
                         codec=probed.get("codec"),
                         fps=probed.get("fps"),
                         duration_seconds=duration,
-                        audio_language=probed.get("audio_language") or "it-IT",
+                        audio_language=probed.get("audio_language"),
                         audio_codec=probed.get("audio_codec"),
                         audio_bitrate=probed.get("audio_bitrate"),
                         confidence=1.0,
                         verified=True,
                         browser_compatible=True,
                         compatibility="mp4",
-                        metadata={"duration_seconds": duration, "public_page_asset": True},
+                        metadata={
+                            "duration_seconds": duration,
+                            "public_page_asset": True,
+                            "audio_language_inferred": False,
+                        },
                     )
                 ]
             except Exception:
