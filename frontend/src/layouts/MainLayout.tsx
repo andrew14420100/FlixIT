@@ -41,12 +41,6 @@ const MobileSCExactAssets = lazy(() => import("src/components/mobile/MobileSCExa
 const MobileHomeReferenceRuntime = lazy(() => import("src/components/mobile/MobileHomeReferenceRuntime"));
 const MobileHomeSectionRecovery = lazy(() => import("src/components/mobile/MobileHomeSectionRecovery"));
 const MobileDetailExperience = lazy(() => import("src/components/mobile/MobileDetailExperience"));
-const DetailEpisodeEnhancer = lazy(() => import("src/components/DetailEpisodeEnhancer"));
-const DetailResumeCardPolish = lazy(() => import("src/components/DetailResumeCardPolish"));
-const DetailDescriptionExpander = lazy(() => import("src/components/DetailDescriptionExpander"));
-const ItalianEpisodeAvailabilityRuntime = lazy(() => import("src/components/ItalianEpisodeAvailabilityRuntime"));
-const DetailEpisodeVisualPolish = lazy(() => import("src/components/detail/DetailEpisodeVisualPolish"));
-const SeasonMenuAnchorTracker = lazy(() => import("src/components/SeasonMenuAnchorTracker"));
 const WatchEpisodeAdvanceTracker = lazy(() => import("src/components/watch/WatchEpisodeAdvanceTracker"));
 
 function isHomeRoute(pathname: string) {
@@ -68,7 +62,6 @@ export default function MainLayout() {
   const isHome = isHomeRoute(location.pathname);
   const isWatch = location.pathname.startsWith(`/${MAIN_PATH.watch}`) || location.pathname.startsWith("/watch");
   const isDetail = /^\/(?:detail|browse)\/(?:movie|tv)\/\d+(?:\/|$)/i.test(location.pathname);
-  const isTvDetail = /^\/(?:detail|browse)\/tv\/\d+(?:\/|$)/i.test(location.pathname);
   const isMobileDetail = isMobile && isDetail;
 
   useEffect(() => {
@@ -106,12 +99,6 @@ export default function MainLayout() {
         {isMobile && !isWatch ? <MobileSCExactAssets /> : null}
         {isMobile && isHome ? <MobileHomeReferenceRuntime /> : null}
         {isMobile && isHome ? <MobileHomeSectionRecovery /> : null}
-        {isDetail ? <DetailEpisodeEnhancer /> : null}
-        {isDetail ? <DetailResumeCardPolish /> : null}
-        {isDetail ? <DetailDescriptionExpander /> : null}
-        {isDetail ? <DetailEpisodeVisualPolish /> : null}
-        {isTvDetail ? <ItalianEpisodeAvailabilityRuntime /> : null}
-        {isTvDetail ? <SeasonMenuAnchorTracker /> : null}
         {isWatch ? <WatchEpisodeAdvanceTracker /> : null}
         {isMobileDetail ? <MobileDetailExperience /> : null}
       </Suspense>
