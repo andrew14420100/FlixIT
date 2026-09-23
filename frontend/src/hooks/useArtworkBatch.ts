@@ -9,9 +9,10 @@ import {
 } from "./useAutomaticMediaAssets";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
-const BATCH_VERSION = "sc-artwork-server-batch-v3-roles";
+const BATCH_VERSION = "sc-artwork-server-batch-v4-memory";
 const MAX_VISIBLE_CANDIDATES = 120;
 const ARTWORK_STALE_MS = 24 * 60 * 60 * 1000;
+const ARTWORK_MEMORY_MAX = 12000;
 
 type NormalizedEntry = {
   item: any;
@@ -19,6 +20,51 @@ type NormalizedEntry = {
   type: "movie" | "tv";
   key: string;
 };
+
+type ArtworkMemoryEntry = {
+  savedAt: number;
+  value: any;
+};
+
+// Batch query keys naturally change when a paginated grid grows. Without a
+// per-title cache, appending page 2 caused page 1 artwork to be requested again
+// inside the new larger signature. Keep the validated backend result by title so
+// Home rows, Film/Serie grids and future pages only request genuinely new ids.
+const artworkMemory = new Map<string, ArtworkMemoryEntry>();
+
+function artworkKey(raw: any) {
+  const id = Number(raw?.tmdbId || raw?.tmdb_id || raw?.id || 0);
+  if (!id) return "";
+  const type = raw?.type === "tv" || raw?.media_type === "tv" ? "tv" : "movie";
+  return `${type}:${id}`;
+}
+
+function getArtworkMemory(key: string) {
+  const hit = artworkMemory.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.savedAt >= ARTWORK_STALE_MS) {
+    artworkMemory.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function setArtworkMemory(raw: any) {
+  const key = artworkKey(raw);
+  if (!key) return;
+
+  if (artworkMemory.size >= ARTWORK_MEMORY_MAX && !artworkMemory.has(key)) {
+    const removeCount = Math.max(1, Math.floor(ARTWORK_MEMORY_MAX * 0.15));
+    let removed = 0;
+    for (const oldKey of artworkMemory.keys()) {
+      artworkMemory.delete(oldKey);
+      removed += 1;
+      if (removed >= removeCount) break;
+    }
+  }
+
+  artworkMemory.set(key, { savedAt: Date.now(), value: raw });
+}
 
 function normalizeItem(item: any): NormalizedEntry | null {
   const id = Number(item?.id || item?.tmdbId || item?.tmdb_id || 0);
@@ -67,7 +113,10 @@ async function fetchBatch(entries: NormalizedEntry[], signal?: AbortSignal) {
     body: JSON.stringify({ items: entries.map(requestItem) }),
   });
   if (!response.ok) throw new Error(`Artwork batch ${response.status}`);
-  return response.json();
+
+  const payload = await response.json();
+  (Array.isArray(payload?.items) ? payload.items : []).forEach(setArtworkMemory);
+  return payload;
 }
 
 function embeddedArtwork(entry: NormalizedEntry) {
@@ -90,13 +139,21 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
     () => normalized.map(embeddedArtwork).filter(Boolean),
     [normalized]
   );
-  const embeddedKeys = useMemo(
-    () => new Set(embedded.map((raw: any) => `${raw.type === "tv" ? "tv" : "movie"}:${Number(raw.tmdbId || raw.tmdb_id || 0)}`)),
-    [embedded]
+  const memory = useMemo(
+    () => normalized.map((entry) => getArtworkMemory(entry.key)).filter(Boolean),
+    [normalized]
   );
+  const knownKeys = useMemo(() => {
+    const keys = new Set<string>();
+    [...embedded, ...memory].forEach((raw: any) => {
+      const key = artworkKey(raw);
+      if (key) keys.add(key);
+    });
+    return keys;
+  }, [embedded, memory]);
   const missing = useMemo(
-    () => normalized.filter((entry) => !embeddedKeys.has(entry.key)),
-    [normalized, embeddedKeys]
+    () => normalized.filter((entry) => !knownKeys.has(entry.key)),
+    [normalized, knownKeys]
   );
   const signature = useMemo(() => missing.map((entry) => entry.key).join("|"), [missing]);
 
@@ -115,28 +172,22 @@ export default function useArtworkBatch(items: any[] = [], enabled = true) {
   const data = useMemo(() => {
     const remote = Array.isArray(batchQuery.data?.items) ? batchQuery.data.items : [];
     const map = new Map<string, any>();
-    [...embedded, ...remote].forEach((raw: any) => {
-      const id = Number(raw?.tmdbId || raw?.tmdb_id || 0);
-      const type = raw?.type === "tv" ? "tv" : "movie";
-      if (id) map.set(`${type}:${id}`, raw);
+    [...embedded, ...memory, ...remote].forEach((raw: any) => {
+      const key = artworkKey(raw);
+      if (key) map.set(key, raw);
     });
     return [...map.values()];
-  }, [embedded, batchQuery.data]);
+  }, [embedded, memory, batchQuery.data]);
 
   const byKey = useMemo(() => {
     const map = new Map<string, any>();
     data.forEach((raw: any) => {
-      const id = Number(raw?.tmdbId || raw?.tmdb_id || 0);
-      const type = raw?.type === "tv" ? "tv" : "movie";
-      if (id) map.set(`${type}:${id}`, raw);
+      const key = artworkKey(raw);
+      if (key) map.set(key, raw);
     });
     return map;
   }, [data]);
 
-  // Resolve each title once per row update. HomepageSlider calls isReady for
-  // every card and hover cards call getResolved again; rebuilding fallback URLs
-  // and running the artwork merge on every call was unnecessary main-thread
-  // work on a 20-row Home.
   const resolvedByKey = useMemo(() => {
     const map = new Map<string, any>();
     normalized.forEach((entry) => {
