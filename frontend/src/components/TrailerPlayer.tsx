@@ -32,6 +32,68 @@ function routeIdentity() {
     : null;
 }
 
+function isItalianAudioTrack(track: any) {
+  const lang = String(track?.lang || track?.language || "").trim().toLowerCase().replace("_", "-");
+  const name = String(track?.name || track?.label || "").trim().toLowerCase();
+  return (
+    lang === "it" ||
+    lang === "ita" ||
+    lang.startsWith("it-") ||
+    lang.startsWith("ita-") ||
+    name.includes("italiano") ||
+    name.includes("italian") ||
+    /(^|\W)ita($|\W)/.test(name)
+  );
+}
+
+function preferItalianAudio(hls: Hls | null) {
+  if (!hls) return false;
+  const tracks = Array.isArray(hls.audioTracks) ? hls.audioTracks : [];
+  if (!tracks.length) return false;
+  const italianIndex = tracks.findIndex(isItalianAudioTrack);
+  if (italianIndex < 0) return false;
+  try {
+    hls.audioTrack = italianIndex;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function chooseBestTrailerLevel(hls: Hls | null) {
+  if (!hls?.levels?.length) return null;
+  const eligible = hls.levels
+    .map((level, index) => ({ level, index }))
+    .filter(({ level }) => {
+      const height = Number(level?.height || 0);
+      return height > 0 && height <= MAX_TRAILER_HEIGHT;
+    });
+
+  if (!eligible.length) return null;
+
+  let best = eligible[0];
+  for (const candidate of eligible.slice(1)) {
+    const currentHeight = Number(best.level?.height || 0);
+    const candidateHeight = Number(candidate.level?.height || 0);
+    const currentBitrate = Number(best.level?.bitrate || 0);
+    const candidateBitrate = Number(candidate.level?.bitrate || 0);
+    if (
+      candidateHeight > currentHeight ||
+      (candidateHeight === currentHeight && candidateBitrate > currentBitrate)
+    ) {
+      best = candidate;
+    }
+  }
+
+  try {
+    hls.autoLevelCapping = best.index;
+    hls.startLevel = best.index;
+    hls.currentLevel = best.index;
+    hls.nextLevel = best.index;
+  } catch {}
+  return best;
+}
+
 function prepareInlineAutoplay(video: HTMLVideoElement | null, muted: boolean) {
   if (!video) return;
   try {
@@ -60,8 +122,9 @@ function tryPlay(video: HTMLVideoElement | null, muted: boolean) {
   }
 }
 
-/** Direct MP4/HLS trailer player. Audio changes are purely imperative and never
- * rebuild HLS, replace src or reset currentTime. */
+/** Direct MP4/HLS trailer player. The frontend prefers native Italian audio and
+ * the highest native HLS representation up to 2160p/4K. It never upscales and
+ * never invents an Italian track: both must already exist in the source manifest. */
 export default function TrailerPlayer({
   videoKey,
   muted = true,
@@ -165,7 +228,7 @@ export default function TrailerPlayer({
         maxMaxBufferLength: 40,
         backBufferLength: 0,
         startFragPrefetch: true,
-        abrEwmaDefaultEstimate: 12_000_000,
+        abrEwmaDefaultEstimate: 20_000_000,
       });
       hlsRef.current = hls;
       hls.loadSource(playbackKey);
@@ -177,34 +240,15 @@ export default function TrailerPlayer({
       });
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (hls.levels?.length) {
-          const eligible = hls.levels
-            .map((level, index) => ({ level, index }))
-            .filter(({ level }) => {
-              const height = Number(level?.height || 0);
-              return height > 0 && height <= MAX_TRAILER_HEIGHT;
-            });
+        preferItalianAudio(hls);
+        chooseBestTrailerLevel(hls);
 
-          if (eligible.length) {
-            let best = eligible[0];
-            for (const candidate of eligible.slice(1)) {
-              const currentHeight = Number(best.level?.height || 0);
-              const candidateHeight = Number(candidate.level?.height || 0);
-              const currentBitrate = Number(best.level?.bitrate || 0);
-              const candidateBitrate = Number(candidate.level?.bitrate || 0);
-              if (
-                candidateHeight > currentHeight ||
-                (candidateHeight === currentHeight && candidateBitrate > currentBitrate)
-              ) {
-                best = candidate;
-              }
-            }
-            hls.autoLevelCapping = best.index;
-            hls.startLevel = best.index;
-            hls.currentLevel = best.index;
-            hls.nextLevel = best.index;
-          }
-        }
+        // Some manifests expose alternate audio tracks only after the first
+        // manifest/level processing pass. Retry imperatively without rebuilding
+        // HLS or resetting currentTime.
+        window.setTimeout(() => preferItalianAudio(hls), 0);
+        window.setTimeout(() => preferItalianAudio(hls), 250);
+
         prepareInlineAutoplay(video, mutedRef.current);
         if (playingRef.current) tryPlay(video, mutedRef.current);
       });
