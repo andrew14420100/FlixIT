@@ -26,7 +26,7 @@ jobs:
     env:
       SC_BASE_URL: "https://streamingunity-premium.to"
       SC_ARTWORK_REQUEST_DELAY: "0.85"
-      SC_ARTWORK_TRANSIENT_RETRIES: "8"
+      SC_ARTWORK_TRANSIENT_RETRIES: "3"
       SC_ARTWORK_MIN_YEAR: "1910"
     steps:
       - uses: actions/checkout@v4
