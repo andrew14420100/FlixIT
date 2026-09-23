@@ -2,9 +2,9 @@
 
 The multi-provider trailer pipeline is intentionally independent from the main
 movie/episode player. It rejects YouTube in the native resolver, never upscales,
-and prefers real trailer-length media before comparing native resolution up to
-2160p/4K UHD. Lower native resolutions remain valid fallbacks instead of making
-the trailer disappear completely.
+and prefers real native Italian trailer media up to 2160p/4K UHD. 1080p is the
+normal quality floor when available; 720p remains only as a last-resort fallback
+so the Hero does not disappear completely when a provider has nothing better.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ BLOCKED_HOST_SUFFIXES = (
     "youtube-nocookie.com",
 )
 MIN_TRAILER_HEIGHT = 720
+PREFERRED_FALLBACK_HEIGHT = 1080
 PREFERRED_TRAILER_HEIGHT = 2160
 MAX_TRAILER_HEIGHT = 2160
 MIN_KNOWN_TRAILER_DURATION_SECONDS = 20.0
@@ -71,15 +72,36 @@ def type_rank(value: str) -> int:
     return 0
 
 
+def _normalized_language(value: Optional[str]) -> str:
+    return str(value or "").strip().lower().replace("_", "-")
+
+
+def is_italian_language(value: Optional[str]) -> bool:
+    lang = _normalized_language(value)
+    return bool(
+        lang == "it"
+        or lang.startswith("it-")
+        or lang in {"ita", "italian", "italiano", "italiana"}
+        or lang.startswith("italian-")
+    )
+
+
+def is_english_language(value: Optional[str]) -> bool:
+    lang = _normalized_language(value)
+    return bool(
+        lang == "en"
+        or lang.startswith("en-")
+        or lang in {"eng", "english", "inglese"}
+        or lang.startswith("english-")
+    )
+
+
 def language_rank(value: Optional[str]) -> int:
-    lang = str(value or "").lower().replace("_", "-")
-    if lang == "it" or lang.startswith("it-"):
+    if is_italian_language(value):
         return 3
-    if lang == "en" or lang.startswith("en-"):
+    if is_english_language(value):
         return 2
-    if lang:
-        return 1
-    return 0
+    return 1 if _normalized_language(value) else 0
 
 
 def codec_rank(value: Optional[str]) -> int:
@@ -227,7 +249,12 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Quality ordering inside the already-selected language/type tier."""
+    """Quality ordering inside the already-selected language/type tier.
+
+    Native resolution intentionally comes before duration so a verified official
+    2160p candidate is not displaced by a longer 1080p rendition of the same
+    language/type tier.
+    """
     height = int(candidate.height or 0)
     bitrate = int(candidate.bitrate or 0)
     is_hdr = bool(candidate.hdr or candidate.dolby_vision)
@@ -235,9 +262,9 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
     if not hdr_supported and is_hdr:
         hdr_score = -1
     return (
-        duration_rank(candidate),
         1 if candidate.official else 0,
         height,
+        duration_rank(candidate),
         hdr_score,
         bitrate,
         codec_rank(candidate.codec),
@@ -272,12 +299,18 @@ def _selection_tier(candidate: TrailerCandidate) -> int:
 
 
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
-    """Pick by the explicit FLIXIT policy, then by native quality inside that tier."""
+    """Pick automatically by language/type and then native quality.
+
+    1080p+ is the normal floor whenever at least one verified candidate reaches
+    it. 720p survives only when every usable provider candidate is below 1080p.
+    """
     usable = [c for c in candidates if candidate_is_usable(c)]
     if not usable:
         return None
+    full_hd_or_better = [c for c in usable if int(c.height or 0) >= PREFERRED_FALLBACK_HEIGHT]
+    pool = full_hd_or_better or usable
     return max(
-        usable,
+        pool,
         key=lambda c: (
             _selection_tier(c),
             candidate_sort_key(c, hdr_supported=hdr_supported),
@@ -293,7 +326,7 @@ def perfect_candidate(candidate: TrailerCandidate) -> bool:
         and candidate.browser_compatible
         and PREFERRED_TRAILER_HEIGHT <= height <= MAX_TRAILER_HEIGHT
         and (duration is None or duration >= MIN_KNOWN_TRAILER_DURATION_SECONDS)
-        and language_rank(candidate.audio_language) == 3
+        and is_italian_language(candidate.audio_language)
         and candidate.official
         and type_rank(candidate.trailer_type) >= 5
         and float(candidate.confidence or 0) >= 0.97
