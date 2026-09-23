@@ -1,52 +1,45 @@
 // @ts-nocheck
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
-import FormControl from "@mui/material/FormControl";
-import MenuItem from "@mui/material/MenuItem";
-import Select from "@mui/material/Select";
+import IconButton from "@mui/material/IconButton";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
-import AddIcon from "@mui/icons-material/Add";
-import CheckIcon from "@mui/icons-material/Check";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import CloseIcon from "@mui/icons-material/Close";
+import DownloadRoundedIcon from "@mui/icons-material/DownloadRounded";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 
 import {
   useLazyGetAppendedVideosQuery,
-  useLazyGetTVSeasonDetailsQuery,
   useLazyGetVideosByMediaTypeAndGenreIdQuery,
 } from "src/store/slices/discover";
 import { MEDIA_TYPE } from "src/types/Common";
 import { MAIN_PATH } from "src/constant";
 import { useAvailableItems } from "src/hooks/useAvailability";
-import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
+import useAutomaticMediaAssets, { tmdbImageUrl } from "src/hooks/useAutomaticMediaAssets";
 import useResolvedTrailer from "src/hooks/useResolvedTrailer";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
-import { getMediaImageUrl } from "src/hooks/useCDNImage";
 import TrailerPlayer from "src/components/TrailerPlayer";
 import TrailerAudioButton from "src/components/TrailerAudioButton";
 import VideoItemWithHover from "src/components/VideoItemWithHover";
 
 const API_URL = process.env.REACT_APP_BACKEND_URL || "";
-const HERO_TRAILER_DELAY = 4000;
-const TRAILER_LOOKUP_DELAY = 900;
+const HERO_TRAILER_DELAY = 2200;
+const TRAILER_LOOKUP_DELAY = 450;
 const STREAM_PROFILE_TTL = 2 * 60 * 60 * 1000;
 const WATCH_STREAM_CACHE_PREFIX = "watch_stream_cache:";
 
+const DETAIL_TABS = [
+  { id: "overview", label: "Panoramica" },
+  { id: "trailers", label: "Trailer & altro" },
+  { id: "download", label: "Scarica" },
+  { id: "similar", label: "Titoli simili" },
+];
+
 export async function loader() {
   return null;
-}
-
-function getUserId() {
-  let userId = localStorage.getItem("netflix_user_id");
-  if (!userId) {
-    userId = `user_${Math.random().toString(36).slice(2, 11)}`;
-    localStorage.setItem("netflix_user_id", userId);
-  }
-  return userId;
 }
 
 function firstRemote(...values: any[]) {
@@ -69,7 +62,12 @@ function yearFrom(detail: any) {
 }
 
 function runtimeText(detail: any, isTV: boolean) {
-  if (isTV) return detail?.number_of_seasons ? `${detail.number_of_seasons} Stagioni` : "Serie TV";
+  if (isTV) {
+    const seasons = Number(detail?.number_of_seasons || 0);
+    if (!seasons) return "Serie TV";
+    return `${seasons} ${seasons === 1 ? "stagione" : "stagioni"}`;
+  }
+
   const minutes = Number(detail?.runtime || 0);
   if (!minutes) return "Film";
   const hours = Math.floor(minutes / 60);
@@ -87,36 +85,37 @@ function secondsText(seconds: number) {
   return `${Math.max(1, Math.ceil(safe / 60))} min`;
 }
 
-function qualityLabelFromHeight(height: number) {
-  if (height >= 2160) return "4K";
-  if (height >= 1440) return "1440p";
-  if (height >= 1080) return "Full HD";
-  if (height >= 720) return "HD";
-  if (height > 0) return `${height}p`;
-  return null;
-}
-
-function qualityFromPayload(payload: any) {
-  const values = [
-    payload?.quality,
-    payload?.quality_label,
-    payload?.resolution,
-    payload?.video_quality,
-    payload?.stream_quality,
-    payload?.stream?.quality,
-    payload?.stream?.resolution,
-  ];
-  for (const value of values) {
-    const text = String(value || "").trim();
-    if (!text) continue;
-    if (/4k|2160/i.test(text)) return "4K";
-    if (/1440/i.test(text)) return "1440p";
-    if (/1080|full\s*hd/i.test(text)) return "Full HD";
-    if (/720|\bhd\b/i.test(text)) return "HD";
-    if (/\d{3,4}p/i.test(text)) return text.match(/\d{3,4}p/i)?.[0] || text;
+function certificationText(detail: any) {
+  const direct = detail?.certification || detail?.content_rating || detail?.contentRating;
+  if (direct) {
+    const text = String(direct).trim();
+    return /^\d{1,2}$/.test(text) ? `${text}+` : text;
   }
-  const height = Number(payload?.height || payload?.video_height || payload?.stream?.height || 0);
-  return qualityLabelFromHeight(height);
+
+  const ratings = detail?.content_ratings?.results;
+  if (Array.isArray(ratings)) {
+    const match = ratings.find((entry: any) => entry?.iso_3166_1 === "IT")
+      || ratings.find((entry: any) => entry?.iso_3166_1 === "US")
+      || ratings.find((entry: any) => entry?.rating);
+    if (match?.rating) {
+      const text = String(match.rating).trim();
+      return /^\d{1,2}$/.test(text) ? `${text}+` : text;
+    }
+  }
+
+  const releases = detail?.release_dates?.results;
+  if (Array.isArray(releases)) {
+    const country = releases.find((entry: any) => entry?.iso_3166_1 === "IT")
+      || releases.find((entry: any) => entry?.iso_3166_1 === "US")
+      || releases[0];
+    const value = country?.release_dates?.find((entry: any) => entry?.certification)?.certification;
+    if (value) {
+      const text = String(value).trim();
+      return /^\d{1,2}$/.test(text) ? `${text}+` : text;
+    }
+  }
+
+  return "";
 }
 
 function cacheResolvedStream(typeSlug: string, id: number, season: number, episode: number, payload: any) {
@@ -136,11 +135,12 @@ function cacheResolvedStream(typeSlug: string, id: number, season: number, episo
   } catch {}
 }
 
-async function inspectPlaybackProfile(typeSlug: string, id: number, season?: number, episode?: number) {
+async function warmPlaybackRequest(typeSlug: string, id: number, season?: number, episode?: number) {
   const logicalSeason = typeSlug === "tv" ? Number(season || 1) : 0;
   const logicalEpisode = typeSlug === "tv" ? Number(episode || 1) : 0;
   const suffix = typeSlug === "tv" ? `:${logicalSeason}:${logicalEpisode}` : ":0:0";
   const cacheKey = `flixit-detail-stream-profile:${typeSlug}:${id}${suffix}`;
+
   try {
     const cached = JSON.parse(sessionStorage.getItem(cacheKey) || "null");
     if (cached && Date.now() - Number(cached.ts || 0) < STREAM_PROFILE_TTL) return cached.value || {};
@@ -151,19 +151,14 @@ async function inspectPlaybackProfile(typeSlug: string, id: number, season?: num
     : `${API_URL}/api/player/movie/${id}`;
 
   try {
-    const response = await fetch(path, { cache: "no-store", headers: { Accept: "application/json" } });
+    const response = await fetch(path, {
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
     if (!response.ok) return {};
     const payload = await response.json();
     cacheResolvedStream(typeSlug, id, logicalSeason, logicalEpisode, payload);
-
-    // Do not fetch the HLS manifest merely to decorate Detail with a quality
-    // label. That request used to compete with the actual player and sometimes
-    // doubled startup traffic. The player reports the real active resolution.
-    const value = {
-      quality: qualityFromPayload(payload),
-      audio: payload?.dolby_atmos === true ? "Dolby Atmos" : null,
-      success: !!payload?.success,
-    };
+    const value = { success: !!payload?.success };
     try { sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), value })); } catch {}
     return value;
   } catch {
@@ -171,13 +166,20 @@ async function inspectPlaybackProfile(typeSlug: string, id: number, season?: num
   }
 }
 
-function episodeAbsoluteImage(episode: any, fallback: string | null, id: number) {
-  return firstRemote(
-    episode?.still_url,
-    episode?.image_url,
-    episode?.thumbnail_url,
-    episode?.backdrop_path
-  ) || getMediaImageUrl(id, "backdrop", fallback, "", "original") || fallback || "/placeholder.jpg";
+function directTrailerUrl(value: any) {
+  const raw = typeof value === "string"
+    ? value
+    : value?.url || value?.trailer_url || value?.manifest_url || value?.stream_url;
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  return /^https?:\/\//i.test(text) || text.startsWith("/") ? text : null;
+}
+
+function trailerLabel(item: any, index: number) {
+  const raw = item?.label || item?.title || item?.name || item?.kind || item?.type;
+  const text = String(raw || "").trim();
+  if (text) return text;
+  return index === 0 ? "Trailer ufficiale" : `Trailer ${index + 1}`;
 }
 
 export function Component() {
@@ -189,7 +191,6 @@ export function Component() {
   const isTV = typeSlug === "tv";
 
   const [getVideoDetail, { data: detail }] = useLazyGetAppendedVideosQuery();
-  const [getSeasonDetails] = useLazyGetTVSeasonDetailsQuery();
   const [getGenrePage] = useLazyGetVideosByMediaTypeAndGenreIdQuery();
 
   const [trailerLookupEnabled, setTrailerLookupEnabled] = useState(false);
@@ -201,17 +202,14 @@ export function Component() {
   const resolvedTrailer = useResolvedTrailer(type, mediaId, trailerLookupEnabled && !!mediaId);
   const { items: continueWatchingItems } = useContinueWatching();
 
-  const [selectedSeason, setSelectedSeason] = useState(1);
-  const [availableSeasons, setAvailableSeasons] = useState<any[]>([]);
-  const [episodes, setEpisodes] = useState<any[]>([]);
-  const [episodesLoading, setEpisodesLoading] = useState(false);
-  const [inMyList, setInMyList] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
   const [showTrailer, setShowTrailer] = useState(false);
   const [trailerPlaying, setTrailerPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
-  const [streamProfile, setStreamProfile] = useState<any>({});
+  const [modalTrailerUrl, setModalTrailerUrl] = useState<string | null>(null);
+  const [modalMuted, setModalMuted] = useState(false);
   const [relatedPool, setRelatedPool] = useState<any[]>([]);
-  const episodesRef = useRef<HTMLDivElement | null>(null);
+  const [playbackProfile, setPlaybackProfile] = useState<any>({});
 
   const progressItem = useMemo(
     () => continueWatchingItems.find((item: any) => Number(item.tmdb_id) === mediaId && item.media_type === typeSlug),
@@ -235,11 +233,11 @@ export function Component() {
     setShowTrailer(false);
     setTrailerPlaying(false);
     setMuted(true);
-    setStreamProfile({});
-    setRelatedPool([]);
-    setEpisodes([]);
-    setAvailableSeasons([]);
-    setSelectedSeason(1);
+  setActiveTab("overview");
+    setModalTrailerUrl(null);
+    setModalMuted(false);
+  setRelatedPool([]);
+    setPlaybackProfile({});
   }, [mediaId, typeSlug]);
 
   useEffect(() => {
@@ -255,70 +253,6 @@ export function Component() {
   }, [resolvedTrailer.url, mediaId]);
 
   useEffect(() => {
-    if (!mediaId) return;
-    const userId = getUserId();
-    fetch(`${API_URL}/api/user/list/check/${userId}/${typeSlug}/${mediaId}`)
-      .then((response) => response.ok ? response.json() : null)
-      .then((data) => data && setInMyList(!!data.in_list))
-      .catch(() => {});
-  }, [mediaId, typeSlug]);
-
-  const loadSeason = useCallback(async (seasonNumber: number) => {
-    if (!isTV || !mediaId) return;
-    setEpisodesLoading(true);
-    try {
-      const response = await fetch(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`, {
-        headers: { Accept: "application/json" },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setEpisodes(Array.isArray(data?.episodes) ? data.episodes : []);
-      } else {
-        const fallback = await getSeasonDetails({ seriesId: mediaId, seasonNumber }).unwrap();
-        setEpisodes(Array.isArray(fallback?.episodes) ? fallback.episodes : []);
-      }
-    } catch {
-      try {
-        const fallback = await getSeasonDetails({ seriesId: mediaId, seasonNumber }).unwrap();
-        setEpisodes(Array.isArray(fallback?.episodes) ? fallback.episodes : []);
-      } catch {
-        setEpisodes([]);
-      }
-    } finally {
-      setEpisodesLoading(false);
-    }
-  }, [getSeasonDetails, isTV, mediaId]);
-
-  useEffect(() => {
-    if (!isTV || !mediaId) return;
-    let cancelled = false;
-    fetch(`${API_URL}/api/public/tv/${mediaId}/seasons`, { headers: { Accept: "application/json" } })
-      .then((response) => response.ok ? response.json() : null)
-      .then((data) => {
-        if (cancelled) return;
-        const seasons = Array.isArray(data?.seasons)
-          ? data.seasons.filter((season: any) => Number(season?.season_number || 0) > 0)
-          : (detail?.seasons || []).filter((season: any) => Number(season?.season_number || 0) > 0);
-        setAvailableSeasons(seasons);
-        const progressSeason = Number(progressItem?.season || 0);
-        const preferred = seasons.find((season: any) => Number(season.season_number) === progressSeason)
-          || seasons.find((season: any) => season.vixsrc_available !== false)
-          || seasons[0];
-        const seasonNumber = Number(preferred?.season_number || progressSeason || 1);
-        setSelectedSeason(seasonNumber);
-        loadSeason(seasonNumber);
-      })
-      .catch(() => {
-        const seasons = (detail?.seasons || []).filter((season: any) => Number(season?.season_number || 0) > 0);
-        setAvailableSeasons(seasons);
-        const seasonNumber = Number(progressItem?.season || seasons[0]?.season_number || 1);
-        setSelectedSeason(seasonNumber);
-        loadSeason(seasonNumber);
-      });
-    return () => { cancelled = true; };
-  }, [isTV, mediaId, detail?.seasons, progressItem?.season, loadSeason]);
-
-  useEffect(() => {
     if (!detail?.genres?.length) return;
     const primaryGenre = Number(detail.genres[0]?.id || 0);
     if (!primaryGenre) return;
@@ -330,31 +264,31 @@ export function Component() {
       Promise.all([
         getGenrePage({ mediaType: type, genreId: primaryGenre, page: 1 }).unwrap().catch(() => null),
         getGenrePage({ mediaType: type, genreId: primaryGenre, page: 2 }).unwrap().catch(() => null),
-      ]).then((pages) => {
-        if (cancelled) return;
-        const merged = pages.flatMap((page: any) => page?.results || []);
-        const seen = new Set<number>();
-        const filtered = merged.filter((item: any) => {
-          const itemId = Number(item?.id || item?.tmdbId || 0);
-          if (!itemId || itemId === mediaId || seen.has(itemId)) return false;
-          seen.add(itemId);
-          return Array.isArray(item?.genre_ids) ? item.genre_ids.includes(primaryGenre) : true;
-        }).slice(0, 30);
-        setRelatedPool(filtered);
-      });
-    };
+    ]).then((pages) => {
+      if (cancelled) return;
+      const merged = pages.flatMap((page: any) => page?.results || []);
+      const seen = new Set<number>();
+      const filtered = merged.filter((item: any) => {
+        const itemId = Number(item?.id || item?.tmdbId || 0);
+        if (!itemId || itemId === mediaId || seen.has(itemId)) return false;
+        seen.add(itemId);
+        return Array.isArray(item?.genre_ids) ? item.genre_ids.includes(primaryGenre) : true;
+      }).slice(0, 30);
+      setRelatedPool(filtered);
+    });
+  };
 
     if ("requestIdleCallback" in window) {
-      idleId = (window as any).requestIdleCallback(loadRelated, { timeout: 2600 });
-    } else {
-      timer = window.setTimeout(loadRelated, 1200);
-    }
+    idleId = (window as any).requestIdleCallback(loadRelated, { timeout: 2000 });
+  } else {
+    timer = window.setTimeout(loadRelated, 1100);
+  }
 
-    return () => {
-      cancelled = true;
-      if (timer) window.clearTimeout(timer);
-      if (idleId != null && "cancelIdleCallback" in window) (window as any).cancelIdleCallback(idleId);
-    };
+  return () => {
+    cancelled = true;
+    if (timer) window.clearTimeout(timer);
+    if (idleId != null && "cancelIdleCallback" in window) (window as any).cancelIdleCallback(idleId);
+  };
   }, [detail?.genres, getGenrePage, mediaId, type]);
 
   const relatedItems = useAvailableItems(relatedPool, typeSlug);
@@ -367,319 +301,73 @@ export function Component() {
     automaticAssets?.backdrop_path,
     detail?.netflix_artwork_url,
     detail?.backdrop_path
+  ) || tmdbImageUrl(
+    automaticAssets?.detail_backdrop_path
+      || automaticAssets?.hero_backdrop_path
+      || automaticAssets?.backdrop_path
+      || detail?.backdrop_path,
+    "original"
   );
-  const posterUrl = firstRemote(automaticAssets?.poster_path, detail?.poster_path) || backdropUrl;
+
+  const posterUrl = firstRemote(automaticAssets?.poster_path, detail?.poster_path)
+    || tmdbImageUrl(automaticAssets?.poster_path || detail?.poster_path, "w500")
+    || backdropUrl;
   const genres = (detail?.genres || []).map((genre: any) => genre?.name).filter(Boolean);
-  const director = (detail?.credits?.crew || []).find((person: any) => person?.job === "Director")?.name || "â€”";
-  const cast = (detail?.credits?.cast || []).slice(0, 4).map((person: any) => person?.name).filter(Boolean);
-  const keywordItems = detail?.keywords?.keywords || detail?.keywords?.results || [];
-  const themes = keywordItems.slice(0, 3).map((item: any) => item?.name).filter(Boolean);
+  const overview = String(detail?.overview || "").trim();
+  const certification = certificationText(detail);
 
-  const qualityBadge = streamProfile?.quality || null;
-  const audioBadge = streamProfile?.audio || null;
-
-  const warmPlayback = useCallback((season?: number, episode?: number) => {
-    if (!mediaId) return;
-    const targetSeason = isTV ? Number(season || progressItem?.season || selectedSeason || 1) : undefined;
-    const targetEpisode = isTV ? Number(episode || progressItem?.episode || 1) : undefined;
-    inspectPlaybackProfile(typeSlug, mediaId, targetSeason, targetEpisode)
-      .then((value) => value && setStreamProfile(value))
-      .catch(() => {});
-  }, [isTV, mediaId, progressItem?.episode, progressItem?.season, selectedSeason, typeSlug]);
-
-  const goPlay = useCallback((season?: number, episode?: number) => {
-    const targetSeason = isTV ? Number(season || progressItem?.season || selectedSeason || 1) : undefined;
-    const targetEpisode = isTV ? Number(episode || progressItem?.episode || 1) : undefined;
-    warmPlayback(targetSeason, targetEpisode);
+  const goPlay = useCallback(() => {
+    const targetSeason = isTV ? Number(progressItem?.season || 1) : undefined;
+    const targetEpisode = isTV ? Number(progressItem?.episode || 1) : undefined;
+    warmPlaybackRequest(typeSlug, mediaId, targetSeason, targetEpisode).catch(() => {});
     const suffix = isTV ? `?s=${targetSeason}&e=${targetEpisode}` : "";
     window.scrollTo(0, 0);
-    navigate(`/${MAIN_PATH.watch}/${typeSlug}/${mediaId}${suffix}`);
-  }, [isTV, navigate, mediaId, progressItem?.episode, progressItem?.season, selectedSeason, typeSlug, warmPlayback]);
+    navigate(`${MAIN_PATH.watch}/${typeSlug}/${mediaId}${suffix}`);
+  }, [isTV, mediaId, navigate, progressItem?.episode, progressItem?.season, typeSlug]);
 
-  const handleToggleList = useCallback(async () => {
-    const userId = getUserId();
-    const next = !inMyList;
-    setInMyList(next);
-    try {
-      const endpoint = next ? "/api/user/list/add" : "/api/user/list/remove";
-      const response = await fetch(`${API_URL}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          media_id: mediaId,
-          media_type: typeSlug,
-          title,
-          poster_path: posterUrl,
-          backdrop_path: backdropUrl,
-        }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (typeof data?.in_list === "boolean") setInMyList(data.in_list);
-      }
-    } catch {
-      setInMyList(next);
-    }
-  }, [backdropUrl, inMyList, mediaId, posterUrl, title, typeSlug]);
+  const freshPlay = useCallback(() => {
+    warmPlaybackRequest(typeSlug, mediaId, isTV ? 1 : undefined, isTV ? 1 : undefined).catch(() => {});
+    const suffix = isTV ? "?s=1&e=1" : "";
+    window.scrollTo(0, 0);
+    navigate(`${MAIN_PATH.watch}/${typeSlug}/${mediaId}${suffix}`);
+  }, [isTV, mediaId, navigate, typeSlug]);
 
-  const scrollToEpisodes = useCallback(() => {
-    episodesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+  const metadataItems = [
+    isTV ? { text: "Serie" } : { text: "Film" },
+    genres[0] ? { text: genres[0] } : null,
+    yearFrom(detail) ? { text: yearFrom(detail) } : null,
+    { text: runtimeText(detail, isTV) },
+    certification ? { text: certification, badge: true } : null,
+  ].filter(Boolean);
 
-  const episodeStatus = useCallback((episodeNumber: number) => {
-    const watchedSeason = Number(progressItem?.season || 0);
-    const watchedEpisode = Number(progressItem?.episode || 0);
-    if (!progressItem || !watchedSeason || !watchedEpisode) {
-      return { kind: episodeNumber === 1 ? "next" : "new", percent: 0 };
-    }
-    if (selectedSeason < watchedSeason) return { kind: "complete", percent: 100 };
-    if (selectedSeason > watchedSeason) return { kind: episodeNumber === 1 ? "next" : "new", percent: 0 };
-    if (episodeNumber < watchedEpisode) return { kind: "complete", percent: 100 };
-    if (episodeNumber === watchedEpisode) return { kind: "progress", percent: progressPercent };
-    if (episodeNumber === watchedEpisode + 1) return { kind: "next", percent: 0 };
-    return { kind: "new", percent: 0 };
-  }, [progressItem, progressPercent, selectedSeason]);
+  const trailerItems = useMemo(() => {
+    const items: any[] = [];
+    const seen = new Set<string>();
+    const push = (value: any, label?: string, source?: string) => {
+      const url = directTrailerUrl(value);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      items.push({ url, label: label || `Trailer ${items.length + 1}`, source });
+    };
 
-  if (!detail) {
-    return (
-      <Box sx={{ minHeight: "82vh", bgcolor: "#090909", display: "grid", placeItems: "center" }}>
-        <CircularProgress sx={{ color: "#e50914" }} />
-      </Box>
-    );
-  }
+    push(resolvedTrailer.url, "Trailer ufficiale", resolvedTrailer.source);
 
-  return (
-    <Box data-testid="detail-page-redesign" sx={{ bgcolor: "#090909", color: "#fff", minHeight: "100vh", overflowX: "hidden" }}>
-      <Box sx={{ position: "relative", height: "clamp(610px, 47vw, 760px)", overflow: "hidden" }}>
-        {backdropUrl ? (
-          <Box component="img" src={backdropUrl} alt="" decoding="async" fetchPriority="high" sx={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 24%" }} />
-        ) : null}
+  const sourceArrays = [
+    detail?.trailers,
+    detail?.videos,
+    detail?.trailer_alternatives,
+    detail?.video_trailers,
+    automaticAssets?.trailers,
+    automaticAssets?.videos,
+  ];
+    sourceArrays.forEach((array) => {
+      if (!Array.isArray(array)) return;
+      array.forEach((item: any) => push(item, trailerLabel(item, items.length), item?.source));
+    });
+    return items.slice(0, 8);
+  }, [automaticAssets?.trailers, automaticAssets?.videos, detail?.trailer_alternatives, detail?.trailers, detail?.video_trailers, detail?.videos, resolvedTrailer.source, resolvedTrailer.url]);
 
-        {showTrailer && resolvedTrailer.url ? (
-          <TrailerPlayer
-            key={resolvedTrailer.url}
-            videoKey={resolvedTrailer.url}
-            muted={muted}
-            playing
-            loop
-            zoom={1.08}
-            onPlaying={() => setTrailerPlaying(true)}
-            onError={() => {
-              setShowTrailer(false);
-              setTrailerPlaying(false);
-            }}
-          />
-        ) : null}
-
-        <Box sx={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, rgba(0,0,0,.94) 0%, rgba(0,0,0,.72) 31%, rgba(0,0,0,.18) 63%, rgba(0,0,0,.12) 100%)" }} />
-        <Box sx={{ position: "absolute", inset: 0, background: "linear-gradient(0deg, #090909 0%, rgba(9,9,9,.82) 8%, transparent 35%)" }} />
-
-        <Box sx={{ position: "absolute", left: "4vw", bottom: 96, zIndex: 5, width: "min(590px, 44vw)" }}>
-          {logoUrl ? (
-            <Box component="img" src={logoUrl} alt={title} decoding="async" sx={{ display: "block", width: "auto", maxWidth: "520px", maxHeight: 190, objectFit: "contain", objectPosition: "left center", mb: 2.2 }} />
-          ) : null}
-
-          <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1.6} sx={{ alignItems: "center", mb: 2, color: "rgba(255,255,255,.78)", fontSize: 16 }}>
-            {yearFrom(detail) ? <span>{yearFrom(detail)}</span> : null}
-            <span>â€¢</span>
-            <span>{runtimeText(detail, isTV)}</span>
-            {genres[0] ? <><span>â€¢</span><span>{genres[0]}</span></> : null}
-            {qualityBadge ? <><span>â€¢</span><Box component="span" sx={{ border: "1px solid rgba(255,255,255,.45)", borderRadius: "4px", px: .8, py: .2, fontWeight: 700 }}>{qualityBadge}</Box></> : null}
-            {audioBadge ? <><span>â€¢</span><span>{audioBadge}</span></> : null}
-          </Stack>
-
-          <Typography sx={{ fontSize: 18, lineHeight: 1.5, color: "rgba(255,255,255,.9)", maxWidth: 590, textShadow: "0 2px 16px rgba(0,0,0,.75)", mb: 3 }}>
-            {detail?.overview || ""}
-          </Typography>
-
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <Button
-              data-testid="detail-play"
-              onClick={() => goPlay()}
-              onMouseEnter={() => warmPlayback()}
-              onFocus={() => warmPlayback()}
-              onTouchStart={() => warmPlayback()}
-              startIcon={<PlayArrowIcon sx={{ fontSize: 32 }} />}
-              sx={{ bgcolor: "#fff", color: "#000", px: 3.2, py: 1.25, fontSize: 18, fontWeight: 800, borderRadius: 1, textTransform: "none", "&:hover": { bgcolor: "rgba(255,255,255,.82)" } }}
-            >
-              {progressItem ? "Riprendi" : "Riproduci"}
-            </Button>
-            <Button
-              data-testid="detail-my-list"
-              onClick={handleToggleList}
-              startIcon={inMyList ? <CheckIcon /> : <AddIcon />}
-              sx={{ bgcolor: "rgba(70,70,70,.78)", color: "#fff", px: 2.8, py: 1.25, fontSize: 17, fontWeight: 700, borderRadius: 1, textTransform: "none", "&:hover": { bgcolor: "rgba(95,95,95,.9)" } }}
-            >
-              La mia lista
-            </Button>
-            {isTV ? (
-              <Button
-                onClick={scrollToEpisodes}
-                endIcon={<KeyboardArrowDownIcon />}
-                sx={{ color: "#fff", fontSize: 16, fontWeight: 700, textTransform: "none", px: 1.2, "&:hover": { bgcolor: "rgba(255,255,255,.08)" } }}
-              >
-                Episodi
-              </Button>
-            ) : null}
-          </Stack>
-        </Box>
-
-        {showTrailer && resolvedTrailer.url && trailerPlaying ? (
-          <Box sx={{ position: "absolute", right: "3vw", bottom: 78, zIndex: 7 }}>
-            <TrailerAudioButton muted={muted} onToggle={() => setMuted((value) => !value)} testId="detail-hero-audio-toggle" />
-          </Box>
-        ) : null}
-      </Box>
-
-      <Box sx={{ px: "4vw", mt: -4, position: "relative", zIndex: 8, pb: 8 }}>
-        {progressItem ? (
-          <Box sx={{ border: "1px solid rgba(255,255,255,.15)", bgcolor: "rgba(18,20,23,.94)", borderRadius: 2, p: 2, mb: 3.5, display: "grid", gridTemplateColumns: "280px 1fr auto", alignItems: "center", gap: 2.5, boxShadow: "0 22px 60px rgba(0,0,0,.36)" }}>
-            <Box sx={{ height: 124, borderRadius: 1.5, overflow: "hidden", position: "relative", bgcolor: "#111" }}>
-              {posterUrl ? <Box component="img" src={posterUrl} alt="" loading="lazy" decoding="async" sx={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
-              <Box sx={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", bgcolor: "rgba(0,0,0,.18)" }}>
-                <Box sx={{ width: 48, height: 48, borderRadius: "50%", border: "2px solid #fff", display: "grid", placeItems: "center", bgcolor: "rgba(0,0,0,.4)" }}><PlayArrowIcon /></Box>
-              </Box>
-            </Box>
-            <Box>
-              <Typography sx={{ fontSize: 19, fontWeight: 800, mb: .6 }}>Continua da dove hai interrotto</Typography>
-              <Typography sx={{ fontSize: 17, fontWeight: 700, mb: 1.4 }}>
-                {isTV ? `S${progressItem.season || 1}:E${progressItem.episode || 1}` : title}
-                {isTV && progressItem.title ? ` Â· ${progressItem.title}` : ""}
-              </Typography>
-              <Box sx={{ width: "min(520px, 100%)", height: 5, bgcolor: "rgba(255,255,255,.22)", borderRadius: 999, overflow: "hidden", mb: .8 }}>
-                <Box sx={{ width: `${progressPercent}%`, height: "100%", bgcolor: "#e50914" }} />
-              </Box>
-              <Typography sx={{ fontSize: 14, color: "rgba(255,255,255,.68)" }}>{secondsText(remainingSeconds)} rimanenti</Typography>
-            </Box>
-            <Button
-              onClick={() => goPlay(progressItem.season, progressItem.episode)}
-              onMouseEnter={() => warmPlayback(progressItem.season, progressItem.episode)}
-              onFocus={() => warmPlayback(progressItem.season, progressItem.episode)}
-              startIcon={<PlayArrowIcon />}
-              sx={{ bgcolor: "#e50914", color: "#fff", px: 2.6, py: 1.2, fontSize: 16, fontWeight: 800, textTransform: "none", borderRadius: 1, "&:hover": { bgcolor: "#f6121d" } }}
-            >
-              {isTV ? "Riprendi episodio" : "Riprendi"}
-            </Button>
-          </Box>
-        ) : null}
-
-        {!isTV ? (
-          <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1.25fr 1fr 1fr", gap: 0, borderTop: "1px solid rgba(255,255,255,.08)", borderBottom: "1px solid rgba(255,255,255,.08)", mb: 5 }}>
-            {[
-              ["Regia", director],
-              ["Cast", cast.length ? cast.join("\n") : "â€”"],
-              ["Genere", genres.length ? genres.slice(0, 3).join(", ") : "â€”"],
-              ["Temi", themes.length ? themes.join(", ") : (genres.slice(1, 4).join(", ") || "â€”")],
-            ].map(([label, value], index) => (
-              <Box key={label} sx={{ py: 2.6, px: index ? 3 : 0, borderLeft: index ? "1px solid rgba(255,255,255,.08)" : "none", minHeight: 130 }}>
-                <Typography sx={{ fontSize: 15, color: "rgba(255,255,255,.56)", mb: .7 }}>{label}</Typography>
-                <Typography sx={{ fontSize: 16, lineHeight: 1.55, whiteSpace: "pre-line", color: "rgba(255,255,255,.9)" }}>{value}</Typography>
-              </Box>
-            ))}
-          </Box>
-        ) : null}
-
-        {isTV ? (
-          <Box ref={episodesRef} id="episodes" sx={{ scrollMarginTop: 90, mb: 5 }}>
-            <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", mb: 1.6 }}>
-              <Stack direction="row" spacing={1.8} sx={{ alignItems: "center" }}>
-                <Typography sx={{ fontSize: 27, fontWeight: 800 }}>Episodi</Typography>
-                <FormControl size="small">
-                  <Select
-                    value={selectedSeason}
-                    onChange={(event) => {
-                      const season = Number(event.target.value);
-                      setSelectedSeason(season);
-                      loadSeason(season);
-                    }}
-                    sx={{ color: "#fff", bgcolor: "#1b1d20", borderRadius: 999, minWidth: 145, fontWeight: 700, ".MuiOutlinedInput-notchedOutline": { border: "none" }, ".MuiSvgIcon-root": { color: "#fff" } }}
-                  >
-                    {(availableSeasons.length ? availableSeasons : [{ season_number: selectedSeason }]).map((season: any) => (
-                      <MenuItem key={season.season_number} value={Number(season.season_number)}>Stagione {season.season_number}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Stack>
-              <Typography sx={{ color: "rgba(255,255,255,.58)", fontSize: 14 }}>{episodes.length} episodi</Typography>
-            </Stack>
-
-            {episodesLoading ? (
-              <Box sx={{ minHeight: 160, display: "grid", placeItems: "center" }}><CircularProgress sx={{ color: "#e50914" }} /></Box>
-            ) : (
-              <Stack spacing={.8}>
-                {episodes.map((episode: any, index: number) => {
-                  const number = Number(episode?.episode_number || index + 1);
-                  const status = episodeStatus(number);
-                  const isCurrent = status.kind === "progress";
-                  const isNext = status.kind === "next";
-                  const image = episodeAbsoluteImage(episode, backdropUrl, mediaId);
-                  const duration = Number(episode?.runtime || 0);
-                  return (
-                    <Box
-                      key={episode?.id || `${selectedSeason}-${number}`}
-                      sx={{
-                        display: "grid",
-                        gridTemplateColumns: "58px 190px 235px 1fr 90px 220px 200px",
-                        alignItems: "center",
-                        minHeight: 94,
-                        border: "1px solid rgba(255,255,255,.09)",
-                        borderLeft: isCurrent ? "4px solid #e50914" : "1px solid rgba(255,255,255,.09)",
-                        borderRadius: 1.5,
-                        overflow: "hidden",
-                        bgcolor: isCurrent ? "rgba(35,40,45,.9)" : "rgba(16,18,20,.72)",
-                        transition: "background-color 180ms ease, transform 180ms ease",
-                        "&:hover": { bgcolor: "rgba(41,45,50,.96)", transform: "translateY(-1px)" },
-                      }}
-                    >
-                      <Typography sx={{ textAlign: "center", fontSize: 19, fontWeight: 800 }}>{number}</Typography>
-                      <Box sx={{ height: 92, overflow: "hidden", bgcolor: "#111" }}>
-                        <Box component="img" src={image} alt="" loading="lazy" decoding="async" sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      </Box>
-                      <Box sx={{ px: 2 }}>
-                        {isNext ? <Typography sx={{ color: "#ff3340", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".06em", mb: .25 }}>Prossimo episodio</Typography> : null}
-                        <Typography sx={{ fontSize: 16, fontWeight: 800 }}>{episode?.name || `Episodio ${number}`}</Typography>
-                      </Box>
-                      <Typography sx={{ px: 2, fontSize: 13.5, lineHeight: 1.4, color: "rgba(255,255,255,.68)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{episode?.overview || ""}</Typography>
-                      <Typography sx={{ fontSize: 13.5, color: "rgba(255,255,255,.7)" }}>{duration ? `${duration} min` : ""}</Typography>
-                      <Box sx={{ pr: 2 }}>
-                        <Box sx={{ height: 5, bgcolor: "rgba(255,255,255,.18)", borderRadius: 999, overflow: "hidden", mb: .55 }}>
-                          <Box sx={{ height: "100%", width: `${status.percent || 0}%`, bgcolor: status.percent ? "#e50914" : "transparent" }} />
-                        </Box>
-                        <Typography sx={{ fontSize: 12, color: "rgba(255,255,255,.6)" }}>{status.kind === "complete" ? "100% visto" : status.kind === "progress" ? `${Math.round(status.percent)}% visto` : ""}</Typography>
-                      </Box>
-                      <Box sx={{ pr: 2, display: "flex", justifyContent: "flex-end" }}>
-                        {status.kind === "complete" ? (
-                          <Box sx={{ px: 1.4, py: .75, borderRadius: 999, bgcolor: "rgba(20,107,61,.42)", color: "#baf6d0", fontSize: 13, fontWeight: 800 }}>Completato</Box>
-                        ) : status.kind === "progress" ? (
-                          <Button onClick={() => goPlay(selectedSeason, number)} onMouseEnter={() => warmPlayback(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(229,9,20,.35)", color: "#fff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(229,9,20,.65)" } }}>Riprendi</Button>
-                        ) : status.kind === "next" ? (
-                          <Button onClick={() => goPlay(selectedSeason, number)} onMouseEnter={() => warmPlayback(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ bgcolor: "rgba(18,86,148,.52)", color: "#dbeeff", textTransform: "none", fontWeight: 800, borderRadius: 999, px: 1.8, "&:hover": { bgcolor: "rgba(18,86,148,.8)" } }}>Prossimo episodio</Button>
-                        ) : (
-                          <Button onClick={() => goPlay(selectedSeason, number)} onMouseEnter={() => warmPlayback(selectedSeason, number)} startIcon={<PlayArrowIcon />} sx={{ color: "#fff", textTransform: "none", fontWeight: 800, border: "1px solid rgba(255,255,255,.35)", borderRadius: 999, px: 1.7, "&:hover": { bgcolor: "rgba(255,255,255,.1)" } }}>Riproduci</Button>
-                        )}
-                      </Box>
-                    </Box>
-                  );
-                })}
-              </Stack>
-            )}
-          </Box>
-        ) : null}
-
-        <Box sx={{ mt: 3 }}>
-          <Typography sx={{ fontSize: 25, fontWeight: 800, mb: 1.8 }}>Altri contenuti simili</Typography>
-          <Box sx={{ display: "flex", gap: 1.4, overflowX: "auto", overflowY: "visible", pb: 5, scrollSnapType: "x proximity", "&::-webkit-scrollbar": { height: 5 }, "&::-webkit-scrollbar-thumb": { bgcolor: "rgba(255,255,255,.18)", borderRadius: 999 } }}>
-            {relatedItems.slice(0, 30).map((item: any) => (
-              <Box key={item.id || item.tmdbId} sx={{ flex: "0 0 clamp(235px, 18vw, 305px)", scrollSnapAlign: "start" }}>
-                <VideoItemWithHover video={{ ...item, type: typeSlug, media_type: typeSlug }} mediaType={type} />
-              </Box>
-            ))}
-          </Box>
-        </Box>
-      </Box>
-    </Box>
-  );
-}
-
-export default Component;
+  const continueLine = progressItem
+    ? `${isTV ? `S${Number(progressItem.season || 1)}:E${Number(progressItem.episode || 1)}` : "Riprendi"} $Â· ${remainingSeconds > 0 ? secondsText(remainingSeconds) + " rimanenti" : "Riprendi"}`
+    : isTV ? "S1:E1 â€¢#¢"#° ¢–b‚FWF–Â’°¢&WGW&â€¢Ä&÷‚7ƒ×·²Ö–ä†V–v‡C¢#ƒ'f‚"Â&v6öÆ÷#¢"3S“B"ÂF—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""×Óà¢Ä6—&7VÆ%&öw&W727ƒ×·²6öÆ÷#¢"6SS“B"×Òóà¢Âô&÷ƒà¢“°¢Ğ ¢&WGW&â€¢Ä&÷€¢FF×FW7F–CÒ&FWF–Â×vR×&VFW6–vâ×c" ¢7ƒ×·°¢&v6öÆ÷#¢"3S“B"À¢6öÆ÷#¢"6ffb"À¢Ö–ä†V–v‡C¢#f‚"À¢÷fW&fÆ÷uƒ¢&†–FFVâ"À¢föçDfÖ–Ç“¢tæWFfÆ—‚6ç2Â$†VÇfWF–6æWVR"Â&–ÂÂ6ç2×6W&–brÀ¢×Ğ¢à¢Ä&÷€¢7ƒ×·°¢÷6—F–öã¢'&VÆF—fR"À¢†V–v‡C¢&6Æ×ƒcS‚Âcã'f‚ÂƒC‚’"À¢Ö–ä†V–v‡C¢cSÀ¢÷fW&fÆ÷s¢&†–FFVâ"À¢&v6öÆ÷#¢"33s""À¢×Ğ¢à¢¶&6¶G&÷W&Âò€¢Ä&÷€¢6ö×öæVçCÒ&–Ör ¢7&3×¶&6¶G&÷W&ÇĞ¢ÇCÒ" ¢FV6öF–æsÒ&7–æ2 ¢fWF6…&–÷&—G“Ò&†–v‚ ¢7ƒ×·°¢÷6—F–öã¢&'6öÇWFR"À¢–ç6WC¢À¢v–GFƒ¢#R"À¢†V–v‡C¢#R"À¢ö&¦V7Df—C¢&6÷fW""À¢ö&¦V7E÷6—F–öã¢&6VçFW"#BR"À¢÷6—G“¢6†÷uG&–ÆW"bbG&–ÆW%Æ––ærò¢À¢G&ç6—F–öã¢&÷6—G’3c×2V6R"À¢×Ğ¢óà¢’¢çVÆÇĞ ¢·6†÷uG&–ÆW"bb&W6öÇfVEG&–ÆW"çW&Âò€¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â–ç6WC¢Â÷6—G“¢G&–ÆW%Æ––ærò¢ÂG&ç6—F–öã¢&÷6—G’3c×2V6R"Âö–çFW$WfVçG3¢&æöæR"×Óà¢ÅG&–ÆW%Æ–W ¢¶W“×·&W6öÇfVEG&–ÆW"çW&ÇĞ¢f–FVô¶W“×·&W6öÇfVEG&–ÆW"çW&ÇĞ¢×WFVC×¶×WFVGĞ¢Æ––æp¢Æö÷ ¢¦ööÓ×³Ğ¢öåÆ––æs×²‚’Óâ6WEG&–ÆW%Æ––ær‡G'VR—Ğ¢öäW'&÷#×²‚’Óâ°¢6WE6†÷uG&–ÆW"†fÇ6R“°¢6WEG&–ÆW%Æ––ær†fÇ6R“°¢×Ğ¢óà¢Âô&÷ƒà¢’¢çVÆÇĞ ¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â–ç6WC¢Â&6¶w&÷VæC¢&Æ–æV"Öw&F–VçBƒ“FVrÂ&v&ƒ2ÃrÃÂã“b’RÂ&v&ƒ2ÃrÃÂãsB’#’RÂ&v&ƒ2ÃrÃÂã#B’SbRÂ&v&ƒ2ÃrÃÂã‚’s‚R’"×Òóà¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â–ç6WC¢Â&6¶w&÷VæC¢&Æ–æV"Öw&F–VçBƒFVrÂ3S“BRÂ&v&ƒRÃ’Ã2Âãƒ‚’rRÂ&v&ƒRÃ’Ã2Âãb’"3‚R’"×Òóà¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â–ç6WC¢Â&÷…6†F÷s¢&–ç6WBÓC‚ƒ‚&v&ƒBÃ2Ã#ÂãsB’"Âö–çFW$WfVçG3¢&æöæR"×Òóà ¢Ä&÷€¢7ƒ×·°¢÷6—F–öã¢&'6öÇWFR"À¢ÆVgC¢²‡3¢#Wgr"ÂÖC¢#Ggr'ÒÀ¢&÷GFöÓ¢²‡3¢“BÂÖC¢gÒÀ¢¤–æFWƒ¢BÀ¢v–GFƒ¢²‡3¢#“gr"Â6Ó¢#sgr"ÂÖC¢&Ö–âƒcC‚ÂCWgr’"ÒÀ¢×Ğ¢à¢¶ÆövõW&Âò€¢Ä&÷€¢6ö×öæVçCÒ&–Ör ¢7&3×¶ÆövõW&ÇĞ¢ÇC×·F—FÆWĞ¢FV6öF–æsÒ&7–æ2 ¢7ƒ×·°¢F—7Æ“¢&&Æö6²"À¢v–GFƒ¢&WFò"À¢Ö…v–GFƒ¢&Ö–âƒSC‚ÂC'gr’"À¢Ö„†V–v‡C¢“À¢ö&¦V7Df—C¢&6öçF–â"À¢ö&¦V7E÷6—F–öã¢&ÆVgB6VçFW""À¢Ö#¢"ã"À¢×Ğ¢óà¢’¢€¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢&6Æ×ƒC‚ÂRãgrÂsG‚’"ÂföçEvV–v‡C¢“ÂÆ–æT†V–v‡C¢ã“BÂÆWGFW%76–æs¢"ÒãCVVÒ"ÂÖ#¢"ã"ÂFW‡E6†F÷s¢#G‚#G‚&v&ƒÃÃÂãR’"×Óà¢·F—FÆWĞ¢ÂõG—öw&‡“à¢—Ğ ¢Å7F6²F—&V7F–öãÒ'&÷r"W6TfÆW„vfÆW…w&Ò'w&"76–æs×³ãWÒ7ƒ×·²Æ–vä—FV×3¢&6VçFW""ÂÖ#¢ã‚Â6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãƒB’"×Óà¢¶ÖWFFF—FV×2æÖ‚†—FVÓ¢ç’Â–æFWƒ¢çVÖ&W"’Óâ€¢Å7F6²¶W“×¶G·FW‡GÒG¶–æFW‡ÖÒF—&V7F–öãÒ'&÷r"76–æs×³ãWÒ7ƒ×·²Æ–vä—FV×3¢&6VçFW""×Óà¢¶–æFW‚òÄ&÷‚6ö×öæVçCÒ'7â"7ƒ×·²6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãs"’"×Óî(
+#Âô&÷ƒâ¢çVÆÇĞ¢Ä&÷‚6ö×öæVçCÒ'7â"7ƒ×·²föçE6—¦S¢bãRÂföçEvV–v‡C¢SƒÂƒ¢—FVÒæ&FvRò¢Â“¢—FVÒæ&FvRòãR¢Â&÷&FW#¢—FVÒæ&FvRò#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂãR’"¢&æöæR"Â&÷&FW%&F—W3¢—FVÒæ&FvRò#G‚"¢×Óç¶—FVÒçFW‡GÓÂô&÷ƒà¢Âõ7F6³à¢’—Ğ¢Âõ7F6³à ¢Ä&÷‚7ƒ×·²Ö#¢ãB×Óà¢ÅG—öw&‡’7ƒ×·²föçEvV–v‡C¢ƒÂföçE6—¦S¢rãRÂÖ#¢ãcR×Óà¢·&öw&W74—FVÒò$6öçF–çVwV&F&R"¢—5Ebò$wV&F3¤S"¢%&—&öGV6’'Ğ¢ÂõG—öw&‡“à¢Å7F6²F—&V7F–öãÒ'&÷r"76–æs×³ãWÒ7ƒ×·²Æ–vä—FV×3¢&6VçFW""×Óà¢Ä&÷‚7ƒ×·²v–GFƒ¢#SÂÖ…v–GFƒ¢#C'gr"Â†V–v‡C¢RÂ&÷&FW%&F—W3¢““’Â&v6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂã‚’"Â÷fW&fÆ÷s¢&†–FFVâ"×Óà¢Ä&÷‚7ƒ×·²v–GFƒ¢Gµ&öw&W74—FVÒò&öw&W75W&6VçB¢ÒVÂ†V–v‡C¢#R"Â&6¶w&÷VæC¢"6SS“B"ÂG&ç6—F–öã¢'v–GF‚#S×2V6R"×Òóà¢Âô&÷ƒà¢·&öw&W74—FVÒòÅG—öw&‡’7ƒ×·²föçE6—¦S¢RãRÂ6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãsb’"×Óç¶6öçF–çVTÆ–æWÓÂõG—öw&‡“â¢çVÆÇĞ¢Âõ7F6³à¢Âô&÷ƒà ¢Å7F6²F—&V7F–öãÒ'&÷r"76–æs×³ã'Ò7ƒ×·²Æ–vä—FV×3¢&6VçFW""ÂfÆW…w&¢'w&"×Óà¢Ä'WGFöà¢öä6Æ–6³×¶võÆ—Ğ¢öäÖ÷W6TVçFW#×²‚’Óâv&ÕÆ–&6µ&WVW7B‡G—U6ÇVrÂÖVF––BÂ—5EbòçVÖ&W"‡&öw&W74—FVÓòç6V6öâÇÂ’¢VæFVf–æVBÂ—5EbòçVÖ&W"‡&öw&W74—FVÓòæW—6öFRÇÂ’¢VæFVf–æVB’æ6F6‚‚‚’Óâ·Ò—Ğ¢öäfö7W3×²‚’Óâv&ÕÆ–&6µ&WVW7B‡G—U6ÇVrÂÖVF––BÂ—5EbòçVÖ&W"‡&öw&W74—FVÓòç6V6öâÇÂ’¢VæFVf–æVBÂ—5EbòçVÖ&W"‡&öw&W74—FVÓòæW—6öFRÇÂ’¢VæFVf–æVB’æ6F6‚‚‚’Óâ·Ò—Ğ¢7F'D–6öã×³ÅÆ”'&÷t–6öâ7ƒ×·²föçE6—¦S¢3"×ÒóçĞ¢7ƒ×·°¢&÷&FW%&F—W3¢#‡‚"À¢ƒ¢"ãbÀ¢“¢ãRÀ¢föçE6—¦S¢rãRÀ¢föçEvV–v‡C¢ƒSÀ¢&v6öÆ÷#¢"6ffb"À¢6öÆ÷#¢"3"À¢FW‡EG&ç6f÷&Ó¢&æöæR"À¢"c¦†÷fW"#¢²&v6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãƒb’"ÂG&ç6f÷&Ó¢'G&ç6ÆFU’‚Ó‚’"ÒÀ¢×Ğ¢à¢·&öw&W74—FVÒò$6öçF–çVwV&F&R"¢—5Ebò$wV&F3¤S"¢%&—&öGV6’'Ğ¢Âô'WGFöãà¢Âõ7F6³à¢Âô&÷ƒà ¢Ç·G&–ÆW%Æ––ærò†çVÆÂ’¢çVÆÇĞ ¢·&W6öÇfVEG&–ÆW"çW&Âò€¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â&–v‡C¢²‡3¢‚ÂÖC¢CBÒÂ&÷GFöÓ¢bÂ¤–æFWƒ¢R×Óà¢ÅG&–ÆW$VF–ô'WGFöâ×WFVC×¶×WFVGÒöåFövvÆS×²‚’Óâ6WD×WFVB‚‡fÇVR’ÓâfÇVR—ÒFW7D–CÒ&FWF–ÂÖ†W&ò×G&–ÆW"ÖVF–ò×FövvÆR"óà¢Âô&÷ƒà¢’¢çVÆÇĞ¢Âô&÷ƒà ¢Ä&÷‚7ƒ×·²÷6—F–öã¢'&VÆF—fR"Â×C¢"ÓCG‚"Â¤–æFWƒ¢Â#¢Â&6¶w&÷VæC¢&Æ–æV"Öw&F–VçBƒƒFVrÂ3S“BRÂ3S“Bs"RÂ3sS2R’"×Óà¢Ä&÷€¢7ƒ×·°¢÷6—F–öã¢'7F–6·’"À¢F÷¢²‡3¢SbÂÖC¢s‚ÒÀ¢¤–æFWƒ¢#À¢F—7Æ“¢&fÆW‚"À¢§W7F–g”6öçFVçC¢&6VçFW""À¢ƒ¢"À¢×Ğ¢à¢Ä&÷‚7ƒ×·²F—7Æ“¢&fÆW‚"ÂÆ–vä—FV×3¢&6VçFW""Âv¢ãRÂ¢#W‚"Â‚¢#w‚"Â&÷&FW%&F—W3¢##'‚"Â&v6öÆ÷#¢'&v&ƒRÃ"Ã‚Âã“B’"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂãR’"Â&÷…6†F÷s¢#'‚3'‚&v&ƒÃÃÂã#‚’"Â&6¶G&÷f–ÇFW#¢&&ÇW"ƒg‚’"×Óà¢´DUD”ÅõD%2æÖ‚‡F"’Óâ€¢Ä'WGFöà¢¶W“×·F"æ–GĞ¢öä6Æ–6³×²‚’Óâ6WD7F—fUF"‡F"æ–B—Ğ¢FF×FW7F–C×¶FWF–Â×F"ÒG·F"æ–GÖĞ¢7ƒ×·°¢6öÆ÷#¢7F—fUF"ÓÓÒF"æ–Bò"6ffb"¢'&v&ƒ#SRÃ#SRÃ#SRÂãs"’"À¢FW‡EG&ç6f÷&Ó¢&æöæR"À¢föçE6—¦S¢²‡3¢2ÂÖC¢RãRÒÀ¢föçEvV–v‡C¢7F—fUF"ÓÓÒF"æ–BòsS¢SSÀ¢&÷&FW%&F—W3¢#‡‚"À¢†V–v‡C¢CbÀ¢ƒ¢²‡3¢ã‚ÂÖC¢2ã"ÒÀ¢÷6—F–öã¢'&VÆF—fR"À¢v†—FU76S¢&æ÷w&"À¢&v6öÆ÷#¢7F—fUF"ÓÓÒF"æ–Bò'&v&ƒ#SRÃ#SRÃ#SRÂã’’"¢'G&ç7&VçB"À¢"c¦†÷fW"#¢²&v6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãr’"Â6öÆ÷#¢"6ffb"ÒÀ¢"c£¦gFW"#¢°¢6öçFVçC¢tfÃrrÀ¢÷6—F–öã¢&'6öÇWFR"À¢ÆVgC¢##R"À¢&–v‡C¢##R"À¢&÷GFöÓ¢RÀ¢†V–v‡C¢2À¢&÷&FW%&F—W3¢““’À¢&v6öÆ÷#¢7F—fUF"ÓÓÒF"æ–Bò"6S“’"¢'G&ç7&VçB"À¢&÷…6†F÷s¢7F—fUF"ÓÓÒF"æ–Bò#'‚&v&ƒ##’Ã’ÃBÂãSR’"¢&æöæR"À¢ÒÀ¢×Ğ¢à¢·F"æÆ&VÇĞ¢Âô'WGFöãà¢’—Ğ¢Âô&÷ƒà¢Âô&÷ƒà ¢Ä&÷€¢¶W“×¶7F—fUF'Ğ¢7ƒ×·°¢v–GFƒ¢&Ö–âƒS'‚Â“'gr’"À¢Ö…v–GFƒ¢S"À¢×ƒ¢&WFò"À¢C¢Bã‚À¢æ–ÖF–öã¢&FWF–ÅF&–â##×27V&–2Ö&W¦–W"‚ã#"ÂãcÂã3bÃ’&÷F‚"À¢$¶W–g&ÖW2FWF–ÅF$–â#¢°¢g&öÓ¢²÷6—G“¢ÂG&ç6f÷&Ó¢'G&ç6ÆFU’ƒG‚’'ÒÀ¢Fó¢²÷6—G“¢ÂG&ç6f÷&Ó¢'G&ç6ÆFU’ƒ‚’"ÒÀ¢ÒÀ¢×Ğ¢à¢¶7F—fUF"ÓÓÒ&÷fW'f–Wr"ò€¢Ä&÷‚7ƒ×·²F—7Æ“¢&w&–B"Âw&–EFV×ÆFT6öÇVÖç3¢²‡3¢#g""ÂÆs¢#"ãVg"g""ÒÂv¢ãr×Óà¢Ä&÷‚7ƒ×·²&÷&FW%&F—W3¢##‚"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã’"Â&6¶w&÷VæC¢&Æ–æV"Öw&F–VçBƒ3VFVrÂ&v&ƒ’Ã#Ã3Âã“"’Â&v&ƒRÃRÃ#"Âãƒ2’’"Â&÷…6†F÷s¢##'‚s‚&v&ƒÃÃÂã#R’"Â¢²‡3¢"ãBÂÖC¢2ãBÒ×Óà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢&6Æ×ƒ#‡‚Â"ã'grÂ3‡‚’"ÂföçEvV–v‡C¢“ÂÖ#¢ã"×Óåæ÷&Ö–6ÂõG—öw&‡“à¢¶÷fW'f–Wrò€¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢&6Æ×ƒg‚Âã3WgrÂ#‚’"ÂÆ–æT†V–v‡C¢ãS"Â6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãƒB’"ÂÖ…v–GFƒ¢ƒcÂÖ#¢"ãÂF—7Æ“¢"×vV&¶—BÖ&÷‚"ÂvV&¶—DÆ–æT6Æ×¢2ÂvV&¶—D&÷„÷&–VçC¢'fW'F–6Â"Â÷fW&f÷s¢&†–FFVâ"×Óà¢¶÷fW'f–WwÒ¶÷fW'f–WræÆVæwF‚â#cò"âââÇG&ò"¢"'Ğ¢ÂõG—öw&‡“à¢’¢ÅG—öw&‡’7ƒ×·²6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãcB’"ÂÖ#¢"ã×ÓåG&ÖæöâF—7öæ–&–ÆRãÂõG—öw&‡“à ¢Ä&÷‚7ƒ×·²F—7Æ“¢&w&–B"Âw&–EFV×ÆFT6öÇVÖç3¢²‡3¢#g"g""ÂÖC¢'&WVBƒBÂg"’"ÒÂv¢ãÂ×C¢&WFò"×Óà¢µ°¢²$vVæW&R"ÂvVç&W5³ÒÇÂ.(	B%ÒÀ¢²$ææò"Â–V$g&öÒ†FWF–Â’ÇÂ.(	B%ÒÀ¢²$GW&F"Â'VçF–ÖUFW‡B†FWF–ÂÂ—5Eb•ÒÀ¢²$6Æ76–f–6¦–öæR"Â6W'F–f–6F–öâÇÂ.(	B%ÒÀ¢ÒæÖ‚…¶Æ&VÂÂfÇVUÒ’Óâ€¢Ä&÷‚¶W“×¶Æ&VÇÒ7ƒ×·²ƒ¢ãRÂ“¢ã3RÂ&÷&FW%&F—W3¢#7‚"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã’"Â&v6öÆ÷#¢'&v&ƒRÃ3ÃCÂãC‚’"ÂÖ–ä†V–v‡C¢sB×Óà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢"ãRÂ6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãSB’"ÂÖ#¢ã3R×Óç¶Æ&VÇÓÂõG—öw&‡“à¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢bãRÂföçEvV–v‡C¢sS×Óç·fÇVWÓÂõG—öw&‡“à¢Âô&÷ƒà¢’—Ğ¢Âô&÷ƒà¢Âô&÷ƒà ¢Ä&÷‚7ƒ×·²&÷&FW%&F—W3¢##‚"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã’"Â&6¶w&÷VæC¢&Æ–æV"Öw&F–VçBƒ3VFVrÂ&v&ƒÃ#RÃ3bÂã“"’Â&v&ƒRÃRÃ#"ÂãƒR’’"Â&÷…6†F÷s¢##'‚s‚&v&ƒÃÃÂã#R’"Â¢"×Óà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢#BÂföçEvV–v‡C¢ƒSÂÖ#¢ãB×Óç·&öw&W74—FVÒò$6öçF–çVwV&F&R"¢$6öçFVçWFò'ÓÂõG—öw&‡“à¢·÷7FW%W&Âò€¢Ä&÷‚7ƒ×·²÷6—F–öã¢'&VÆF—fR"Â&÷&FW%&F—W3¢#W‚"Â÷fW&fÆ÷s¢&†–FFVâ"Â7V7E&F–ó¢#bòrãB"Â&v6öÆ÷#¢"3s‚"×Óà¢Ä&÷‚6ö×öæVçCÒ&–Ör"7&3×·÷7FW%W&ÇÒÇCÒ""ÆöF–æsÒ&Æ§’"FV6öF–æsÒ&7–æ2"7ƒ×·²v–GFƒ¢#R"Â†V–v‡C¢#R"Âö&¦V7Df—C¢&6÷fW""Âf–ÇFW#¢&'&–v‡FæW72‚ã‚’"×Òóà¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â–ç6WC¢Â&6¶w&÷VæC¢&Æ–æV"Öw&F–VçBƒFVrÂ&v&ƒÃÃÂãS"’ÂG&ç7&VçBcR’"×Òóà¢Ä–6öä'WGFöâöä6Æ–6³×¶võÆ—Ò7ƒ×·²÷6—F–öã¢&'6öÇWFR"ÂÆVgC¢rÂ&÷GFöÓ¢rÂ&v6öÆ÷#¢'&v&ƒ#RÃCRÃS’Âãs"’"Â6öÆ÷#¢"6ffb"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂãr’"Âv–GFƒ¢C‚Â†V–v‡C¢C‚Â"c¦†÷fW"#¢²&v6öÆ÷#¢'&v&ƒ#RÃCRÃS’Âã’’"Ò×Óà¢ÅÆ”'&÷t–6öâóà¢Âô–6öä'WGFöãà¢Âô&÷ƒà¢’¢çVÆÇĞ¢Ä&÷‚7ƒ×·²C¢ãB×Óà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢RãRÂföçEvV–v‡C¢sSÂÖ#¢ãB×Óç·&öw&W74—FVÒò†—5Ebò2G´çVÖ&W"‡&öw&W74—FVÒç6V6öâÇÂ—Ó¤RG´çVÖ&W"‡&öw&W74—FVÒæW—6öFRÇÂ—ÒÒG·F—FÆWÖ¢F—FÆR’¢F—FÆWÓÂõG—öw&‡“à¢·&öw&W74—FVÒò€¢Å7F6²F—&V7F–öãÒ'&÷r"76–æs×³ã'Ò7ƒ×·²Æ–vä—FV×3¢&6VçFW""×Óà¢Ä&÷‚7ƒ×·²fÆWƒ¢Â†V–v‡C¢RÂ&÷&FW%&F—W3¢““’Â&v6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãb’"Â÷fW&fÆ÷s¢&†–FFVâ"×Óà¢Ä&÷‚7ƒ×·²v–GFƒ¢G·&öw&W75W&6VçGÒVÂ†V–v‡C¢#R"Â&6¶w&÷VæC¢"6SS“B"×Òóà¢Âô&÷ƒà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢2ãRÂ6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãs"’"Âv†—FU76S¢&æ÷w&"×Óç·&VÖ–æ–æu6V6öæG2òG·6V6öæG5FW‡B‡&VÖ–æ–æu6V6öæG2—Ò&–ÖæVçF–¢%&—&VæF’'ÓÂõG—öw&‡“à¢Âõ7F6³à¢’¢€¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢2ãRÂ6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãb’"×Óç¶—5Ebò$–æ—¦–F3¤S"¢%&—&öGV6’–Âf–ÆÒ'ÓÂõG—öw&‡“à¢—Ğ¢Âô&÷ƒà¢Âô&÷ƒà¢’¢çVÆÇĞ ¢¶7F—fUF"ÓÓÒ'G&–ÆW'2"ò€¢Ä&÷ƒà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢&6Æ×ƒ#‡‚Â"ãGgrÂ3—‚’"ÂföçEvV–v‡C¢“ÂÆWGFW%76–æs¢"ãVÒ"ÂFW‡EG&ç6f÷&Ó¢'WW&66R"ÂÖ#¢ãb×ÓåG&–ÆW"bÇG&óÂõG—öw&‡“à¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢rÂ6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãc‚’"ÂÖ#¢"ã‚×Óå66÷&’G&–ÆW"R6öçFVçWF’f–FVòF—7öæ–&–Æ’W"VW7FòF—FöÆòãÂõG—öw&‡“à ¢·G&–ÆW$—FV×2æÆVæwF‚ò€¢Ä&÷‚7ƒ×·²F—7Æ“¢&w&–B"Âw&–EFV×ÆFT6öÇVÖç3¢²‡3¢#g""ÂÖC¢'&WVBƒ"Âg"’"Â†Ã¢'&WVBƒBÂg"’"ÒÂv¢ãb×Óà¢·G&–ÆW$—FV×2æÖ‚†—FVÓ¢ç’Â–æFWƒ¢çVÖ&W"’Óâ€¢Ä&÷€¢¶W“×¶—FVÒçW&ÇĞ¢öä6Æ–6³×²‚’Óâ°¢6WDÖöFÄ×WFVB†fÇ6R“°¢6WDÖöFÅG&–ÆW%W&Â†—FVÒçW&Â“°¢×Ğ¢7ƒ×·°¢7W'6÷#¢'ö–çFW""À¢&÷&FW%&F—W3¢#‡‚"À¢÷fW&f÷s¢&†–FFVâ"À¢&v6öÆ÷#¢'&v&ƒ’Ã#Ã3ÂãƒB’"À¢&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã2’"À¢&÷…6†F÷s¢#‡‚Cg‚&v&ƒÃÃÂã#B’"À¢G&ç6—F–öã¢'G&ç6f÷&Òƒ×2V6RÂ&÷&FW"Ö6öÆ÷"ƒ×2V6RÂ&6¶w&÷VæBÖ6öÆ÷"ƒ×2V6R"À¢"c¦†÷fW"#¢²G&ç6f÷&Ó¢'G&ç6ÆFU’‚Ó7‚’"Â&÷&FW$6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂã#b’"Â&v6öÆ÷#¢'&v&ƒBÃ#’ÃCÂã“R’"ÒÀ¢×Ğ¢à¢Ä&÷‚7ƒ×·²÷6—F–öã¢'&VÆF—fR"Â7V7E&F–ó¢#bò’"Â&v6öÆ÷#¢"3s‚"Â÷fW&fÆ÷s¢&†–FFVâ"×Óà¢¶&6¶G&÷W&ÂòÄ&÷‚6ö×öæVçCÒ&–Ör"7&3×¶&6¶G&÷W&ÇÒÇCÒ""ÆöF–æsÒ&Æ§’"FV6öF–æsÒ&7–æ2"7ƒ×·²v–GFƒ¢#R"Â†V–v‡C¢#R"Âö&¦V7Df—C¢&6÷fW""Âö&¦V7E÷6—F–öã¢–æFW‚R"ò&6VçFW""¢&6VçFW"3R"Âf–ÇFW#¢–æFW‚ò&'&–v‡FæW72‚ãs‚’"¢&æöæR"×Òóâ¢çVÆÇĞ¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â–ç6WC¢Â&6¶w&÷VæC¢&Æ–æV"Öw&F–VçBƒFVrÂ&v&ƒÃÃÂãCB’Â&v&ƒÃÃÂã2’SRR’"×Òóà¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"ÂÆVgC¢‚Â&÷GFöÓ¢bÂv–GFƒ¢C‚Â†V–v‡C¢C‚Â&÷&FW%&F—W3¢#SR"ÂF—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""Â&v6öÆ÷#¢'&v&ƒ’ÃbÃ#BÂãc"’"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂãs‚’"Â&6¶G&÷f–ÇFW#¢&&ÇW"ƒ‡‚’"×Óà¢ÅÆ”'&÷t–6öâ7ƒ×·²föçE6—¦S¢3×Òóà¢Âô&÷ƒà¢Âô&÷ƒà¢Ä&÷‚7ƒ×·²¢"ã×Óà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢’ÂföçEvV–v‡C¢ƒSÂÖ#¢ã3R×Óç¶—FVÒæÆ&VÇÓÂõG—öw&‡“à¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢Bã"Â6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãb’"×Óç¶—FVÒç6÷W&6RòföçFS¢G¶—FVÒç6÷W&6WÖ¢%&—&öGV6’–ÂG&–ÆW"'ÓÂõG—öw&‡“à¢Âô&÷ƒà¢Âô&÷ƒà¢’—Ğ¢Âô&÷ƒà¢’¢€¢Ä&÷‚7ƒ×·²Ö–ä†V–v‡C¢#CÂ&÷&FW%&F—W3¢##‚"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã’"Â&v6öÆ÷#¢'&v&ƒ’Ã#Ã3Âãr’"ÂF—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""ÂFW‡DÆ–vã¢&6VçFW""Âƒ¢2×Óà¢Ä&÷ƒà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢#BÂföçEvV–v‡C¢ƒSÂÖ#¢ãr×ÓåG&–ÆW"æöâF—7öæ–&–ÆSÂõG—öw&‡“à¢ÅG—öw&‡’7ƒ×·²6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãc"’"×Óä–Â6—7FVÖ6öçF–çVW,:6W&6&RWFöÖF–6ÖVçFRVæ6÷&vVçFRF—7öæ–&–ÆRãÂõG—öw&‡“à¢Âô&÷ƒà¢Âô&÷ƒà¢—Ğ¢Âô&÷ƒà¢’¢çVÆÇĞ ¢¶7F—fUF"ÓÓÒ&F÷væÆöB"ò€¢Ä&÷‚7ƒ×·²F—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""ÂÖ–ä†V–v‡C¢3c×Óà¢Ä&÷‚7ƒ×·²v–GFƒ¢&Ö–âƒ“‚ÂR’"ÂÖ–ä†V–v‡C¢#“Â&÷&FW%&F—W3¢##'‚"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã2’"Â&v6öÆ÷#¢'&v&ƒ’Ã#Ã3Âãs‚’"Â&÷…6†F÷s¢##G‚ƒ‚&v&ƒÃÃÂã#R’"Â&6¶G&÷f–ÇFW#¢&&ÇW"ƒg‚’"ÂF—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""ÂFW‡DÆ–vã¢&6VçFW""Âƒ¢BÂ“¢R×Óà¢Ä&÷ƒà¢Ä&÷‚7ƒ×·²v–GFƒ¢"Â†V–v‡C¢"Â×ƒ¢&WFò"ÂÖ#¢"ãBÂ&÷&FW%&F—W3¢#SR"ÂF—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""Â&÷&FW#¢#‚6öÆ–B&v&ƒ#"Ãƒ‚Ã#SRÂãCb’"Â&v6öÆ÷#¢'&v&ƒ#rÃƒÃ#bÂãR’"Â&÷…6†F÷s¢&–ç6WB3'‚&v&ƒSÃ’Ãs‚Âã"’"×Óà¢ÄF÷væÆöE&÷VæFVD–6öâ7ƒ×·²föçE6—¦S¢SRÂ6öÆ÷#¢"3–fCfb"×Òóà¢Âô&÷ƒà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢&6Æ×ƒ#w‚Â"ã7grÂ3‡‚’"ÂföçEvV–v‡C¢“ÂÖ#¢×ÓäF÷væÆöBæöâæ6÷&F—7öæ–&–ÆSÂõG—öw&‡“à¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢&6Æ×ƒW‚Âã#WgrÂ—‚’"Â6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãcb’"×Óå7F–ÖòÆf÷&æFòW"&VæFW&ÆòF—7öæ–&–ÆRæVÆÆR&÷76–ÖRfW'6–öæ’ãÂõG—öw&‡“à¢Âô&÷ƒà¢Âô&÷ƒà¢Âô&÷ƒà¢’¢çVÆÇĞ ¢¶7F—fUF"ÓÓÒ'6–Ö–Æ""ò€¢Ä&÷ƒà¢ÅG—öw&‡’7ƒ×·²föçE6—¦S¢&6Æ×ƒ#‡‚Â"ãGgrÂ3—‚’"ÂföçEvV–v‡C¢“ÂÆWGFW%76–æs¢"ãVÒ"ÂFW‡EG&ç6f÷&Ó¢'WW&66R"ÂÖ#¢"ã"×ÓåF—FöÆ’6–Ö–Æ“ÂõG—öw&‡“à¢·&VÆFVD—FV×2æÆVæwF‚ò€¢Ä&÷‚7ƒ×·²F—7Æ“¢&fÆW‚"Âv¢ãCRÂ÷fW&fÆ÷uƒ¢&WFò"Â÷fW&fÆ÷u“¢'f—6–&ÆR"Â#¢BãRÂ67&öÆÅ6æG—S¢'‚&÷†–Ö—G’"Â"c£¢×vV&¶—B×67&öÆÆ&"#¢²†V–v‡C¢RÒÂ"c£¢×vV&¶—B×67&öÆÆ&"×F‡VÖ"#¢²&v6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂã‚’"Â&÷&FW%&F—W3¢““’Ò×Óà¢·&VÆFVD—FV×2ç6Æ–6RƒÂ3’æÖ‚†—FVÓ¢ç’’Óâ€¢Ä&÷‚¶W“×¶—FVÒæ–BÇÂ—FVÒçFÖF$–GÒ7ƒ×·²fÆWƒ¢#6Æ×ƒ#3W‚Â‡grÂ3W‚’"Â67&öÆÅ6æÆ–vã¢'7F'B"×Óà¢Åf–FVô—FVÕv—F„†÷fW"f–FVó×·²ââæ—FVÒÂG—S¢G—U6ÇVrÂÖVF–÷G—S¢G—U6ÇVr×ÒÖVF–G—S×·G—WÒóà¢Âô&÷ƒà¢’—Ğ¢Âô&÷ƒà¢’¢€¢Ä&÷‚7ƒ×·²Ö–ä†V–v‡C¢#CÂF—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã’"Â&÷&FW%&F—W3¢##‚"Â&v6öÆ÷#¢'&v&ƒ’Ã#Ã3Âãr’"×Óà¢ÅG—öw&‡’7ƒ×·²6öÆ÷#¢'&v&ƒ#SRÃ#SRÃ#SRÂãc"’"×ÓäæW77VâF—FöÆò6–Ö–ÆRF—7öæ–&–ÆRãÂõG—öw&‡“à¢Âô&÷ƒà¢—Ğ¢Âô&÷ƒà¢’¢çVÆÇĞ¢Âô&÷ƒà¢Âô&÷ƒà ¢¶ÖöFÅG&–ÆW%W&Âò€¢Ä&÷€¢&öÆSÒ&F–Æör ¢&–ÖÖöFÃÒ'G'VR ¢&–ÖÆ&VÃÒ%G&–ÆW" ¢öä6Æ–6³×²‚’Óâ6WDÖöFÅG&–ÆW%W&Â†çVÆÂ—Ğ¢7ƒ×·²÷6—F–öã¢&f—†VB"Â–ç6WC¢Â¤–æFWƒ¢SÂ&v6öÆ÷#¢'&v&ƒÃÃÂãƒb’"ÂF—7Æ“¢&w&–B"ÂÆ6T—FV×3¢&6VçFW""Â¢²‡3¢ãRÂÖC¢BÒÂ&6¶G&÷f–ÇFW#¢&&ÇW"ƒ'‚’"Âæ–ÖF–öã¢&FWF–ÄÖöFÄ–âƒ×2V6RÖ÷WB"Â$¶W–g&ÖW2FWF–ÄÖöFÄ–â#¢²g&öÓ¢²÷6—G“¢ÒÂFó¢²÷6—G“¢ÒÒ×Ğ¢à¢Ä&÷‚öä6Æ–6³×²†WfVçB’ÓâWfVçBç7F÷&÷vF–öâ‚—Ò7ƒ×·²÷6—F–öã¢'&VÆF—fR"Âv–GFƒ¢&Ö–âƒƒ‚Â“ggr’"Â7V7E&F–ó¢#bò’"Â&v6öÆ÷#¢"3"Â&÷&FW%&F—W3¢#‡‚"Â÷fW&f÷s¢&†–FFVâ"Â&÷…6†F÷s¢#C‚‚&v&ƒÃÃÂãcR’"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂãb’"×Óà¢ÅG&–ÆW%Æ–W"f–FVô¶W“×¶ÖöFÅG&–ÆW%W&ÇÒ×WFVC×¶ÖöFÄ×WFVGÒÆ––ærÆö÷×¶fÇ6WÒ¦ööÓ×³ÒöäVæFVC×²‚’Óâ6WDÖöFÅG&–ÆW%W&Â†çVÆÂ—ÒöäW'&÷#×²‚’Óâ6WDÖöFÅG&–ÆW%W&Â†çVÆÂ—Òóà¢Ä–6öä'WGFöâöä6Æ–6³×²‚’Óâ6WDÖöFÅG&–ÆW%W&Â†çVÆÂ—Ò&–ÖÆ&VÃÒ$6†—VF’G&–ÆW""7ƒ×·²÷6—F–öã¢&'6öÇWFR"ÂF÷¢BÂ&–v‡C¢BÂ¤–æFWƒ¢2Â&v6öÆ÷#¢'&v&ƒÃÃÂãc"’"Â6öÆ÷#¢"6ffb"Â&÷&FW#¢#‚6öÆ–B&v&ƒ#SRÃ#SRÃ#SRÂã3"’"Â"c¦†÷fW"#¢²&v6öÆ÷#¢'&v&ƒÃÃÂãƒ"’"Ò×Óà¢Ä6Æ÷6T–6öâóà¢Âô–6öä'WGFöãà¢Ä&÷‚7ƒ×·²÷6—F–öã¢&'6öÇWFR"Â&–v‡C¢BÂ&÷GFöÓ¢BÂ¤–æFWƒ¢2×Óà¢ÅG&–ÆW$VF–ô'WGFöâ×WFVC×¶ÖöFÄ×WFVGÒöåFövvÆS×²‚’Óâ6WDÖöFÄ×WFVB‚‚fÇVR’ÓâfÇVR—ÒFW7D–CÒ&FWF–ÂÖÖöFÂ×G&–ÆW"ÖVF–ò×FövvÆR"óà¢Âô&÷ƒà¢Âô&÷ƒà¢Âô&÷ƒà¢’¢çVÆÇĞ¢Âô&÷ƒà¢“°§Ğ ¦W‡÷'BFVfVÇB6ö×öæVçC° 
