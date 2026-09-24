@@ -114,19 +114,45 @@ export default function useSimilarTitles({ typeSlug, mediaId, genreId, enabled }
           const backdrop = artUrl(art.backdrop_url, art.hero_backdrop_url, art.detail_backdrop_url);
           const poster = artUrl(art.poster_url);
           const image = backdrop || poster;
-          return {
-            id: Number(item.id),
+          if (!image) return null;
+
+          // Keep the exact artwork payload used by Home cards. VideoItemWithHover
+          // can therefore render the same static card, poster/mobile variant,
+          // hover expansion, logo and trailer behaviour without a second visual
+          // implementation for the detail page.
+          const embeddedArtwork = {
+            ...art,
+            active: true,
+            tmdbId: Number(item.id),
             type: typeSlug,
+            backdrop_url: backdrop || art.backdrop_url || null,
+            poster_url: poster || art.poster_url || null,
+          };
+
+          return {
+            ...item,
+            id: Number(item.id),
+            tmdbId: Number(item.id),
+            tmdb_id: Number(item.id),
+            type: typeSlug,
+            media_type: typeSlug,
             title: art.title || item.title || item.name || "",
+            name: art.title || item.name || item.title || "",
+            release_date: item.release_date || "",
+            first_air_date: item.first_air_date || "",
+            genre_ids: item.genre_ids || [],
             year: String(art.year || item.release_date || item.first_air_date || "").slice(0, 4),
             genre: genreNameFromIds(item.genre_ids, typeSlug),
             image,
+            backdrop_path: backdrop || null,
+            poster_path: poster || null,
             embeddedTitle: backdrop ? !!art.backdrop_embedded_title_treatment : !!art.poster_embedded_title_treatment,
+            __artwork: embeddedArtwork,
             seasons: 0,
             certification: "",
           };
         })
-        .filter((item) => item.image)
+        .filter(Boolean)
         .slice(0, MAX_RESULTS);
 
       if (!withArt.length) {
@@ -134,7 +160,7 @@ export default function useSimilarTitles({ typeSlug, mediaId, genreId, enabled }
         return;
       }
 
-      // Show cards immediately, then enrich with seasons/certification.
+      // Show cards immediately, then enrich metadata in the background.
       setState({ items: withArt, loading: false });
       const metas = await Promise.all(withArt.map((item) => fetchMediaAssets(typeSlug, item.id, signal)));
       if (cancelled) return;
