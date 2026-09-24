@@ -2,7 +2,7 @@
   "name": "flixit-local-test-provider",
   "version": "1.0.0",
   "private": true,
-  "description": "Local authorized Stremio-compatible test provider for FlixIT",
+  "description": "Local provider runtime for FlixIT",
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
@@ -10,5 +10,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "rarbg-api": "github:serenader2014/rarbg-api#master"
   }
 }
