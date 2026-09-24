@@ -1,12 +1,12 @@
 {
   "name": "flixit-omni-local-runtime-harness",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
-  "description": "FlixIT Omni runtime with local Mongo stream sources and multi-provider HTTP aggregation",
-  "main": "src/index.js",
+  "description": "FlixIT Omni runtime with Mongo sources, configurable API providers and automatic 4K-first HTTP aggregation",
+  "main": "src/launcher.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/launcher.js"
   },
   "engines": {
     "node": ">=20"
