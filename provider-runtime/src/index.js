@@ -10,6 +10,7 @@ const providerTimeoutMs = Math.max(
   1000,
   Number.parseInt(process.env.OMNI_PROVIDER_TIMEOUT_MS || "10000", 10) || 10000
 );
+const prefer4k = !/^(0|false|no|off)$/i.test(process.env.PROVIDER_PREFER_4K || "true");
 
 const providersDir = path.join(__dirname, "providers");
 const loadedProviders = [];
@@ -57,9 +58,9 @@ const testUrl = String(
 
 const manifest = {
   id: "org.flixit.local-provider-manager",
-  version: "2.1.0",
+  version: "2.2.0",
   name: "FlixIT Local Provider Manager",
-  description: "Local provider manager with HTTP and torrent metadata providers",
+  description: "Local provider manager with HTTP and torrent metadata providers and 4K preference",
   resources: ["stream"],
   types: ["movie", "series"],
   catalogs: []
@@ -83,6 +84,59 @@ function normalizeStreams(value) {
     const magnet = String(stream.magnet || "").trim();
     return /^https?:\/\//i.test(url) || /^magnet:\?/i.test(magnet);
   });
+}
+
+function streamText(stream) {
+  return [
+    stream?.name,
+    stream?.title,
+    stream?.filename,
+    stream?.quality,
+    stream?.url,
+    stream?.magnet,
+  ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function qualityScore(stream) {
+  const text = streamText(stream);
+  if (/\b(2160p|4k|uhd)\b/i.test(text)) return 400;
+  if (/\b1440p\b/i.test(text)) return 300;
+  if (/\b(1080p|fhd|full[ ._-]?hd)\b/i.test(text)) return 200;
+  if (/\b720p\b/i.test(text)) return 100;
+  if (/\b(576p|480p|sd)\b/i.test(text)) return 50;
+  return 0;
+}
+
+function detectedQuality(stream) {
+  const score = qualityScore(stream);
+  if (score >= 400) return "2160p";
+  if (score >= 300) return "1440p";
+  if (score >= 200) return "1080p";
+  if (score >= 100) return "720p";
+  if (score >= 50) return "SD";
+  return "unknown";
+}
+
+function rankStreams(streams) {
+  const normalized = normalizeStreams(streams).map((stream) => ({
+    ...stream,
+    detectedQuality: stream.detectedQuality || detectedQuality(stream),
+  }));
+
+  if (!prefer4k) return normalized;
+
+  return normalized
+    .map((stream, index) => ({ stream, index }))
+    .sort((a, b) => {
+      const qualityDelta = qualityScore(b.stream) - qualityScore(a.stream);
+      if (qualityDelta !== 0) return qualityDelta;
+
+      const seedDelta = Number(b.stream.seeders || 0) - Number(a.stream.seeders || 0);
+      if (seedDelta !== 0) return seedDelta;
+
+      return a.index - b.index;
+    })
+    .map((entry) => entry.stream);
 }
 
 async function withTimeout(promise, ms) {
@@ -111,9 +165,10 @@ async function fetchLocalProviderStreams(type, id) {
   });
 
   const settled = await Promise.allSettled(jobs);
-  return settled.flatMap((entry) =>
+  const streams = settled.flatMap((entry) =>
     entry.status === "fulfilled" && Array.isArray(entry.value) ? entry.value : []
   );
+  return rankStreams(streams);
 }
 
 async function streamResponse(requestPath) {
@@ -132,6 +187,7 @@ async function streamResponse(requestPath) {
           name: "FlixIT Local Test",
           title: testTitle,
           url: testUrl,
+          detectedQuality: "2160p",
         },
       ],
     };
@@ -151,6 +207,8 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, {
       ok: true,
       service: manifest.id,
+      prefer4k,
+      qualityOrder: prefer4k ? ["2160p", "1440p", "1080p", "720p", "SD"] : "provider-order",
       providerManager: {
         directory: providersDir,
         loaded: loadedProviders.map((p) => ({ name: p.name, file: p.file })),
@@ -162,6 +220,7 @@ const server = http.createServer(async (req, res) => {
         imdbId: testId,
         tmdbId: 45745,
         url: testUrl,
+        detectedQuality: "2160p",
       },
     });
   }
@@ -178,6 +237,7 @@ server.listen(port, host, () => {
   console.log(`[flixit-provider] manager listening on http://${host}:${port}`);
   console.log(`[flixit-provider] loaded providers: ${loadedProviders.length}`);
   console.log(`[flixit-provider] skipped providers: ${skippedProviders.length}`);
+  console.log(`[flixit-provider] prefer 4K ${prefer4k ? "enabled" : "disabled"}`);
 });
 
 function shutdown(signal) {
