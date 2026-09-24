@@ -1,23 +1,25 @@
 "use strict";
 
-// Stremio-compatible localhost bridge used by FlixIT.
+// FlixIT Omni runtime.
 //
-// - Optional 4K test mode keeps the public PBS test pattern available for
-//   end-to-end player validation.
-// - OMNI_PROVIDER_URLS can contain multiple authorized Stremio-compatible
-//   HTTP providers (comma, semicolon or newline separated).
-// - Legacy OMNI_PROVIDER_URL remains supported and is merged into the list.
-// - Providers are queried in parallel, playable HTTP(S) streams are merged,
-//   deduplicated and ranked by detected quality.
-// - When OMNI_PREFER_4K is enabled (default), streams are ordered as
-//   2160p/4K/UHD, 1440p, 1080p, 720p, then the remaining streams.
-// - No scraping, torrent resolution or debrid logic lives in this runtime.
+// Sources:
+// - existing authorized HTTP/HLS streams stored in MongoDB collections
+//   `omni_stream_sources` and `stream_sources`;
+// - optional remote Stremio-compatible HTTP providers from OMNI_PROVIDER_URLS;
+// - optional public 4K test stream for end-to-end validation.
+//
+// Streams are merged, deduplicated and ranked 4K-first. No torrent resolution,
+// scraping or debrid logic lives in this runtime.
 const http = require("http");
+const { MongoClient } = require("mongodb");
 
 const host = process.env.HOST || "127.0.0.1";
 const port = Number.parseInt(process.env.PORT || "7001", 10);
 const test4kEnabled = /^(1|true|yes|on)$/i.test(process.env.OMNI_4K_TEST_MODE || "");
 const prefer4k = !/^(0|false|no|off)$/i.test(process.env.OMNI_PREFER_4K || "true");
+const mongoEnabled = !/^(0|false|no|off)$/i.test(process.env.OMNI_MONGO_ENABLED || "true");
+const mongoUrl = String(process.env.MONGO_URL || "mongodb://localhost:27017").trim();
+const dbName = String(process.env.DB_NAME || "netflix_clone").trim();
 const test4kId = String(process.env.OMNI_4K_TEST_ID || "tt15239678").trim();
 const test4kUrl = String(
   process.env.OMNI_4K_TEST_URL ||
@@ -27,10 +29,18 @@ const providerTimeoutMs = Math.max(
   1000,
   Number.parseInt(process.env.OMNI_PROVIDER_TIMEOUT_MS || "10000", 10) || 10000
 );
+const mongoTimeoutMs = Math.max(
+  1000,
+  Number.parseInt(process.env.OMNI_MONGO_TIMEOUT_MS || "5000", 10) || 5000
+);
 const maxProviders = Math.max(
   1,
   Math.min(12, Number.parseInt(process.env.OMNI_MAX_PROVIDERS || "8", 10) || 8)
 );
+
+let mongoClient = null;
+let mongoDb = null;
+let mongoConnectPromise = null;
 
 function normalizeProviderUrl(value) {
   let raw = String(value || "").trim();
@@ -67,6 +77,19 @@ function parseProviderUrls() {
 }
 
 const providerUrls = parseProviderUrls();
+
+function parseStreamIdentity(type, id) {
+  const parts = String(id || "").split(":");
+  const imdbId = parts[0] || "";
+  const season = type === "series" && parts[1] ? Number.parseInt(parts[1], 10) : null;
+  const episode = type === "series" && parts[2] ? Number.parseInt(parts[2], 10) : null;
+  return {
+    imdbId,
+    mediaType: type === "series" ? "tv" : "movie",
+    season: Number.isInteger(season) ? season : null,
+    episode: Number.isInteger(episode) ? episode : null,
+  };
+}
 
 function streamText(stream) {
   const hints = stream && typeof stream.behaviorHints === "object" ? stream.behaviorHints : {};
@@ -116,6 +139,40 @@ function isPlayableHttpStream(stream) {
   } catch {
     return false;
   }
+}
+
+function normalizeHeaders(headers) {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value !== undefined && value !== null && String(value).trim()) {
+      out[String(key)] = String(value);
+    }
+  }
+  return out;
+}
+
+function localDocToStream(doc, fallbackName) {
+  const url = String(doc?.url || doc?.stream_url || "").trim();
+  if (!url) return null;
+  const headers = normalizeHeaders(doc?.headers || {});
+  const behaviorHints = {
+    notWebReady: false,
+  };
+  if (Object.keys(headers).length > 0) {
+    behaviorHints.proxyHeaders = { request: headers };
+  }
+
+  const stream = {
+    name: String(doc?.name || doc?.provider || fallbackName || "FlixIT Local"),
+    title: String(doc?.title || doc?.quality || ""),
+    quality: String(doc?.quality || ""),
+    url,
+    behaviorHints,
+    source: "flixit-mongo",
+  };
+  stream.detectedQuality = detectedQuality(stream);
+  return isPlayableHttpStream(stream) ? stream : null;
 }
 
 function normalizeHttpStreams(streams, providerUrl) {
@@ -172,11 +229,107 @@ function rankStreams(streams) {
     .map((entry) => entry.stream);
 }
 
+async function getMongoDb() {
+  if (!mongoEnabled || !mongoUrl || !dbName) return null;
+  if (mongoDb) return mongoDb;
+  if (mongoConnectPromise) return mongoConnectPromise;
+
+  mongoConnectPromise = (async () => {
+    const client = new MongoClient(mongoUrl, {
+      serverSelectionTimeoutMS: mongoTimeoutMs,
+      connectTimeoutMS: mongoTimeoutMs,
+    });
+    try {
+      await client.connect();
+      await client.db("admin").command({ ping: 1 });
+      mongoClient = client;
+      mongoDb = client.db(dbName);
+      console.log(`[flixit-runtime] MongoDB connected: ${dbName}`);
+      return mongoDb;
+    } catch (error) {
+      try {
+        await client.close();
+      } catch {}
+      throw error;
+    }
+  })().catch((error) => {
+    console.error(`[flixit-runtime] MongoDB source unavailable: ${error?.message || error}`);
+    mongoConnectPromise = null;
+    return null;
+  });
+
+  return mongoConnectPromise;
+}
+
+async function fetchMongoStreams(type, id) {
+  const { imdbId, mediaType, season, episode } = parseStreamIdentity(type, id);
+  if (!/^tt\d+$/i.test(imdbId)) return [];
+
+  const db = await getMongoDb();
+  if (!db) return [];
+
+  const out = [];
+  const omniQuery = {
+    imdb_id: imdbId,
+    media_type: mediaType,
+    enabled: { $ne: false },
+  };
+
+  if (mediaType === "tv") {
+    omniQuery.season = season;
+    omniQuery.episode = episode;
+  } else {
+    omniQuery.season = { $in: [null, 0] };
+    omniQuery.episode = { $in: [null, 0] };
+  }
+
+  try {
+    const docs = await db.collection("omni_stream_sources").find(omniQuery).limit(50).toArray();
+    for (const doc of docs) {
+      const stream = localDocToStream(doc, "FlixIT Embedded");
+      if (stream) out.push(stream);
+    }
+  } catch (error) {
+    console.error(`[flixit-runtime] omni_stream_sources lookup failed: ${error?.message || error}`);
+  }
+
+  let tmdbId = null;
+  try {
+    const external = await db.collection("external_ids").findOne(
+      { imdb_id: imdbId, media_type: mediaType },
+      { projection: { _id: 0, tmdbId: 1 } }
+    );
+    if (external?.tmdbId !== undefined && external?.tmdbId !== null) {
+      tmdbId = Number(external.tmdbId);
+    }
+  } catch (error) {
+    console.error(`[flixit-runtime] external_ids lookup failed: ${error?.message || error}`);
+  }
+
+  if (Number.isFinite(tmdbId)) {
+    const adminQuery = {
+      tmdbId,
+      media_type: mediaType,
+      season: mediaType === "tv" ? season : null,
+      episode: mediaType === "tv" ? episode : null,
+    };
+    try {
+      const doc = await db.collection("stream_sources").findOne(adminQuery);
+      const stream = localDocToStream(doc, "FlixIT Admin");
+      if (stream) out.push(stream);
+    } catch (error) {
+      console.error(`[flixit-runtime] stream_sources lookup failed: ${error?.message || error}`);
+    }
+  }
+
+  return normalizeHttpStreams(out, "http://flixit.local/mongo");
+}
+
 const manifest = {
   id: "org.flixit.local-runtime-harness",
-  version: "1.5.0",
+  version: "1.6.0",
   name: "FlixIT Omni Runtime",
-  description: "Multi-provider HTTP stream aggregator with 4K-first ranking",
+  description: "Local Mongo + multi-provider HTTP stream aggregator with 4K-first ranking",
   resources: ["stream"],
   types: ["movie", "series"],
   catalogs: []
@@ -202,8 +355,14 @@ function localOrigins() {
 
 function providerInfo() {
   return {
-    configured: providerUrls.length > 0,
-    count: providerUrls.length,
+    configured: mongoEnabled || providerUrls.length > 0,
+    remoteCount: providerUrls.length,
+    localMongo: {
+      enabled: mongoEnabled,
+      connected: Boolean(mongoDb),
+      database: dbName,
+      collections: ["omni_stream_sources", "stream_sources"],
+    },
     prefer4k,
     timeoutMs: providerTimeoutMs,
     maxProviders,
@@ -236,7 +395,7 @@ async function fetchOneProvider(providerUrl, type, id) {
       method: "GET",
       headers: {
         Accept: "application/json",
-        "User-Agent": "FlixIT-Omni-Bridge/1.5"
+        "User-Agent": "FlixIT-Omni-Bridge/1.6"
       },
       redirect: "follow",
       signal: AbortSignal.timeout(providerTimeoutMs)
@@ -261,12 +420,12 @@ async function fetchOneProvider(providerUrl, type, id) {
 }
 
 async function fetchProviderStreams(type, id) {
-  if (providerUrls.length === 0) return { streams: [] };
+  const jobs = [fetchMongoStreams(type, id)];
+  for (const providerUrl of providerUrls) {
+    jobs.push(fetchOneProvider(providerUrl, type, id));
+  }
 
-  const settled = await Promise.allSettled(
-    providerUrls.map((providerUrl) => fetchOneProvider(providerUrl, type, id))
-  );
-
+  const settled = await Promise.allSettled(jobs);
   const merged = settled.flatMap((entry) =>
     entry.status === "fulfilled" && Array.isArray(entry.value) ? entry.value : []
   );
@@ -332,14 +491,35 @@ server.listen(port, host, () => {
     `[flixit-runtime] 4K test mode ${test4kEnabled ? `enabled for ${test4kId}` : "disabled"}`
   );
   console.log(
-    `[flixit-runtime] providers ${providerUrls.length > 0 ? `configured: ${providerUrls.length}` : "disabled (OMNI_PROVIDER_URLS not set)"}`
+    `[flixit-runtime] local Mongo sources ${mongoEnabled ? `enabled (${dbName})` : "disabled"}`
+  );
+  console.log(
+    `[flixit-runtime] remote providers ${providerUrls.length > 0 ? `configured: ${providerUrls.length}` : "none"}`
   );
   console.log(`[flixit-runtime] prefer 4K ${prefer4k ? "enabled" : "disabled"}`);
+
+  if (mongoEnabled) {
+    getMongoDb().catch(() => {});
+  }
 });
+
+async function closeMongo() {
+  if (mongoClient) {
+    try {
+      await mongoClient.close();
+    } catch {}
+    mongoClient = null;
+    mongoDb = null;
+    mongoConnectPromise = null;
+  }
+}
 
 function shutdown(signal) {
   console.log(`[flixit-runtime] ${signal}; shutting down`);
-  server.close(() => process.exit(0));
+  server.close(async () => {
+    await closeMongo();
+    process.exit(0);
+  });
   setTimeout(() => process.exit(1), 5000).unref();
 }
 
