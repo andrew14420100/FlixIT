@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
@@ -49,6 +49,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     overview,
     logoUrl,
     backdropUrl,
+    backdropUrls,
     trailerUrl,
     genres,
     year,
@@ -61,11 +62,22 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     episode,
   } = data;
 
+  const backdropCandidates = useMemo(() => {
+    const values = Array.isArray(backdropUrls) && backdropUrls.length
+      ? backdropUrls
+      : backdropUrl
+      ? [backdropUrl]
+      : [];
+    return [...new Set(values.filter(Boolean))];
+  }, [backdropUrl, backdropUrls]);
+  const backdropKey = backdropCandidates.join("|");
+
   const [muted, setMuted] = useState(true);
   const [trailerGateOpen, setTrailerGateOpen] = useState(false);
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [videoEnded, setVideoEnded] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [backdropIndex, setBackdropIndex] = useState(0);
   const [backdropFailed, setBackdropFailed] = useState(false);
   const [logoFailed, setLogoFailed] = useState(false);
 
@@ -79,6 +91,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     setVideoPlaying(false);
     setVideoEnded(false);
     setImageLoaded(false);
+    setBackdropIndex(0);
     setBackdropFailed(false);
     setLogoFailed(false);
 
@@ -87,7 +100,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     }, HERO_TRAILER_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [mediaId, trailerUrl, backdropUrl, logoUrl]);
+  }, [mediaId, trailerUrl, backdropKey, logoUrl]);
 
   const handleVideoEnded = useCallback(() => {
     setVideoEnded(true);
@@ -101,10 +114,21 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     window.setTimeout(() => setTrailerGateOpen(true), 60);
   }, []);
 
+  const handleBackdropError = useCallback(() => {
+    setImageLoaded(false);
+    setBackdropIndex((current) => {
+      const next = current + 1;
+      if (next < backdropCandidates.length) return next;
+      setBackdropFailed(true);
+      return current;
+    });
+  }, [backdropCandidates.length]);
+
   const videoMounted = !!trailerUrl && !videoEnded;
   const videoShouldPlay = trailerGateOpen && !!trailerUrl && !videoEnded && !isOffset;
   const videoActive = videoShouldPlay && videoPlaying;
-  const showBackdrop = !!backdropUrl && !backdropFailed;
+  const activeBackdropUrl = backdropCandidates[backdropIndex] || null;
+  const showBackdrop = !!activeBackdropUrl && !backdropFailed;
   const showLogo = !!logoUrl && !logoFailed;
 
   const duration = isTV ? seasonsText(seasonsCount) : runtimeText(runtimeMinutes);
@@ -136,15 +160,33 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
       className="netflix-home-billboard dp-hero"
       style={{ height: "auto", aspectRatio: "1505.14 / 600" }}
       sx={{
+        "& .netflix-home-video-layer": {
+          position: "absolute !important",
+          inset: "0 !important",
+          width: "100% !important",
+          height: "100% !important",
+          overflow: "hidden !important",
+        },
         "& .netflix-home-video-layer [data-testid='trailer-player']": {
+          position: "absolute !important",
+          inset: "0 !important",
+          width: "100% !important",
+          height: "100% !important",
+          overflow: "hidden !important",
           backgroundColor: "#000 !important",
         },
         "& .netflix-home-video-layer video": {
+          position: "absolute !important",
+          top: "50% !important",
+          left: "50% !important",
           width: "100% !important",
           height: "100% !important",
-          objectFit: "contain !important",
+          minWidth: "100% !important",
+          minHeight: "100% !important",
+          objectFit: "cover !important",
           objectPosition: "center center !important",
-          transform: "translate(-50%, -50%) scale(1) !important",
+          transform: "translate(-50%, -50%) scale(1.10) !important",
+          transformOrigin: "center center !important",
           backgroundColor: "#000 !important",
         },
       }}
@@ -152,14 +194,14 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
       {showBackdrop ? (
         <Box
           component="img"
-          src={backdropUrl}
+          src={activeBackdropUrl}
           alt=""
           aria-hidden="true"
           data-uia="billboard-background-media+image"
           data-testid="detail-hero-backdrop"
           className="netflix-home-backdrop"
           onLoad={() => setImageLoaded(true)}
-          onError={() => setBackdropFailed(true)}
+          onError={handleBackdropError}
           fetchPriority="high"
           loading="eager"
           decoding="async"
@@ -187,7 +229,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
             muted={muted}
             playing={videoShouldPlay}
             loop={false}
-            zoom={1}
+            zoom={1.1}
             onPlaying={() => setVideoPlaying(true)}
             onEnded={handleVideoEnded}
             onError={handleVideoEnded}
