@@ -3,7 +3,7 @@
 Only episodes with explicitly confirmed Italian audio are returned to the
 frontend. Unknown/original-only episodes stay hidden. Availability is checked
 in the background and negative decisions expire quickly, so a newly dubbed
-episode appears automatically on a later poll without a deploy.
+episode appears automatically without a deploy.
 
 Episode metadata keeps the Italian TMDB response when present. If an Italian
 name/overview is missing, the same episode is enriched from TMDB en-US.
@@ -26,13 +26,14 @@ from fastapi.routing import APIRoute
 VIXSRC_BASE = os.environ.get("VIXSRC_BASE_URL", "https://vixsrc.to").rstrip("/")
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "4f153630f8d7e92d542dde3a38fbddf2")
+CATALOG_REFRESH_SECONDS = max(60, int(os.environ.get("ITALIAN_CATALOG_REFRESH_SECONDS", "120")))
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/122.0.0.0 Safari/537.36"
 )
 ROUTE_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
-POLICY_VERSION = "strict-explicit-it-v4-filtered-en-fallback"
+POLICY_VERSION = "strict-explicit-it-v5-auto-refresh-en-fallback"
 
 _client: Optional[httpx.AsyncClient] = None
 _tmdb_client: Optional[httpx.AsyncClient] = None
@@ -208,9 +209,6 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
         now = time.monotonic()
 
         try:
-            # Explicitly request the Italian rendition. A concrete source returned
-            # for this request is accepted unless the payload explicitly says it
-            # is original/English only.
             response = await _http().get(
                 f"{VIXSRC_BASE}/api/tv/{tmdb_id}/{season}/{episode}",
                 params={"lang": "it"},
@@ -249,9 +247,6 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
             result = _result(False, "original_only", source_available=True, hints=hints)
             ttl = 90.0
         else:
-            # The endpoint was queried explicitly with lang=it and returned a
-            # concrete stream. In the absence of a contradictory language hint,
-            # treat it as confirmed Italian for catalogue/display purposes.
             result = _result(True, "italian", source_available=True, hints=hints)
             ttl = 30 * 60.0
 
@@ -323,6 +318,30 @@ async def _english_episode_map(tmdb_id: int, season_number: int) -> dict[int, di
     return out
 
 
+def _install_fast_catalog_refresh(app) -> None:
+    if getattr(app.state, "flixit_fast_italian_catalog_refresh_registered", False):
+        return
+
+    async def startup() -> None:
+        async def loop() -> None:
+            while True:
+                try:
+                    import server_core as core
+                    refresh = getattr(core, "refresh_vixsrc_catalog", None)
+                    if callable(refresh):
+                        await refresh(force=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(CATALOG_REFRESH_SECONDS)
+
+        task = asyncio.create_task(loop())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+    app.add_event_handler("startup", startup)
+    app.state.flixit_fast_italian_catalog_refresh_registered = True
+
+
 def install_italian_episode_policy(app) -> bool:
     if getattr(app.state, "flixit_italian_episode_policy_registered", False):
         return True
@@ -332,6 +351,8 @@ def install_italian_episode_policy(app) -> bool:
         install_performance_api(app)
     except Exception:
         pass
+
+    _install_fast_catalog_refresh(app)
 
     legacy_endpoint = None
     kept_routes = []
@@ -377,8 +398,6 @@ def install_italian_episode_policy(app) -> bool:
 
         visible = [row for row in annotated if row.get("italian_available") is True]
 
-        # Italian TMDB metadata from the legacy endpoint stays primary. English
-        # fills only genuinely missing name/overview fields.
         if visible and any(not str(row.get("name") or "").strip() or not str(row.get("overview") or "").strip() for row in visible):
             english = await _english_episode_map(int(tmdb_id), int(season_number))
             for row in visible:
