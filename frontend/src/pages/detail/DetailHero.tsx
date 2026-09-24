@@ -137,7 +137,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
       style={{ height: "auto", aspectRatio: "1505.14 / 600" }}
       sx={{
         "& .netflix-home-video-layer [data-testid='trailer-player']": {
-          backgroundColor: "transparent !important",
+          backgroundColor: "#000 !important",
         },
         "& .netflix-home-video-layer video": {
           width: "100% !important",
@@ -145,7 +145,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
           objectFit: "contain !important",
           objectPosition: "center center !important",
           transform: "translate(-50%, -50%) scale(1) !important",
-          backgroundColor: "transparent !important",
+          backgroundColor: "#000 !important",
         },
       }}
     >
@@ -164,10 +164,8 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
           loading="eager"
           decoding="async"
           sx={{
-            opacity: imageLoaded ? (videoActive ? 0.34 : 1) : 0,
-            filter: videoActive ? "brightness(.58) blur(2px)" : "none",
-            transform: videoActive ? "scale(1.015)" : "scale(1.001)",
-            transition: "opacity 420ms ease-in-out, filter 420ms ease-in-out, transform 420ms ease-in-out",
+            opacity: imageLoaded ? (videoActive ? 0 : 1) : 0,
+            transition: "opacity 420ms ease-in-out",
           }}
         />
       ) : null}
@@ -181,10 +179,6 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
             opacity: videoActive ? 1 : 0,
             transition: "opacity 420ms ease-in-out",
             pointerEvents: "none",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: "transparent !important",
           }}
         >
           <TrailerPlayer
