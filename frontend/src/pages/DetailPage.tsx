@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import Box from "@mui/material/Box";
 import { MAIN_PATH } from "src/constant";
 import useDetailData from "./detail/useDetailData";
 import useSimilarTitles from "./detail/useSimilarTitles";
@@ -156,14 +157,20 @@ export function Component() {
       );
     }
     return (
-      <div className="dp-page" data-testid="detail-loading" aria-busy="true">
+      <Box className="dp-page" data-testid="detail-loading" aria-busy="true" sx={{ pt: { xs: 0, md: "80px" } }}>
         <div className="dp-hero dp-hero--skeleton" />
-      </div>
+      </Box>
     );
   }
 
   return (
-    <main className="dp-page" data-testid="detail-page" data-media-type={typeSlug}>
+    <Box
+      component="main"
+      className="dp-page"
+      data-testid="detail-page"
+      data-media-type={typeSlug}
+      sx={{ pt: { xs: 0, md: "80px" } }}
+    >
       <DetailHero data={data} mediaId={mediaId} onPlay={goPlay} onWarm={warm} onMoreInfo={showMoreInfo} />
       <DetailTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
       <div className="dp-content">
@@ -182,7 +189,7 @@ export function Component() {
           {activeTab === "similar" ? <DetailSimilar items={similar.items} loading={similar.loading} isTV={data.isTV} /> : null}
         </section>
       </div>
-    </main>
+    </Box>
   );
 }
 
