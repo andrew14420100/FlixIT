@@ -55,17 +55,11 @@ function InfoBox({ icon, label, value, testId }) {
 export default function DetailOverview({ data, onPlay, onWarm }) {
   const {
     isTV, title, overview, genres, year, certification, seasonsCount, runtimeMinutes, backdropUrl,
-    progressItem, progressPercent, remainingSeconds, season, episode, episodeTitle, episodeRuntime,
+    hasRealProgress, progressPercent, remainingSeconds, season, episode, episodeTitle,
   } = data;
 
   const resumeTitle = isTV ? `S${season}:E${episode}${episodeTitle ? ` - ${episodeTitle}` : ""}` : title;
-  const resumeTime = progressItem
-    ? `${remainingText(remainingSeconds)} rimanenti`
-    : isTV && episodeRuntime
-      ? `${episodeRuntime} min`
-      : !isTV && runtimeMinutes
-        ? runtimeText(runtimeMinutes)
-        : "Inizia";
+  const resumeTime = `${remainingText(remainingSeconds)} rimanenti`;
 
   const onThumbKey = (event) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -75,7 +69,12 @@ export default function DetailOverview({ data, onPlay, onWarm }) {
   };
 
   return (
-    <div className="dp-overview" data-testid="detail-overview">
+    <div
+      className="dp-overview"
+      style={hasRealProgress ? undefined : { gridTemplateColumns: "minmax(0, 1fr)" }}
+      data-testid="detail-overview"
+      data-has-real-progress={hasRealProgress ? "true" : "false"}
+    >
       <article className="dp-card dp-overview__main" data-testid="detail-overview-panel">
         <h2 className="dp-h2">Panoramica</h2>
         <div className="dp-divider" />
@@ -98,35 +97,32 @@ export default function DetailOverview({ data, onPlay, onWarm }) {
         </div>
       </article>
 
-      <article className="dp-card dp-resume" data-testid="detail-resume-panel">
-        <h2 className="dp-h2">Continua a guardare</h2>
-        <div
-          className="dp-resume__thumb"
-          role="button"
-          tabIndex={0}
-          aria-label={ctaAria(progressItem, isTV, season, episode)}
-          onClick={onPlay}
-          onMouseEnter={onWarm}
-          onKeyDown={onThumbKey}
-          data-testid="detail-resume-thumb"
-        >
-          {backdropUrl ? <img src={backdropUrl} alt="" loading="lazy" decoding="async" /> : null}
-          <span className="dp-play-circle" aria-hidden="true"><PlayArrowRoundedIcon /></span>
-        </div>
-        <div className="dp-resume__row">
-          <span className="dp-resume__title" data-testid="detail-resume-title">{resumeTitle}</span>
-          <span className="dp-resume__time" data-testid="detail-resume-time">{resumeTime}</span>
-        </div>
-        <div className="dp-progress" data-testid="detail-resume-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressItem ? progressPercent : 0)}>
-          <div className="dp-progress__fill" style={{ width: `${progressItem ? Math.max(2, progressPercent) : 0}%` }} />
-        </div>
-        <div className="dp-resume__grow" />
-      </article>
+      {hasRealProgress ? (
+        <article className="dp-card dp-resume" data-testid="detail-resume-panel">
+          <h2 className="dp-h2">Continua a guardare</h2>
+          <div
+            className="dp-resume__thumb"
+            role="button"
+            tabIndex={0}
+            aria-label="Continua a guardare"
+            onClick={onPlay}
+            onMouseEnter={onWarm}
+            onKeyDown={onThumbKey}
+            data-testid="detail-resume-thumb"
+          >
+            {backdropUrl ? <img src={backdropUrl} alt="" loading="lazy" decoding="async" /> : null}
+            <span className="dp-play-circle" aria-hidden="true"><PlayArrowRoundedIcon /></span>
+          </div>
+          <div className="dp-resume__row">
+            <span className="dp-resume__title" data-testid="detail-resume-title">{resumeTitle}</span>
+            <span className="dp-resume__time" data-testid="detail-resume-time">{resumeTime}</span>
+          </div>
+          <div className="dp-progress" data-testid="detail-resume-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPercent)}>
+            <div className="dp-progress__fill" style={{ width: `${Math.max(2, progressPercent)}%` }} />
+          </div>
+          <div className="dp-resume__grow" />
+        </article>
+      ) : null}
     </div>
   );
-}
-
-function ctaAria(progressItem, isTV, season, episode) {
-  if (progressItem) return "Continua a guardare";
-  return isTV ? `Guarda S${season}:E${episode}` : "Riproduci";
 }
