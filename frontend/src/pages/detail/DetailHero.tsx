@@ -3,54 +3,89 @@ import { useEffect, useState } from "react";
 import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
 import TrailerPlayer from "src/components/TrailerPlayer";
 import TrailerAudioButton from "src/components/TrailerAudioButton";
-import { secondsText, seasonsText, runtimeText } from "./detailUtils";
+import { remainingText, runtimeText, seasonsText } from "./detailUtils";
 
-const HERO_TRAILER_DELAY = 3000;
+const HERO_TRAILER_DELAY_MS = 3000;
 
+/**
+ * Cinematic hero: backdrop and trailer share the SAME absolute container
+ * (.dp-hero__media). Switching between them is a pure opacity fade - no
+ * resize, no crop change, no aspect-ratio change.
+ */
 export default function DetailHero({ data, mediaId, onPlay, onWarm }) {
-  const { isTV, title, logoUrl, backdropUrl, trailerUrl, genres, year, certification, seasonsCount, runtimeMinutes } = data;
-  const { progressItem, progressPercent, remainingSeconds, season, episode } = data;
+  const {
+    isTV, title, logoUrl, backdropUrl, trailerUrl, genres, year, certification,
+    seasonsCount, runtimeMinutes, progressItem, progressPercent, remainingSeconds, season, episode,
+  } = data;
 
-  const [showTrailer, setShowTrailer] = useState(false);
+  const [trailerArmed, setTrailerArmed] = useState(false);
   const [trailerPlaying, setTrailerPlaying] = useState(false);
+  const [trailerFailed, setTrailerFailed] = useState(false);
   const [muted, setMuted] = useState(true);
+  const [backdropFailed, setBackdropFailed] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
 
+  // Reset per title (and when the resolver delivers a new trailer URL).
   useEffect(() => {
-    setShowTrailer(false);
+    setTrailerArmed(false);
     setTrailerPlaying(false);
+    setTrailerFailed(false);
     setMuted(true);
-  }, [mediaId]);
+  }, [mediaId, trailerUrl]);
 
   useEffect(() => {
-    if (!trailerUrl) return undefined;
-    const timer = window.setTimeout(() => setShowTrailer(true), HERO_TRAILER_DELAY);
+    setBackdropFailed(false);
+    setLogoFailed(false);
+  }, [mediaId, backdropUrl, logoUrl]);
+
+  // Start the trailer after the standard delay; never retry after a failure.
+  useEffect(() => {
+    if (!trailerUrl || trailerFailed) return undefined;
+    const timer = window.setTimeout(() => setTrailerArmed(true), HERO_TRAILER_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [trailerUrl, mediaId]);
+  }, [trailerUrl, trailerFailed, mediaId]);
 
   const stopTrailer = () => {
-    setShowTrailer(false);
+    setTrailerArmed(false);
     setTrailerPlaying(false);
   };
 
-  const trailerVisible = showTrailer && trailerPlaying;
-  const heroLabel = progressItem ? "Continua a guardare" : isTV ? `Guarda S${season}:E${episode}` : "Riproduci";
-  const metaParts = [isTV ? "Serie" : "Film", genres[0], year, isTV ? seasonsText(seasonsCount) : runtimeText(runtimeMinutes)].filter(Boolean);
+  const trailerVisible = trailerArmed && trailerPlaying;
+  const showBackdrop = !!backdropUrl && !backdropFailed;
+  const showLogo = !!logoUrl && !logoFailed;
+
+  const ctaLabel = progressItem ? "Continua a guardare" : isTV ? `Guarda S${season}:E${episode}` : "Riproduci";
+  const showResumeBlock = !!progressItem || isTV;
+  const metaParts = [
+    isTV ? "Serie" : "Film",
+    genres[0],
+    year,
+    isTV ? seasonsText(seasonsCount) : runtimeText(runtimeMinutes),
+  ].filter(Boolean);
 
   return (
-    <section className="fxd-hero" data-testid="detail-hero" data-has-trailer={trailerUrl ? "true" : "false"} data-trailer-state={trailerVisible ? "playing" : showTrailer ? "loading" : "idle"}>
-      <div className="fxd-hero__media">
-        {backdropUrl ? (
+    <section
+      className="dp-hero"
+      data-testid="detail-hero"
+      data-has-trailer={trailerUrl ? "true" : "false"}
+      data-trailer-state={trailerVisible ? "playing" : trailerArmed ? "loading" : "idle"}
+    >
+      <div className="dp-hero__media">
+        {showBackdrop ? (
           <img
-            className={`fxd-hero__backdrop${trailerVisible ? " is-hidden" : ""}`}
+            className={`dp-hero__backdrop${trailerVisible ? " is-hidden" : ""}`}
             src={backdropUrl}
             alt=""
             decoding="async"
             fetchPriority="high"
+            onError={() => setBackdropFailed(true)}
             data-testid="detail-hero-backdrop"
           />
-        ) : null}
-        {showTrailer && trailerUrl ? (
-          <div className={`fxd-hero__trailer${trailerPlaying ? " is-visible" : ""}`} data-testid="detail-hero-trailer">
+        ) : (
+          <div className="dp-hero__backdrop dp-hero__backdrop--empty" data-testid="detail-hero-backdrop-fallback" />
+        )}
+        {trailerArmed && trailerUrl ? (
+          <div className={`dp-hero__trailer${trailerPlaying ? " is-visible" : ""}`} data-testid="detail-hero-trailer">
             <TrailerPlayer
               key={trailerUrl}
               videoKey={trailerUrl}
@@ -60,59 +95,72 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm }) {
               zoom={1}
               onPlaying={() => setTrailerPlaying(true)}
               onEnded={stopTrailer}
-              onError={stopTrailer}
+              onError={() => {
+                setTrailerFailed(true);
+                stopTrailer();
+              }}
             />
           </div>
         ) : null}
       </div>
-      <div className="fxd-hero__shade-top" />
-      <div className="fxd-hero__shade-left" />
-      <div className="fxd-hero__shade-bottom" />
+      <div className="dp-hero__shade dp-hero__shade--top" />
+      <div className="dp-hero__shade dp-hero__shade--left" />
+      <div className="dp-hero__shade dp-hero__shade--bottom" />
 
-      <div className="fxd-hero__content">
-        {logoUrl ? (
-          <img className="fxd-hero__logo" src={logoUrl} alt={title} decoding="async" data-testid="detail-hero-logo" />
+      <div className="dp-hero__content">
+        {showLogo ? (
+          <img
+            className="dp-hero__logo"
+            src={logoUrl}
+            alt={title}
+            decoding="async"
+            fetchPriority="high"
+            onError={() => setLogoFailed(true)}
+            data-testid="detail-hero-logo"
+          />
         ) : (
-          <h1 className="fxd-hero__title" data-testid="detail-hero-title">{title}</h1>
+          <h1 className="dp-hero__title" data-testid="detail-hero-title">{title}</h1>
         )}
 
-        <div className="fxd-meta" data-testid="detail-hero-meta">
+        <div className="dp-hero__meta" data-testid="detail-hero-meta">
           {metaParts.map((part, index) => (
-            <span key={`${part}-${index}`} style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
-              {index ? <span className="fxd-meta__dot">•</span> : null}
+            <span key={`${part}-${index}`} className="dp-hero__meta-item">
+              {index ? <span className="dp-hero__dot" aria-hidden="true">•</span> : null}
               <span>{part}</span>
             </span>
           ))}
           {certification ? (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 12 }}>
-              <span className="fxd-meta__dot">•</span>
-              <span className="fxd-badge">{certification}</span>
+            <span className="dp-hero__meta-item">
+              <span className="dp-hero__dot" aria-hidden="true">•</span>
+              <span className="dp-badge" data-testid="detail-hero-certification">{certification}</span>
             </span>
           ) : null}
         </div>
 
-        <p className="fxd-hero__resume-label" data-testid="detail-hero-resume-label">{heroLabel}</p>
+        {showResumeBlock ? (
+          <p className="dp-hero__label" data-testid="detail-hero-resume-label">{ctaLabel}</p>
+        ) : null}
 
-        <div className="fxd-hero__progress-row">
-          <div className="fxd-progress" data-testid="detail-hero-progress">
-            <div className="fxd-progress__fill" style={{ width: `${progressItem ? Math.max(3, progressPercent) : 0}%` }} />
+        {progressItem ? (
+          <div className="dp-hero__progress-row">
+            <div className="dp-progress" data-testid="detail-hero-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPercent)}>
+              <div className="dp-progress__fill" style={{ width: `${Math.max(2, progressPercent)}%` }} />
+            </div>
+            <span className="dp-hero__progress-text" data-testid="detail-hero-progress-text">
+              {isTV ? `S${season}:E${episode} - ` : ""}{remainingText(remainingSeconds)} rimanenti
+            </span>
           </div>
-          {progressItem ? (
-            <span className="fxd-hero__progress-text" data-testid="detail-hero-progress-text">
-              {isTV ? `S${season}:E${episode} - ` : ""}{secondsText(remainingSeconds)} rimanenti
-            </span>
-          ) : null}
-        </div>
+        ) : null}
 
-        <button type="button" className="fxd-play-btn" onClick={onPlay} onMouseEnter={onWarm} data-testid="detail-play">
+        <button type="button" className="dp-play-btn" onClick={onPlay} onMouseEnter={onWarm} onFocus={onWarm} data-testid="detail-play">
           <PlayArrowRoundedIcon />
-          <span>{heroLabel}</span>
+          <span>{ctaLabel}</span>
         </button>
       </div>
 
       {trailerVisible ? (
-        <div className="fxd-hero__audio">
-          <TrailerAudioButton muted={muted} onToggle={() => setMuted((value) => !value)} testId="detail-hero-audio-toggle" />
+        <div className="dp-hero__audio">
+          <TrailerAudioButton muted={muted} onToggle={() => setMuted((value) => !value)} testId="detail-hero-toggle-mute" />
         </div>
       ) : null}
     </section>

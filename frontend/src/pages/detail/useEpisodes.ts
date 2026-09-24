@@ -1,12 +1,21 @@
 // @ts-nocheck
+/**
+ * FlixIT Detail Page v2 - seasons/episodes data for TV titles.
+ * Uses the existing public endpoints (availability-aware, Italian audio policy).
+ * Seasons are prefetched in idle time; episodes load only for the selected season.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { API_URL } from "./detailUtils";
+
+const MAX_PENDING_REFRESHES = 6;
 
 async function getJson(path, signal) {
   const response = await fetch(path, { signal, headers: { Accept: "application/json" } });
   return response.ok ? response.json() : null;
 }
 
+/** Episode stills only exist on TMDB: allowed here as the single exception, with backdrop fallback. */
 export function episodeStillUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -14,17 +23,21 @@ export function episodeStillUrl(value) {
   return raw.startsWith("/") ? `https://image.tmdb.org/t/p/w780${raw}` : "";
 }
 
-export default function useEpisodes(mediaId, enabled, preferredSeason) {
+export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
   const seasonsQuery = useQuery({
-    queryKey: ["detail-seasons", mediaId],
-    queryFn: ({ signal }) => getJson(`/api/public/tv/${mediaId}/seasons`, signal),
+    queryKey: ["dp-seasons", mediaId],
+    queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
     staleTime: 60 * 60 * 1000,
+    gcTime: 6 * 60 * 60 * 1000,
     refetchOnWindowFocus: false,
+    retry: 1,
   });
 
   const seasons = useMemo(
-    () => (seasonsQuery.data?.seasons || []).filter((season) => Number(season?.season_number) > 0 && season?.vixsrc_available !== false && season?.is_aired !== false),
+    () => (seasonsQuery.data?.seasons || []).filter(
+      (season) => Number(season?.season_number) > 0 && season?.vixsrc_available !== false && season?.is_aired !== false
+    ),
     [seasonsQuery.data]
   );
 
@@ -40,14 +53,18 @@ export default function useEpisodes(mediaId, enabled, preferredSeason) {
   }, [seasons, preferredSeason]);
 
   const episodesQuery = useQuery({
-    queryKey: ["detail-season-episodes", mediaId, selected],
-    queryFn: ({ signal }) => getJson(`/api/public/tv/${mediaId}/season/${selected}`, signal),
-    enabled: !!mediaId && !!selected,
+    queryKey: ["dp-season-episodes", mediaId, selected],
+    queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
+    enabled: !!mediaId && !!selected && !!active,
     staleTime: 15 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
     refetchOnWindowFocus: false,
+    retry: 1,
+    // Italian-audio checks are non-blocking server side: poll a bounded number of times.
     refetchInterval: (query) => {
       const seconds = Number(query?.state?.data?.pending_recheck_seconds || 0);
-      return seconds > 0 ? Math.max(4000, seconds * 1000) : false;
+      if (!seconds || Number(query?.state?.dataUpdateCount || 0) >= MAX_PENDING_REFRESHES) return false;
+      return Math.max(4000, seconds * 1000);
     },
   });
 
@@ -62,6 +79,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason) {
     setSelected,
     episodes,
     loadingSeasons: seasonsQuery.isLoading,
-    loadingEpisodes: episodesQuery.isLoading,
+    loadingEpisodes: episodesQuery.isLoading || (episodesQuery.isFetching && !episodesQuery.data),
+    seasonsError: seasonsQuery.isError,
   };
 }
