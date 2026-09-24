@@ -1,33 +1,17 @@
 /*
- * FlixIT TV episodes panel — desktop geometry matched to the 1672×941
- * reference supplied by the user. The reference is the source of truth.
+ * FlixIT TV episodes panel.
+ * The generic DetailTabs styling lives in detail-page.css and is intentionally
+ * shared by movies and TV: no TV-specific tab overrides are defined here.
  */
-
-/* The TV reference has a shorter four-tab pill than the generic detail tabs. */
-.dp-page[data-media-type="tv"] {
-  --dp-tabs-h: 44px;
-  --dp-tab-pad: clamp(18px, 1.6vw, 27px);
-}
-
-.dp-page[data-media-type="tv"] .dp-tabs {
-  background: rgba(7, 20, 33, 0.82);
-  border-color: rgba(91, 129, 155, 0.42);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.25);
-}
-
-.dp-page[data-media-type="tv"] .dp-tab {
-  font-size: clamp(14px, 0.9vw, 16px);
-}
 
 /* --------------------------------------------------------------------------
    EPISODES OUTER PANEL
-   Reference @ 1672px: x≈111, width≈1430, radius≈16, tab overlaps its top.
    -------------------------------------------------------------------------- */
 .dp-page .dp-episodes {
   width: 85.6vw;
   max-width: none;
   margin: -54px auto 0;
-  padding: 0 14px 14px;
+  padding: 0 14px 16px;
   border: 1px solid rgba(82, 118, 144, 0.38);
   border-radius: 16px;
   background: linear-gradient(180deg, #051625 0%, #03111d 100%);
@@ -38,8 +22,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 46px;
-  min-height: 46px;
+  height: 50px;
+  min-height: 50px;
   padding: 0 0 0 10px;
 }
 
@@ -129,23 +113,22 @@
 
 /* --------------------------------------------------------------------------
    EPISODE ROWS
-   Reference @ 1672px: row height≈94px, gap≈8px, artwork≈407×94.
-   The fixed row height is intentional: without it the 16:9 still expands the
-   row to ~230px, which was the main mismatch visible in the live screenshot.
+   Slightly roomier than the previous pass, with no thumbnail play overlay and
+   no trailing overflow-menu column. The whole row remains the playback target.
    -------------------------------------------------------------------------- */
 .dp-page .dp-episodes__list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .dp-page .dp-episode {
   display: grid;
-  grid-template-columns: minmax(0, 29.2%) minmax(0, 1fr) minmax(245px, 21.4%) 38px;
+  grid-template-columns: minmax(0, 29.2%) minmax(0, 1fr) minmax(245px, 21.4%);
   align-items: stretch;
-  height: clamp(94px, 5.63vw, 108px);
-  min-height: clamp(94px, 5.63vw, 108px);
-  max-height: clamp(94px, 5.63vw, 108px);
+  height: clamp(104px, 6.15vw, 118px);
+  min-height: clamp(104px, 6.15vw, 118px);
+  max-height: clamp(104px, 6.15vw, 118px);
   overflow: hidden;
   border: 1px solid rgba(79, 115, 142, 0.34);
   border-radius: 10px;
@@ -183,27 +166,8 @@
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0));
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0));
   pointer-events: none;
-}
-
-.dp-page .dp-episode__thumb .dp-play-circle {
-  position: absolute;
-  left: 18px;
-  top: 50%;
-  z-index: 2;
-  width: 40px;
-  height: 40px;
-  transform: translateY(-50%);
-  border: 1.5px solid rgba(255, 255, 255, 0.97);
-  border-radius: 50%;
-  background: rgba(15, 54, 94, 0.88);
-  color: #fff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.34);
-}
-.dp-page .dp-episode__thumb .dp-play-circle svg {
-  width: 25px;
-  height: 25px;
 }
 
 .dp-page .dp-episode__body {
@@ -211,12 +175,12 @@
   flex-direction: column;
   justify-content: center;
   min-width: 0;
-  padding: 8px 22px 8px 24px;
+  padding: 10px 28px 10px 26px;
 }
 
 .dp-page .dp-episode__num {
   display: block;
-  margin: 0 0 2px;
+  margin: 0 0 3px;
   color: rgba(255, 255, 255, 0.94);
   font-size: 14px;
   font-weight: 500;
@@ -224,7 +188,7 @@
 }
 
 .dp-page .dp-episode__name {
-  margin: 0 0 3px;
+  margin: 0 0 5px;
   overflow: hidden;
   color: #fff;
   font-size: clamp(19px, 1.35vw, 23px);
@@ -241,25 +205,24 @@
   color: rgba(255, 255, 255, 0.88);
   font-size: clamp(14px, 1vw, 17px);
   font-weight: 400;
-  line-height: 1.15;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Status/progress column */
 .dp-page .dp-episode__status {
   display: flex;
   flex-direction: column;
   justify-content: center;
   min-width: 0;
-  padding: 8px 12px 8px 0;
+  padding: 10px 20px 10px 0;
 }
 
 .dp-page .dp-episode__done {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 7px;
+  margin: 0 0 8px;
   color: #00ef8a;
   font-size: 16px;
   font-weight: 700;
@@ -298,7 +261,7 @@
 }
 
 .dp-page .dp-episode__remaining {
-  margin-top: 7px;
+  margin-top: 8px;
   color: rgba(255, 255, 255, 0.95);
   font-size: 16px;
   line-height: 1;
@@ -309,17 +272,6 @@
   font-weight: 700;
 }
 
-.dp-page .dp-episode__menu {
-  display: grid;
-  place-items: center;
-  color: rgba(255, 255, 255, 0.94);
-  pointer-events: none;
-}
-.dp-page .dp-episode__menu svg {
-  width: 25px;
-  height: 25px;
-}
-
 .dp-page .dp-episodes > .dp-empty,
 .dp-page .dp-episodes__list > .dp-empty {
   min-height: 150px;
@@ -327,26 +279,17 @@
   border-radius: 10px;
 }
 
-/* --------------------------------------------------------------------------
-   RESPONSIVE
-   Desktop is the reference. Below 1200px we only reflow the exact design.
-   -------------------------------------------------------------------------- */
 @media (max-width: 1199px) {
-  .dp-page[data-media-type="tv"] {
-    --dp-tabs-h: 46px;
-    --dp-tab-pad: 18px;
-  }
-
   .dp-page .dp-episodes {
     width: 100%;
     margin-top: -34px;
   }
 
   .dp-page .dp-episode {
-    grid-template-columns: minmax(280px, 36%) minmax(0, 1fr) 210px 34px;
-    height: 106px;
-    min-height: 106px;
-    max-height: 106px;
+    grid-template-columns: minmax(280px, 36%) minmax(0, 1fr) 210px;
+    height: 114px;
+    min-height: 114px;
+    max-height: 114px;
   }
 
   .dp-page .dp-episode__bar-row {
@@ -357,7 +300,7 @@
 
 @media (max-width: 899px) {
   .dp-page .dp-episodes {
-    padding: 0 10px 10px;
+    padding: 0 10px 12px;
     border-radius: 14px;
   }
 
@@ -370,21 +313,18 @@
   .dp-page .dp-season__btn { width: 150px; }
 
   .dp-page .dp-episode {
-    grid-template-columns: 160px minmax(0, 1fr) 34px;
-    height: 112px;
-    min-height: 112px;
-    max-height: 112px;
+    grid-template-columns: 160px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    height: 124px;
+    min-height: 124px;
+    max-height: 124px;
   }
 
   .dp-page .dp-episode__thumb { grid-row: 1 / span 2; }
-  .dp-page .dp-episode__body { padding: 10px 12px; }
+  .dp-page .dp-episode__body { padding: 10px 14px 5px; }
   .dp-page .dp-episode__status {
     grid-column: 2;
-    padding: 0 12px 10px;
-  }
-  .dp-page .dp-episode__menu {
-    grid-column: 3;
-    grid-row: 1 / span 2;
+    padding: 0 14px 10px;
   }
   .dp-page .dp-episode__bar-row { grid-template-columns: minmax(90px, 1fr) auto; }
   .dp-page .dp-episode__desc {
@@ -398,7 +338,7 @@
 @media (max-width: 600px) {
   .dp-page .dp-episodes {
     width: 100%;
-    padding: 0 8px 8px;
+    padding: 0 8px 10px;
   }
 
   .dp-page .dp-episodes__title { font-size: 24px; }
@@ -410,17 +350,12 @@
   }
 
   .dp-page .dp-episode {
-    grid-template-columns: 128px minmax(0, 1fr) 28px;
-    height: 100px;
-    min-height: 100px;
-    max-height: 100px;
+    grid-template-columns: 128px minmax(0, 1fr);
+    height: 110px;
+    min-height: 110px;
+    max-height: 110px;
   }
 
-  .dp-page .dp-episode__thumb .dp-play-circle {
-    left: 10px;
-    width: 34px;
-    height: 34px;
-  }
   .dp-page .dp-episode__name { font-size: 17px; }
   .dp-page .dp-episode__desc,
   .dp-page .dp-episode__runtime,
