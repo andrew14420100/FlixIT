@@ -1,10 +1,24 @@
 // @ts-nocheck
 import { useEffect, useMemo, useState } from "react";
 
-const cache = new Map<string, boolean>();
 const keyOf = (type, id) => `${type === "tv" ? "tv" : "movie"}-${id}`;
 const BATCH_MEMO_MS = 10 * 1000;
+const POSITIVE_TTL_MS = 2 * 60 * 60 * 1000;
+const NEGATIVE_TTL_MS = 90 * 1000;
+const AUTO_REFRESH_MS = 90 * 1000;
+const cache = new Map<string, { available: boolean; at: number }>();
 const batchMemo = new Map<string, { at: number; promise: Promise<any> }>();
+
+function cacheValue(key) {
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  const ttl = hit.available ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS;
+  if (Date.now() - hit.at > ttl) {
+    cache.delete(key);
+    return undefined;
+  }
+  return hit.available;
+}
 
 function normalizedUnknown(items, getType) {
   const seen = new Set<string>();
@@ -14,7 +28,7 @@ function normalizedUnknown(items, getType) {
     const id = Number(item?.id ?? item?.tmdbId ?? item?.tmdb_id ?? 0);
     if (!id) continue;
     const key = keyOf(type, id);
-    if (cache.has(key) || seen.has(key)) continue;
+    if (cacheValue(key) !== undefined || seen.has(key)) continue;
     seen.add(key);
     out.push({ type, id });
   }
@@ -50,27 +64,35 @@ function availabilityBatch(items) {
   return promise;
 }
 
-// Resolves which items exist in the backend source catalogue. Fail-open: if the
-// catalogue is unavailable the original list is returned untouched. Requests
-// for the same visible group are shared across Home rows/Detail/hover consumers.
+// Strict Italian policy: unknown/unverified items stay hidden until the backend
+// confirms they are in the Italian-dubbed source catalogue. Negative entries
+// expire quickly so newly dubbed titles appear automatically without redeploys.
 export async function filterAvailableAsync(items, getType = (item) => item.media_type || item.type || "movie") {
   if (!items?.length) return [];
   const unknown = normalizedUnknown(items, getType);
   if (unknown.length) {
     try {
       const data = await availabilityBatch(unknown);
-      if (!data?.catalog_loaded) return items;
+      if (!data?.catalog_loaded) return [];
       const ok = new Set((data.available || []).map((item) => keyOf(item.type, item.id)));
-      unknown.forEach((item) => cache.set(keyOf(item.type, item.id), ok.has(keyOf(item.type, item.id))));
+      const now = Date.now();
+      unknown.forEach((item) => {
+        const key = keyOf(item.type, item.id);
+        cache.set(key, { available: ok.has(key), at: now });
+      });
     } catch {
-      return items;
+      return [];
     }
   }
-  return items.filter((item) => cache.get(keyOf(getType(item), item.id ?? item.tmdbId ?? item.tmdb_id)) !== false);
+  return items.filter((item) => {
+    const id = Number(item?.id ?? item?.tmdbId ?? item?.tmdb_id ?? 0);
+    const type = getType(item) === "tv" ? "tv" : "movie";
+    return !!id && cacheValue(keyOf(type, id)) === true;
+  });
 }
 
 export function useAvailableItems(items, mediaType?: string) {
-  const [filtered, setFiltered] = useState(items || []);
+  const [filtered, setFiltered] = useState([]);
   const signature = useMemo(
     () => (items || []).map((item) => `${item?.media_type || item?.type || mediaType || "movie"}:${item?.id ?? item?.tmdbId ?? item?.tmdb_id ?? 0}`).join("|"),
     [items, mediaType]
@@ -78,12 +100,30 @@ export function useAvailableItems(items, mediaType?: string) {
 
   useEffect(() => {
     let alive = true;
-    // Keep existing items visible while the availability filter resolves rather
-    // than flashing an empty row on every navigation.
-    if (Array.isArray(items)) setFiltered((current) => current?.length ? current : items);
-    filterAvailableAsync(items || [], (item) => item.media_type || item.type || mediaType || "movie")
-      .then((result) => alive && setFiltered(result));
-    return () => { alive = false; };
+    let running = false;
+    setFiltered([]);
+
+    const refresh = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const result = await filterAvailableAsync(items || [], (item) => item.media_type || item.type || mediaType || "movie");
+        if (alive) setFiltered(result);
+      } finally {
+        running = false;
+      }
+    };
+
+    refresh();
+    const timer = window.setInterval(refresh, AUTO_REFRESH_MS);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [signature, mediaType]);
 
   return filtered;
