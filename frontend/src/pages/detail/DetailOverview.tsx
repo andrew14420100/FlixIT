@@ -55,17 +55,26 @@ function InfoBox({ icon, label, value, testId }) {
 export default function DetailOverview({ data, onPlay, onWarm }) {
   const {
     isTV, title, overview, genres, year, certification, seasonsCount, runtimeMinutes, backdropUrl,
-    hasRealProgress, progressPercent, remainingSeconds, season, episode, episodeTitle,
+    hasRealProgress, progressPercent, remainingSeconds, season, episode, episodeTitle, episodeStillUrl,
   } = data;
 
   const resumeTitle = isTV ? `S${season}:E${episode}${episodeTitle ? ` - ${episodeTitle}` : ""}` : title;
   const resumeTime = `${remainingText(remainingSeconds)} rimanenti`;
+  const resumeImage = isTV && hasRealProgress ? (episodeStillUrl || backdropUrl) : backdropUrl;
 
   const onThumbKey = (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onPlay();
     }
+  };
+
+  const handleResumeImageError = (event) => {
+    if (!backdropUrl) return;
+    const image = event.currentTarget;
+    if (image.dataset.fallbackApplied === "true") return;
+    image.dataset.fallbackApplied = "true";
+    image.src = backdropUrl;
   };
 
   return (
@@ -110,7 +119,15 @@ export default function DetailOverview({ data, onPlay, onWarm }) {
             onKeyDown={onThumbKey}
             data-testid="detail-resume-thumb"
           >
-            {backdropUrl ? <img src={backdropUrl} alt="" loading="lazy" decoding="async" /> : null}
+            {resumeImage ? (
+              <img
+                src={resumeImage}
+                alt=""
+                loading="eager"
+                decoding="async"
+                onError={handleResumeImageError}
+              />
+            ) : null}
             <span className="dp-play-circle" aria-hidden="true"><PlayArrowRoundedIcon /></span>
           </div>
           <div className="dp-resume__row">
