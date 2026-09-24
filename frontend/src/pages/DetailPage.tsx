@@ -115,6 +115,13 @@ export function Component() {
     navigate(`/${MAIN_PATH.watch}/${typeSlug}/${mediaId}${data.isTV ? `?s=${data.season}&e=${data.episode}` : ""}`);
   }, [data.episode, data.isTV, data.season, italianAvailability, mediaId, navigate, typeSlug, warm]);
 
+  const showMoreInfo = useCallback(() => {
+    setActiveTab("overview");
+    window.setTimeout(() => {
+      document.querySelector(".dp-tabs-wrap")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, []);
+
   if (!mediaId || !validType) {
     return (
       <div className="dp-state" data-testid="detail-invalid">
@@ -157,7 +164,7 @@ export function Component() {
 
   return (
     <main className="dp-page" data-testid="detail-page" data-media-type={typeSlug}>
-      <DetailHero data={data} mediaId={mediaId} onPlay={goPlay} onWarm={warm} />
+      <DetailHero data={data} mediaId={mediaId} onPlay={goPlay} onWarm={warm} onMoreInfo={showMoreInfo} />
       <DetailTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
       <div className="dp-content">
         <section
