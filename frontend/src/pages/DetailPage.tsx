@@ -98,9 +98,13 @@ export function Component() {
     genreId: data.primaryGenreId,
     enabled: !!data.detail && italianAvailability === "available",
   });
+
+  // Start warming seasons + current-season episodes as soon as TV detail data
+  // exists, even while the availability check / Panoramica is still on screen.
+  // This makes the Episodi tab open from cache instead of starting a request on click.
   const episodesState = useEpisodes(
     validType && data.isTV ? mediaId : 0,
-    !!data.detail && italianAvailability === "available",
+    !!data.detail && italianAvailability !== "unavailable",
     data.season,
     activeTab === "episodes"
   );
