@@ -46,14 +46,10 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
   const {
     isTV,
     title,
-    overview,
     logoUrl,
     backdropUrl,
     backdropUrls,
     trailerUrl,
-    genres,
-    year,
-    certification,
     seasonsCount,
     runtimeMinutes,
     hasRealProgress,
@@ -130,24 +126,24 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
   const activeBackdropUrl = backdropCandidates[backdropIndex] || null;
   const showBackdrop = !!activeBackdropUrl && !backdropFailed;
   const showLogo = !!logoUrl && !logoFailed;
-
-  const duration = isTV ? seasonsText(seasonsCount) : runtimeText(runtimeMinutes);
-  const attributes = [
-    { text: isTV ? "Serie" : "Film" },
-    genres?.[0] ? { text: genres[0] } : null,
-    year ? { text: year } : null,
-    duration ? { text: duration } : null,
-    certification ? { text: certification, age: true } : null,
-  ].filter(Boolean);
+  const playLabel = hasRealProgress ? "Continua a guardare" : "Riproduci";
 
   const callouts = hasRealProgress
     ? [
-        "Continua a guardare",
+        "Riprendi da dove eri rimasto",
         isTV
-          ? `S${season}:E${episode} • ${remainingText(remainingSeconds)} rimanenti`
-          : `${remainingText(remainingSeconds)} rimanenti`,
+          ? `S${season} · E${episode} · ${remainingText(remainingSeconds)} alla fine`
+          : `${remainingText(remainingSeconds)} alla fine`,
       ]
-    : ["Disponibile ora", isTV ? "Serie" : "Film"];
+    : isTV
+    ? [
+        "Pronto per la maratona",
+        seasonsCount ? `${seasonsText(seasonsCount)} da scoprire` : "Inizia dal primo episodio",
+      ]
+    : [
+        "Serata cinema",
+        runtimeMinutes ? `${runtimeText(runtimeMinutes)} da vivere` : "Scelto per te",
+      ];
 
   return (
     <Box
@@ -290,39 +286,14 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
               {title}
             </Box>
           )}
-
-          {attributes.length ? (
-            <Box className="netflix-home-attributes" data-uia="attributes-elements" data-testid="detail-hero-meta">
-              {attributes.map((attribute: any, index: number) => (
-                <Box key={`${attribute.text}-${index}`} sx={{ display: "contents" }}>
-                  {index > 0 ? (
-                    <span className="netflix-home-attribute-dot" aria-hidden="true">•</span>
-                  ) : null}
-                  <span className={attribute.age ? "netflix-home-attribute netflix-home-age" : "netflix-home-attribute"}>
-                    {attribute.text}
-                  </span>
-                </Box>
-              ))}
-            </Box>
-          ) : null}
         </Box>
-
-        {overview ? (
-          <Box
-            className="netflix-home-metadata"
-            data-uia="billboard-metadata"
-            data-testid="detail-hero-overview"
-          >
-            {overview}
-          </Box>
-        ) : null}
 
         <Box className="netflix-home-actions-row">
           <Box className="netflix-home-actions" data-uia="billboard-actions">
             <Box
               component="button"
               type="button"
-              aria-label="Riproduci"
+              aria-label={playLabel}
               data-uia="play-video-button"
               data-testid="detail-play"
               className="netflix-home-action netflix-home-action-play"
@@ -331,7 +302,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
               onFocus={onWarm}
             >
               <PlayIcon />
-              <span>Riproduci</span>
+              <span>{playLabel}</span>
             </Box>
 
             <Box
@@ -355,7 +326,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
                 key={`${text}-${index}`}
               >
                 <span className="netflix-home-callout-mark">
-                  {/top\s*10/i.test(text) ? "10" : index === 0 ? "◢" : "N"}
+                  {index === 0 ? "F" : isTV ? "EP" : "★"}
                 </span>
                 <span>{text}</span>
               </Box>
