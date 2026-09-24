@@ -2,8 +2,8 @@
 /**
  * FlixIT Detail Page v2 - seasons/episodes data for TV titles.
  * Strict Italian policy: only explicitly confirmed Italian-dubbed episodes are
- * shown. The active season keeps rechecking so newly dubbed episodes appear
- * automatically without a deploy or a manual refresh.
+ * shown. Episode data is prefetched while the user is still on Panoramica so
+ * opening the Episodi tab is effectively instant.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -23,13 +23,17 @@ export function episodeStillUrl(value) {
 }
 
 export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
+  const preferred = Math.max(1, Number(preferredSeason || 1));
+
   const seasonsQuery = useQuery({
     queryKey: ["dp-seasons", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
-    staleTime: 15 * 60 * 1000,
-    gcTime: 6 * 60 * 60 * 1000,
-    refetchOnWindowFocus: true,
+    staleTime: 30 * 60 * 1000,
+    gcTime: 12 * 60 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
   });
 
@@ -40,13 +44,21 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     [seasonsQuery.data]
   );
 
-  const [selected, setSelected] = useState(0);
+  // Start with the user's current season (or season 1) immediately instead of
+  // waiting for the seasons endpoint. This lets the season request run in
+  // parallel with the seasons metadata request.
+  const [selected, setSelected] = useState(preferred);
+
+  useEffect(() => {
+    setSelected((current) => current || preferred);
+  }, [preferred]);
+
   useEffect(() => {
     if (!seasons.length) return;
-    const wanted = Number(preferredSeason || 0);
+    const wanted = Math.max(1, Number(preferredSeason || 1));
     setSelected((current) => {
       if (current && seasons.some((season) => Number(season.season_number) === current)) return current;
-      if (wanted && seasons.some((season) => Number(season.season_number) === wanted)) return wanted;
+      if (seasons.some((season) => Number(season.season_number) === wanted)) return wanted;
       return Number(seasons[0].season_number);
     });
   }, [seasons, preferredSeason]);
@@ -54,14 +66,20 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
   const episodesQuery = useQuery({
     queryKey: ["dp-season-episodes", mediaId, selected],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
-    enabled: !!mediaId && !!selected && !!active,
-    staleTime: 0,
-    gcTime: 60 * 60 * 1000,
-    refetchOnWindowFocus: true,
+    // Important: preload even while the Episodi tab is closed.
+    enabled: !!mediaId && !!selected && !!enabled,
+    staleTime: 15 * 60 * 1000,
+    gcTime: 12 * 60 * 60 * 1000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
+    // Only keep the Italian availability recheck alive while the user is
+    // actually looking at the episodes tab. Hidden preloading does one request.
     refetchInterval: (query) => {
+      if (!active) return false;
       const seconds = Number(query?.state?.data?.pending_recheck_seconds || 90);
-      return Math.max(4000, Math.min(90 * 1000, seconds * 1000));
+      return Math.max(10000, Math.min(90 * 1000, seconds * 1000));
     },
   });
 
@@ -71,6 +89,19 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     ),
     [episodesQuery.data]
   );
+
+  // Warm the episode thumbnails before the tab is opened so cards do not pop
+  // in one-by-one after the user clicks Episodi.
+  useEffect(() => {
+    if (typeof Image === "undefined" || !episodes.length) return;
+    episodes.slice(0, 30).forEach((episode) => {
+      const src = episodeStillUrl(episode?.still_path);
+      if (!src) return;
+      const image = new Image();
+      image.decoding = "async";
+      image.src = src;
+    });
+  }, [episodes]);
 
   return {
     seasons,
