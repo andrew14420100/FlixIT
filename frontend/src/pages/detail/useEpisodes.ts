@@ -1,14 +1,13 @@
 // @ts-nocheck
 /**
  * FlixIT Detail Page v2 - seasons/episodes data for TV titles.
- * Uses the existing public endpoints (availability-aware, Italian audio policy).
- * Seasons are prefetched in idle time; episodes load only for the selected season.
+ * Strict Italian policy: only explicitly confirmed Italian-dubbed episodes are
+ * shown. The active season keeps rechecking so newly dubbed episodes appear
+ * automatically without a deploy or a manual refresh.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { API_URL } from "./detailUtils";
-
-const MAX_PENDING_REFRESHES = 6;
 
 async function getJson(path, signal) {
   const response = await fetch(path, { signal, headers: { Accept: "application/json" } });
@@ -28,9 +27,9 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     queryKey: ["dp-seasons", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
-    staleTime: 60 * 60 * 1000,
+    staleTime: 15 * 60 * 1000,
     gcTime: 6 * 60 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 
@@ -56,20 +55,20 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     queryKey: ["dp-season-episodes", mediaId, selected],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
     enabled: !!mediaId && !!selected && !!active,
-    staleTime: 15 * 60 * 1000,
+    staleTime: 0,
     gcTime: 60 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     retry: 1,
-    // Italian-audio checks are non-blocking server side: poll a bounded number of times.
     refetchInterval: (query) => {
-      const seconds = Number(query?.state?.data?.pending_recheck_seconds || 0);
-      if (!seconds || Number(query?.state?.dataUpdateCount || 0) >= MAX_PENDING_REFRESHES) return false;
-      return Math.max(4000, seconds * 1000);
+      const seconds = Number(query?.state?.data?.pending_recheck_seconds || 90);
+      return Math.max(4000, Math.min(90 * 1000, seconds * 1000));
     },
   });
 
   const episodes = useMemo(
-    () => (episodesQuery.data?.episodes || []).filter((episode) => episode?.vixsrc_available !== false),
+    () => (episodesQuery.data?.episodes || []).filter(
+      (episode) => episode?.vixsrc_available !== false && episode?.italian_available === true
+    ),
     [episodesQuery.data]
   );
 
@@ -80,6 +79,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     episodes,
     loadingSeasons: seasonsQuery.isLoading,
     loadingEpisodes: episodesQuery.isLoading || (episodesQuery.isFetching && !episodesQuery.data),
+    checkingItalian: !!episodesQuery.data?.pending_recheck_seconds,
     seasonsError: seasonsQuery.isError,
   };
 }
