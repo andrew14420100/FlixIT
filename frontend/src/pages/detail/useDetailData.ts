@@ -16,6 +16,7 @@ import { API_URL, artUrl, directTrailerUrl, formatCertification, yearFrom } from
 
 const EMPTY = [];
 const TMDB_ORIGINAL_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
+const TMDB_EPISODE_IMAGE_BASE = "https://image.tmdb.org/t/p/w780";
 
 function tmdbOriginalArtUrl(value: any) {
   const raw = typeof value === "string" ? value : value?.url;
@@ -23,6 +24,15 @@ function tmdbOriginalArtUrl(value: any) {
   if (!text) return null;
   if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return text;
   if (text.startsWith("/")) return `${TMDB_ORIGINAL_IMAGE_BASE}${text}`;
+  return null;
+}
+
+function tmdbEpisodeStillUrl(value: any) {
+  const raw = typeof value === "string" ? value : value?.url;
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  if (/^https?:\/\//i.test(text)) return text;
+  if (text.startsWith("/")) return `${TMDB_EPISODE_IMAGE_BASE}${text}`;
   return null;
 }
 
@@ -184,6 +194,13 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   );
 
   const overview = String(detail?.overview || englishFallback.data?.overview || "").trim();
+  const episodeStillUrl = isTV && hasRealProgress
+    ? tmdbEpisodeStillUrl(
+        progressItem?.episode_still_path ||
+        progressItem?.still_path ||
+        episodeInfo?.still_path
+      )
+    : null;
 
   return {
     isTV,
@@ -212,5 +229,6 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     episode,
     episodeTitle: String(episodeInfo?.name || "").trim(),
     episodeRuntime: Number(episodeInfo?.runtime || 0),
+    episodeStillUrl,
   };
 }
