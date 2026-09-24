@@ -57,9 +57,9 @@ const testUrl = String(
 
 const manifest = {
   id: "org.flixit.local-provider-manager",
-  version: "2.0.0",
+  version: "2.1.0",
   name: "FlixIT Local Provider Manager",
-  description: "Generic local Stremio-compatible provider manager for authorized HTTP providers",
+  description: "Local provider manager with HTTP and torrent metadata providers",
   resources: ["stream"],
   types: ["movie", "series"],
   catalogs: []
@@ -80,7 +80,8 @@ function normalizeStreams(value) {
   return value.filter((stream) => {
     if (!stream || typeof stream !== "object") return false;
     const url = String(stream.url || "").trim();
-    return /^https?:\/\//i.test(url);
+    const magnet = String(stream.magnet || "").trim();
+    return /^https?:\/\//i.test(url) || /^magnet:\?/i.test(magnet);
   });
 }
 
