@@ -8,6 +8,7 @@ import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownR
 import { MAIN_PATH } from "src/constant";
 import { episodeStillUrl } from "./useEpisodes";
 import { warmPlayback } from "./detailUtils";
+import "./detail-episodes.css";
 
 function SeasonSelect({ seasons, value, onChange }) {
   const [open, setOpen] = useState(false);
@@ -78,7 +79,7 @@ function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, 
   if (seasonNumber === currentSeason && episodeNumber === currentEpisode) {
     const duration = Number(progressItem.duration || 0);
     const progress = Number(progressItem.progress || 0);
-    if (duration > 0) {
+    if (duration > 0 && progress > 0) {
       return {
         kind: "progress",
         percent: Math.min(100, Math.max(3, (progress / duration) * 100)),
@@ -91,8 +92,9 @@ function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, 
 
 export default function DetailEpisodes({ mediaId, data, episodesState }) {
   const navigate = useNavigate();
-  const { progressItem, season: currentSeason, episode: currentEpisode, backdropUrl } = data;
+  const { progressItem, hasRealProgress, season: currentSeason, episode: currentEpisode, backdropUrl } = data;
   const { seasons, selected, setSelected, episodes, loadingSeasons, loadingEpisodes } = episodesState;
+  const realProgressItem = hasRealProgress ? progressItem : null;
 
   const play = (episodeNumber) => {
     warmPlayback("tv", mediaId, selected, episodeNumber);
@@ -115,10 +117,10 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
         <div className="dp-episodes__list" data-testid="detail-episodes-list">
           {episodes.map((episode) => {
             const number = Number(episode.episode_number);
-            const state = episodeState(number, selected, progressItem, currentSeason, currentEpisode);
+            const state = episodeState(number, selected, realProgressItem, currentSeason, currentEpisode);
             const still = episodeStillUrl(episode.still_path) || backdropUrl;
             const runtime = Number(episode.runtime || 0);
-            const runtimeText = runtime ? `${runtime} min` : "";
+            const runtimeLabel = runtime ? `${runtime} min` : "";
             const onKey = (event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
@@ -141,6 +143,7 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
                   {still ? <img src={still} alt="" loading="lazy" decoding="async" /> : null}
                   <span className="dp-play-circle" aria-hidden="true"><PlayArrowRoundedIcon /></span>
                 </div>
+
                 <div className="dp-episode__body">
                   <span className="dp-episode__num">{String(number).padStart(2, "0")}</span>
                   <h3 className="dp-episode__name">{episode.name || `Episodio ${number}`}</h3>
@@ -148,31 +151,36 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
                     {episode.overview || (episode.italian_available === false ? episode.availability_label || "" : "")}
                   </p>
                 </div>
+
                 <div className="dp-episode__status">
                   {state.kind === "done" ? (
                     <>
                       <span className="dp-episode__done"><CheckCircleRoundedIcon /> Completato</span>
                       <div className="dp-episode__bar-row">
                         <div className="dp-progress is-done"><div className="dp-progress__fill" style={{ width: "100%" }} /></div>
-                        <span className="dp-episode__runtime">{runtimeText}</span>
+                        <span className="dp-episode__runtime">{runtimeLabel}</span>
                       </div>
                     </>
                   ) : null}
+
                   {state.kind === "progress" ? (
                     <>
                       <div className="dp-episode__bar-row">
                         <div className="dp-progress"><div className="dp-progress__fill" style={{ width: `${state.percent}%` }} /></div>
-                        <span className="dp-episode__runtime">{runtimeText}</span>
+                        <span className="dp-episode__runtime">{runtimeLabel}</span>
                       </div>
                       <span className="dp-episode__remaining"><b>{state.remainingMinutes}</b> min rimanenti</span>
                     </>
                   ) : null}
-                  {state.kind === "none" ? <span className="dp-episode__runtime dp-episode__runtime--solo">{runtimeText}</span> : null}
+
+                  {state.kind === "none" ? <span className="dp-episode__runtime dp-episode__runtime--solo">{runtimeLabel}</span> : null}
                 </div>
+
                 <span className="dp-episode__menu" aria-hidden="true"><MoreVertRoundedIcon /></span>
               </article>
             );
           })}
+
           {!episodes.length ? (
             <div className="dp-card dp-empty" data-testid="detail-episodes-season-empty">
               {loadingEpisodes ? "Caricamento episodi…" : "Nessun episodio riproducibile in questa stagione."}
