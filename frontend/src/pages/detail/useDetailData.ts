@@ -49,7 +49,8 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     retry: 1,
   });
 
-  // 3. Progress (local + backend, shared hook)
+  // 3. Progress (local + backend, shared hook). A zero-progress row does NOT
+  // count as started: Continue Watching appears only after real playback.
   const { items: continueWatchingItems } = useContinueWatching();
   const progressItem = useMemo(
     () =>
@@ -58,8 +59,13 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       ) || null,
     [continueWatchingItems, mediaId, typeSlug]
   );
-  const season = isTV ? Math.max(1, Number(progressItem?.season || 1)) : 1;
-  const episode = isTV ? Math.max(1, Number(progressItem?.episode || 1)) : 1;
+  const hasRealProgress = !!progressItem
+    && Number(progressItem?.progress || 0) > 0
+    && Number(progressItem?.duration || 0) > 0;
+
+  // If a stale/zero progress record exists, a TV title still starts from S1:E1.
+  const season = isTV && hasRealProgress ? Math.max(1, Number(progressItem?.season || 1)) : 1;
+  const episode = isTV && hasRealProgress ? Math.max(1, Number(progressItem?.episode || 1)) : 1;
 
   const seasonDetails = useGetTVSeasonDetailsQuery(
     { seriesId: mediaId, seasonNumber: season },
@@ -70,8 +76,8 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     [seasonDetails.data, episode]
   );
 
-  const duration = Number(progressItem?.duration || 0);
-  const progressSeconds = Number(progressItem?.progress || 0);
+  const duration = hasRealProgress ? Number(progressItem?.duration || 0) : 0;
+  const progressSeconds = hasRealProgress ? Number(progressItem?.progress || 0) : 0;
   const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (progressSeconds / duration) * 100)) : 0;
   const remainingSeconds = duration > 0 ? Math.max(0, duration - progressSeconds) : 0;
 
@@ -125,6 +131,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     trailerUrl: trailer.url || null,
     trailerItems,
     progressItem,
+    hasRealProgress,
     progressPercent,
     remainingSeconds,
     season,
