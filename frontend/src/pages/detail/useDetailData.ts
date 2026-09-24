@@ -1,14 +1,14 @@
 // @ts-nocheck
 /**
  * FlixIT Detail Page v2 - data layer.
- * Priority: detail -> artwork/logo -> progress -> trailer. Everything is
- * cached (RTK Query / react-query) so navigating between titles never
- * refetches the same resource twice.
+ * Priority: Italian detail -> English metadata fallback -> artwork/logo ->
+ * progress -> trailer. Everything is cached so navigation stays fast.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useGetAppendedVideosQuery, useGetTVSeasonDetailsQuery } from "src/store/slices/discover";
 import { MEDIA_TYPE } from "src/types/Common";
+import { API_ENDPOINT_URL, TMDB_V3_API_KEY } from "src/constant";
 import useAutomaticMediaAssets from "src/hooks/useAutomaticMediaAssets";
 import useResolvedTrailer from "src/hooks/useResolvedTrailer";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
@@ -20,10 +20,28 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   const isTV = typeSlug === "tv";
   const type = isTV ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
 
-  // 1. Detail (TMDB it-IT: title, overview, genres, seasons, runtime, dates)
+  // 1. Detail is requested in Italian by the existing RTK query.
   const detailQuery = useGetAppendedVideosQuery({ mediaType: type, id: mediaId }, { skip: !mediaId });
   const detail = detailQuery.data || null;
   const detailError = !!detailQuery.isError;
+
+  // If TMDB has no Italian overview, fetch only the English metadata as a real
+  // fallback. Italian always wins when present.
+  const englishFallback = useQuery({
+    queryKey: ["dp-detail-en-fallback", typeSlug, mediaId],
+    queryFn: async ({ signal }) => {
+      const response = await fetch(
+        `${API_ENDPOINT_URL}/${typeSlug}/${mediaId}?api_key=${TMDB_V3_API_KEY}&language=en-US`,
+        { signal, headers: { Accept: "application/json" } }
+      );
+      return response.ok ? response.json() : {};
+    },
+    enabled: !!mediaId && !!detail && !String(detail?.overview || "").trim(),
+    staleTime: 24 * 60 * 60 * 1000,
+    gcTime: 7 * 24 * 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
 
   // 2. Artwork + logo (official artwork pipeline, non-TMDB only)
   const assetItem = useMemo(
@@ -63,7 +81,6 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     && Number(progressItem?.progress || 0) > 0
     && Number(progressItem?.duration || 0) > 0;
 
-  // If a stale/zero progress record exists, a TV title still starts from S1:E1.
   const season = isTV && hasRealProgress ? Math.max(1, Number(progressItem?.season || 1)) : 1;
   const episode = isTV && hasRealProgress ? Math.max(1, Number(progressItem?.episode || 1)) : 1;
 
@@ -113,13 +130,16 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     detail?.runtime || mediaAssets.data?.runtime || (Array.isArray(detail?.episode_run_time) ? detail.episode_run_time[0] : 0) || 0
   );
 
+  const overview = String(detail?.overview || englishFallback.data?.overview || "").trim();
+
   return {
     isTV,
     type,
     detail,
     detailError,
-    title: detail?.title || detail?.name || assets?.title || "",
-    overview: String(detail?.overview || "").trim(),
+    title: detail?.title || detail?.name || englishFallback.data?.title || englishFallback.data?.name || assets?.title || "",
+    overview,
+    overviewLocale: String(detail?.overview || "").trim() ? "it" : overview ? "en" : null,
     year: yearFrom(detail) || String(mediaAssets.data?.release_date || "").slice(0, 4),
     genres,
     primaryGenreId,
