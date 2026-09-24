@@ -1,8 +1,6 @@
 // @ts-nocheck
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import PlayArrowRoundedIcon from "@mui/icons-material/PlayArrowRounded";
-import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import { MAIN_PATH } from "src/constant";
@@ -70,7 +68,6 @@ function SeasonSelect({ seasons, value, onChange }) {
   );
 }
 
-/** Derived from the single progress entry per title: earlier episodes = completed, current = in progress. */
 function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, currentEpisode) {
   if (!progressItem) return { kind: "none" };
   if (seasonNumber < currentSeason || (seasonNumber === currentSeason && episodeNumber < currentEpisode)) {
@@ -111,7 +108,7 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
 
       {!seasons.length ? (
         <div className="dp-card dp-empty" data-testid="detail-episodes-empty">
-          {loadingSeasons ? "Caricamento stagioni…" : "Nessun episodio disponibile al momento."}
+          {loadingSeasons ? "Caricamento stagioni…" : "Nessun episodio disponibile in italiano al momento."}
         </div>
       ) : (
         <div className="dp-episodes__list" data-testid="detail-episodes-list">
@@ -141,15 +138,12 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
               >
                 <div className="dp-episode__thumb">
                   {still ? <img src={still} alt="" loading="lazy" decoding="async" /> : null}
-                  <span className="dp-play-circle" aria-hidden="true"><PlayArrowRoundedIcon /></span>
                 </div>
 
                 <div className="dp-episode__body">
                   <span className="dp-episode__num">{String(number).padStart(2, "0")}</span>
                   <h3 className="dp-episode__name">{episode.name || `Episodio ${number}`}</h3>
-                  <p className="dp-episode__desc">
-                    {episode.overview || (episode.italian_available === false ? episode.availability_label || "" : "")}
-                  </p>
+                  {episode.overview ? <p className="dp-episode__desc">{episode.overview}</p> : null}
                 </div>
 
                 <div className="dp-episode__status">
@@ -175,15 +169,13 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
 
                   {state.kind === "none" ? <span className="dp-episode__runtime dp-episode__runtime--solo">{runtimeLabel}</span> : null}
                 </div>
-
-                <span className="dp-episode__menu" aria-hidden="true"><MoreVertRoundedIcon /></span>
               </article>
             );
           })}
 
           {!episodes.length ? (
             <div className="dp-card dp-empty" data-testid="detail-episodes-season-empty">
-              {loadingEpisodes ? "Caricamento episodi…" : "Nessun episodio riproducibile in questa stagione."}
+              {loadingEpisodes ? "Verifica doppiaggio italiano…" : "Nessun episodio doppiato in italiano disponibile in questa stagione."}
             </div>
           ) : null}
         </div>
