@@ -11,6 +11,8 @@ import "./detail-episodes.css";
 function SeasonSelect({ seasons, value, onChange }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const currentSeason = seasons.find((season) => Number(season.season_number) === Number(value)) || null;
+  const currentCount = Number(currentSeason?.episode_count || 0);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -29,7 +31,7 @@ function SeasonSelect({ seasons, value, onChange }) {
   }, [open]);
 
   return (
-    <div className="dp-season" ref={ref}>
+    <div className={`dp-season${open ? " is-open" : ""}`} ref={ref}>
       <button
         type="button"
         className="dp-season__btn"
@@ -38,27 +40,39 @@ function SeasonSelect({ seasons, value, onChange }) {
         aria-expanded={open}
         data-testid="detail-season-select"
       >
-        <span>Stagione {value}</span>
-        <KeyboardArrowDownRoundedIcon className={`dp-season__chevron${open ? " is-open" : ""}`} />
+        <span className="dp-season__selection">
+          <span className="dp-season__eyebrow">Stagione</span>
+          <span className="dp-season__current">Stagione {value}</span>
+        </span>
+        {currentCount ? <span className="dp-season__trigger-count">{currentCount} ep.</span> : null}
+        <span className="dp-season__chevron-box" aria-hidden="true">
+          <KeyboardArrowDownRoundedIcon className={`dp-season__chevron${open ? " is-open" : ""}`} />
+        </span>
       </button>
       {open ? (
         <ul className="dp-season__menu" role="listbox" aria-label="Seleziona stagione" data-testid="detail-season-menu">
           {seasons.map((season) => {
             const number = Number(season.season_number);
+            const episodeCount = Number(season.episode_count || 0);
+            const active = number === Number(value);
             return (
               <li
                 key={number}
                 role="option"
-                aria-selected={number === value}
-                className={`dp-season__item${number === value ? " is-active" : ""}`}
+                aria-selected={active}
+                className={`dp-season__item${active ? " is-active" : ""}`}
                 onClick={() => {
                   onChange(number);
                   setOpen(false);
                 }}
                 data-testid={`detail-season-option-${number}`}
               >
-                <span>Stagione {number}</span>
-                {season.episode_count ? <span className="dp-season__count">{season.episode_count} ep.</span> : null}
+                <span className="dp-season__number">{number}</span>
+                <span className="dp-season__item-copy">
+                  <strong>Stagione {number}</strong>
+                  <small>{episodeCount ? `${episodeCount} episodi` : "Episodi disponibili"}</small>
+                </span>
+                <span className="dp-season__active-mark" aria-hidden="true" />
               </li>
             );
           })}
@@ -141,7 +155,7 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
                 </div>
 
                 <div className="dp-episode__body">
-                  <span className="dp-episode__num">{String(number).padStart(2, "0")}</span>
+                  <span className="dp-episode__num"><span>EP.</span>{String(number).padStart(2, "0")}</span>
                   <h3 className="dp-episode__name">{episode.name || `Episodio ${number}`}</h3>
                   {episode.overview ? <p className="dp-episode__desc">{episode.overview}</p> : null}
                 </div>
