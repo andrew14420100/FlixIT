@@ -38,7 +38,9 @@ class OmniProcessManager:
 
     @property
     def enabled(self) -> bool:
-        return self._env_bool("OMNI_ENABLED", False)
+        # Omni is part of FlixIT's normal playback chain. It can still be
+        # explicitly disabled with OMNI_ENABLED=false when needed.
+        return self._env_bool("OMNI_ENABLED", True)
 
     @property
     def addon_url(self) -> str:
@@ -107,7 +109,7 @@ class OmniProcessManager:
 
     async def start(self) -> None:
         if not self.enabled:
-            logger.info("Omni localhost runtime disabled (OMNI_ENABLED is not true)")
+            logger.info("Omni localhost runtime disabled (OMNI_ENABLED is false)")
             return
 
         os.environ.setdefault("OMNI_ADDON_URL", _DEFAULT_URL)
@@ -123,7 +125,7 @@ class OmniProcessManager:
         package_json = self.runtime_dir / "package.json"
         if not package_json.is_file():
             raise RuntimeError(
-                "OMNI_ENABLED=true ma il runtime Node non è installato: "
+                "Omni runtime abilitato ma il runtime Node non è installato: "
                 f"manca {package_json}"
             )
 
