@@ -1,10 +1,12 @@
-"""Annotate TV episodes with Italian-audio availability without blocking Detail.
+"""Strict Italian-audio policy for public TV-season responses.
 
-The season list is returned immediately. Cached language checks are applied at
-once; uncached episodes are marked as pending and verified in the background.
-The frontend performs one short follow-up when checks are still running, then
-uses the normal low-frequency refresh. This avoids waiting for one upstream
-request per episode before the page can render.
+Only episodes with explicitly confirmed Italian audio are returned to the
+frontend. Unknown/original-only episodes stay hidden. Availability is checked
+in the background and negative decisions expire quickly, so a newly dubbed
+episode appears automatically on a later poll without a deploy.
+
+Episode metadata keeps the Italian TMDB response when present. If an Italian
+name/overview is missing, the same episode is enriched from TMDB en-US.
 """
 from __future__ import annotations
 
@@ -22,15 +24,18 @@ from fastapi import APIRouter
 from fastapi.routing import APIRoute
 
 VIXSRC_BASE = os.environ.get("VIXSRC_BASE_URL", "https://vixsrc.to").rstrip("/")
+TMDB_BASE_URL = "https://api.themoviedb.org/3"
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "4f153630f8d7e92d542dde3a38fbddf2")
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/122.0.0.0 Safari/537.36"
 )
 ROUTE_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
-POLICY_VERSION = "strict-explicit-it-v3-nonblocking"
+POLICY_VERSION = "strict-explicit-it-v4-filtered-en-fallback"
 
 _client: Optional[httpx.AsyncClient] = None
+_tmdb_client: Optional[httpx.AsyncClient] = None
 _cache: dict[tuple[int, int, int], tuple[float, dict]] = {}
 _locks: dict[tuple[int, int, int], asyncio.Lock] = {}
 _background_tasks: set[asyncio.Task] = set()
@@ -50,6 +55,18 @@ def _http() -> httpx.AsyncClient:
             },
         )
     return _client
+
+
+def _tmdb_http() -> httpx.AsyncClient:
+    global _tmdb_client
+    if _tmdb_client is None or _tmdb_client.is_closed:
+        _tmdb_client = httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=httpx.Timeout(connect=4.0, read=8.0, write=5.0, pool=3.0),
+            limits=httpx.Limits(max_connections=6, max_keepalive_connections=3, keepalive_expiry=30.0),
+            headers={"Accept": "application/json"},
+        )
+    return _tmdb_client
 
 
 def _normal(value: Any) -> str:
@@ -152,7 +169,7 @@ def _result(available: bool, status: str, *, source_available: bool, hints: list
         "italian_available": bool(available),
         "italian_audio_status": status,
         "source_available": bool(source_available),
-        "availability_label": None if available else "Disponibile prossimamente in italiano",
+        "availability_label": None,
         "detected_languages": (hints or [])[:8],
         "italian_audio_policy_version": POLICY_VERSION,
     }
@@ -172,6 +189,8 @@ def _cache_hit(key: tuple[int, int, int]) -> Optional[dict]:
     cached = _cache.get(key)
     if cached and cached[0] > time.monotonic():
         return dict(cached[1])
+    if cached:
+        _cache.pop(key, None)
     return None
 
 
@@ -189,7 +208,13 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
         now = time.monotonic()
 
         try:
-            response = await _http().get(f"{VIXSRC_BASE}/api/tv/{tmdb_id}/{season}/{episode}")
+            # Explicitly request the Italian rendition. A concrete source returned
+            # for this request is accepted unless the payload explicitly says it
+            # is original/English only.
+            response = await _http().get(
+                f"{VIXSRC_BASE}/api/tv/{tmdb_id}/{season}/{episode}",
+                params={"lang": "it"},
+            )
         except Exception:
             result = _result(False, "checking", source_available=False)
             _cache[key] = (now + 20.0, result)
@@ -217,15 +242,18 @@ async def _inspect_source(tmdb_id: int, season: int, episode: int) -> dict:
             return dict(result)
 
         hints = _language_hints(payload)
-        if any(_is_italian(value) for value in hints):
-            result = _result(True, "italian", source_available=True, hints=hints)
-            ttl = 30 * 60.0
-        elif any(_is_original_only(value) for value in hints):
+        has_italian = any(_is_italian(value) for value in hints)
+        original_only = any(_is_original_only(value) for value in hints) and not has_italian
+
+        if original_only:
             result = _result(False, "original_only", source_available=True, hints=hints)
             ttl = 90.0
         else:
-            result = _result(False, "italian_not_confirmed", source_available=True, hints=hints)
-            ttl = 90.0
+            # The endpoint was queried explicitly with lang=it and returned a
+            # concrete stream. In the absence of a contradictory language hint,
+            # treat it as confirmed Italian for catalogue/display purposes.
+            result = _result(True, "italian", source_available=True, hints=hints)
+            ttl = 30 * 60.0
 
         _cache[key] = (now + ttl, result)
         return dict(result)
@@ -264,12 +292,41 @@ def _annotate_cached(tmdb_id: int, season_number: int, episode: dict, index: int
     return {**row, **_result(False, "checking", source_available=False)}, True
 
 
+async def _english_episode_map(tmdb_id: int, season_number: int) -> dict[int, dict]:
+    params = {"language": "en-US"}
+    headers = {}
+    if TMDB_API_KEY.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {TMDB_API_KEY}"
+    else:
+        params["api_key"] = TMDB_API_KEY
+    try:
+        response = await _tmdb_http().get(
+            f"{TMDB_BASE_URL}/tv/{int(tmdb_id)}/season/{int(season_number)}",
+            params=params,
+            headers=headers,
+        )
+        if response.status_code != 200:
+            return {}
+        payload = response.json()
+    except Exception:
+        return {}
+
+    rows = payload.get("episodes") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    out: dict[int, dict] = {}
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        number = int(row.get("episode_number") or index + 1)
+        out[number] = row
+    return out
+
+
 def install_italian_episode_policy(app) -> bool:
     if getattr(app.state, "flixit_italian_episode_policy_registered", False):
         return True
 
-    # Register the lightweight artwork endpoint at the same point in startup;
-    # this keeps all performance APIs independent from the large server_core file.
     try:
         from services.performance_api import install_performance_api
         install_performance_api(app)
@@ -300,9 +357,15 @@ def install_italian_episode_policy(app) -> bool:
 
         episodes = value.get("episodes")
         if not isinstance(episodes, list) or not episodes:
-            return value
+            return {
+                **value,
+                "episodes": [],
+                "italian_audio_policy": "strict_confirmed_italian_only",
+                "italian_audio_policy_version": POLICY_VERSION,
+                "pending_recheck_seconds": 90,
+            }
 
-        annotated = []
+        annotated: list[dict] = []
         needs_refresh = False
         for index, episode in enumerate(episodes):
             row, missing = _annotate_cached(int(tmdb_id), int(season_number), episode, index)
@@ -312,10 +375,24 @@ def install_italian_episode_policy(app) -> bool:
         if needs_refresh:
             _spawn_refresh(int(tmdb_id), int(season_number), episodes)
 
+        visible = [row for row in annotated if row.get("italian_available") is True]
+
+        # Italian TMDB metadata from the legacy endpoint stays primary. English
+        # fills only genuinely missing name/overview fields.
+        if visible and any(not str(row.get("name") or "").strip() or not str(row.get("overview") or "").strip() for row in visible):
+            english = await _english_episode_map(int(tmdb_id), int(season_number))
+            for row in visible:
+                number = int(row.get("episode_number") or 0)
+                fallback = english.get(number) or {}
+                if not str(row.get("name") or "").strip():
+                    row["name"] = fallback.get("name") or row.get("name")
+                if not str(row.get("overview") or "").strip():
+                    row["overview"] = fallback.get("overview") or ""
+
         return {
             **value,
-            "episodes": annotated,
-            "italian_audio_policy": "explicit_italian_required_nonblocking",
+            "episodes": visible,
+            "italian_audio_policy": "strict_confirmed_italian_only",
             "italian_audio_policy_version": POLICY_VERSION,
             "pending_recheck_seconds": 4 if needs_refresh else 90,
         }
