@@ -134,7 +134,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
       data-compact={videoActive ? "true" : "false"}
       data-has-trailer={trailerUrl ? "true" : "false"}
       className="netflix-home-billboard dp-hero"
-      style={{ height: "auto" }}
+      style={{ height: "auto", aspectRatio: "1505.14 / 600" }}
     >
       {showBackdrop ? (
         <Box
