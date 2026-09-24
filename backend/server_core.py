@@ -24,6 +24,7 @@ import player as _player  # native player: stream resolution (admin sources + pu
 from services import mediaflow as _mediaflow
 from services import stremio as _stremio
 from services import proxy as _proxy
+from services import stream_blocklist as _stream_blocklist
 import premium as _premium  # roles, premium, plans, payments, premium pages
 
 
@@ -108,6 +109,7 @@ except Exception as e:
     client = MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=5000)
     logger.info("Fallback to local MongoDB")
 db = client[DB_NAME]
+_stream_blocklist.init(db)
 
 # Collections
 user_lists = db["user_lists"]
@@ -705,6 +707,8 @@ def _record_added(t: str, ids: set):
 
 def is_on_vixsrc(media_type: str, tmdb_id: int) -> bool:
     """Strict Italian-audio filter: only titles in the vixsrc lang=it catalog pass."""
+    if _stream_blocklist.is_blocked(media_type, tmdb_id):
+        return False
     ids = _vix_ids["tv" if media_type == "tv" else "movie"]
     if not ids:
         logger.warning("vixsrc catalog not loaded yet: language filter temporarily disabled")

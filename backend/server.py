@@ -521,6 +521,55 @@ async def flixit_sc_cover_import_status():
     return dict(_sc_import_state)
 
 
+async def _verify_home_streams(stop: asyncio.Event) -> None:
+    """Probe the stream of every title in the main home rows; unplayable ones are hidden."""
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=45)
+        return
+    except asyncio.TimeoutError:
+        pass
+    while not stop.is_set():
+        try:
+            rows = await asyncio.gather(
+                _core.get_homepage_trending(), _core.get_homepage_latest(), _core.get_top10(),
+                return_exceptions=True,
+            )
+            seen = set()
+            for row in rows:
+                for item in (row.get("items") or row.get("results") or []) if isinstance(row, dict) else []:
+                    media_type = "tv" if (item.get("type") or item.get("media_type")) == "tv" else "movie"
+                    tmdb_id = int(item.get("tmdbId") or item.get("id") or 0)
+                    if not tmdb_id or (media_type, tmdb_id) in seen:
+                        continue
+                    seen.add((media_type, tmdb_id))
+            checked = 0
+            for media_type, tmdb_id in seen:
+                if stop.is_set():
+                    return
+                try:
+                    if media_type == "tv":
+                        await _core._player.player_tv(tmdb_id, 1, 1)
+                    else:
+                        await _core._player.player_movie(tmdb_id)
+                    checked += 1
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
+            _core.logger.info("home stream verification done: %d titles, blocked=%s", checked, _core._stream_blocklist.blocked_counts())
+        except Exception as exc:
+            _core.logger.warning("home stream verification error: %s", exc)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=6 * 3600)
+            return
+        except asyncio.TimeoutError:
+            pass
+
+
+@app.get("/api/system/stream-blocklist", tags=["system"])
+async def flixit_stream_blocklist_status():
+    return _core._stream_blocklist.blocked_counts()
+
+
 @asynccontextmanager
 async def flixit_lifespan(app):
     async with _core_lifespan(app):
@@ -528,15 +577,18 @@ async def flixit_lifespan(app):
             stop = asyncio.Event()
             maintenance_task = asyncio.create_task(_daily_visual_maintenance(stop))
             cover_import_task = asyncio.create_task(_startup_sc_cover_import(stop))
+            stream_verify_task = asyncio.create_task(_verify_home_streams(stop))
             try:
                 yield
             finally:
                 stop.set()
                 maintenance_task.cancel()
                 cover_import_task.cancel()
+                stream_verify_task.cancel()
                 await asyncio.gather(
                     maintenance_task,
                     cover_import_task,
+                    stream_verify_task,
                     return_exceptions=True,
                 )
 

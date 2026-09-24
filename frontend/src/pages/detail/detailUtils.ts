@@ -6,6 +6,7 @@ const WATCH_STREAM_CACHE_PREFIX = "watch_stream_cache:";
 
 export const DETAIL_TABS = [
   { id: "overview", label: "Panoramica" },
+  { id: "episodes", label: "Episodi", tvOnly: true },
   { id: "trailers", label: "Trailer & altro" },
   { id: "download", label: "Scarica" },
   { id: "similar", label: "Titoli simili" },

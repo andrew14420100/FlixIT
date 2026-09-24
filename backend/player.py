@@ -20,6 +20,7 @@ from pydantic import BaseModel, field_validator
 
 from services.netflix_artwork import ArtworkResolver
 from services.resolver_registry import ResolverRegistry
+from services import stream_blocklist as _stream_blocklist
 from services.resolvers import (
     AdminSourceResolver,
     InternetArchiveResolver,
@@ -643,13 +644,25 @@ async def resolve_stream(
     return await registry.resolve(ResolveContext(media_type, tmdb_id, season, episode))
 
 
+def _track_stream_result(media_type: str, tmdb_id: int, result: dict, first_episode: bool = True) -> dict:
+    """Hide titles from the catalogue rows when their stream is definitively missing."""
+    if not isinstance(result, dict) or not first_episode:
+        return result
+    if result.get("success"):
+        _stream_blocklist.clear_failure(media_type, tmdb_id)
+    elif result.get("reason") == "not_found":
+        _stream_blocklist.mark_failure(media_type, tmdb_id)
+    return result
+
+
 @router.get("/movie/{tmdb_id}")
 async def player_movie(tmdb_id: int):
-    return await resolve_stream("movie", tmdb_id)
+    return _track_stream_result("movie", tmdb_id, await resolve_stream("movie", tmdb_id))
 
 
 @router.get("/tv/{tmdb_id}/{season}/{episode}")
 async def player_tv(tmdb_id: int, season: int, episode: int):
     if season < 0 or episode < 1:
         raise HTTPException(status_code=400, detail="Stagione/episodio non validi")
-    return await resolve_stream("tv", tmdb_id, season, episode)
+    result = await resolve_stream("tv", tmdb_id, season, episode)
+    return _track_stream_result("tv", tmdb_id, result, first_episode=(season == 1 and episode == 1))
