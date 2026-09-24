@@ -10,6 +10,7 @@ import { MAIN_PATH } from "src/constant";
 import useDetailData from "./detail/useDetailData";
 import useSimilarTitles from "./detail/useSimilarTitles";
 import useEpisodes from "./detail/useEpisodes";
+import DetailAmbientExact from "./detail/DetailAmbientExact";
 import DetailHero from "./detail/DetailHero";
 import DetailTabs from "./detail/DetailTabs";
 import DetailOverview from "./detail/DetailOverview";
@@ -171,6 +172,7 @@ export function Component() {
       data-media-type={typeSlug}
       sx={{ pt: { xs: 0, md: "80px" } }}
     >
+      <DetailAmbientExact />
       <DetailHero data={data} mediaId={mediaId} onPlay={goPlay} onWarm={warm} onMoreInfo={showMoreInfo} />
       <DetailTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
       <div className="dp-content">
