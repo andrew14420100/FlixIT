@@ -15,6 +15,28 @@ import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { API_URL, artUrl, directTrailerUrl, formatCertification, yearFrom } from "./detailUtils";
 
 const EMPTY = [];
+const TMDB_ORIGINAL_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
+
+function tmdbOriginalArtUrl(value: any) {
+  const raw = typeof value === "string" ? value : value?.url;
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return text;
+  if (text.startsWith("/")) return `${TMDB_ORIGINAL_IMAGE_BASE}${text}`;
+  return null;
+}
+
+function uniqueUrls(values: any[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  values.forEach((value) => {
+    const text = String(value || "").trim();
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    result.push(text);
+  });
+  return result;
+}
 
 export default function useDetailData(typeSlug: string, mediaId: number) {
   const isTV = typeSlug === "tv";
@@ -43,7 +65,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     retry: 1,
   });
 
-  // 2. Artwork + logo (official artwork pipeline, non-TMDB only)
+  // 2. Artwork + logo (official artwork pipeline first)
   const assetItem = useMemo(
     () => ({ id: mediaId, type: typeSlug, title: detail?.title || detail?.name || "" }),
     [mediaId, typeSlug, detail?.title, detail?.name]
@@ -66,6 +88,37 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+
+  // Detail Hero must never turn into a black rectangle just because the
+  // preferred provider artwork is missing or temporarily unreachable.
+  // Preserve the project artwork pipeline first, then use TMDB's native
+  // original backdrop only as a detail-page fallback. Poster is the last resort.
+  const backdropUrls = useMemo(
+    () => uniqueUrls([
+      artUrl(assets?.detail_backdrop_path),
+      artUrl(assets?.hero_backdrop_path),
+      artUrl(assets?.backdrop_path),
+      artUrl(mediaAssets.data?.detail_backdrop_url),
+      artUrl(mediaAssets.data?.hero_backdrop_url),
+      artUrl(mediaAssets.data?.backdrop_url),
+      tmdbOriginalArtUrl(detail?.backdrop_path),
+      tmdbOriginalArtUrl(englishFallback.data?.backdrop_path),
+      tmdbOriginalArtUrl(detail?.poster_path),
+      tmdbOriginalArtUrl(englishFallback.data?.poster_path),
+    ]),
+    [
+      assets?.detail_backdrop_path,
+      assets?.hero_backdrop_path,
+      assets?.backdrop_path,
+      mediaAssets.data?.detail_backdrop_url,
+      mediaAssets.data?.hero_backdrop_url,
+      mediaAssets.data?.backdrop_url,
+      detail?.backdrop_path,
+      detail?.poster_path,
+      englishFallback.data?.backdrop_path,
+      englishFallback.data?.poster_path,
+    ]
+  );
 
   // 3. Progress (local + backend, shared hook). A zero-progress row does NOT
   // count as started: Continue Watching appears only after real playback.
@@ -147,7 +200,8 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     seasonsCount,
     runtimeMinutes,
     logoUrl: artUrl(assets?.logo_path, assets?.netflix_logo_url),
-    backdropUrl: artUrl(assets?.detail_backdrop_path, assets?.hero_backdrop_path, assets?.backdrop_path),
+    backdropUrl: backdropUrls[0] || null,
+    backdropUrls,
     trailerUrl: trailer.url || null,
     trailerItems,
     progressItem,
