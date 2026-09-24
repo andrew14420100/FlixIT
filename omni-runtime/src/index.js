@@ -4,10 +4,13 @@
 //
 // - Optional 4K test mode keeps the public PBS test pattern available for
 //   end-to-end player validation.
-// - Optional OMNI_PROVIDER_URL forwards normal /stream requests to an
-//   authorized Stremio-compatible HTTP provider.
-// - When OMNI_PREFER_4K is enabled (default), playable streams are ordered by
-//   detected quality: 2160p/4K, 1440p, 1080p, 720p, then the remaining streams.
+// - OMNI_PROVIDER_URLS can contain multiple authorized Stremio-compatible
+//   HTTP providers (comma, semicolon or newline separated).
+// - Legacy OMNI_PROVIDER_URL remains supported and is merged into the list.
+// - Providers are queried in parallel, playable HTTP(S) streams are merged,
+//   deduplicated and ranked by detected quality.
+// - When OMNI_PREFER_4K is enabled (default), streams are ordered as
+//   2160p/4K/UHD, 1440p, 1080p, 720p, then the remaining streams.
 // - No scraping, torrent resolution or debrid logic lives in this runtime.
 const http = require("http");
 
@@ -24,6 +27,10 @@ const providerTimeoutMs = Math.max(
   1000,
   Number.parseInt(process.env.OMNI_PROVIDER_TIMEOUT_MS || "10000", 10) || 10000
 );
+const maxProviders = Math.max(
+  1,
+  Math.min(12, Number.parseInt(process.env.OMNI_MAX_PROVIDERS || "8", 10) || 8)
+);
 
 function normalizeProviderUrl(value) {
   let raw = String(value || "").trim();
@@ -39,12 +46,35 @@ function normalizeProviderUrl(value) {
   }
 }
 
+function parseProviderUrls() {
+  const values = [];
+  const multi = String(process.env.OMNI_PROVIDER_URLS || "");
+  if (multi.trim()) values.push(...multi.split(/[,;\n]+/));
+
+  const legacy = String(process.env.OMNI_PROVIDER_URL || "").trim();
+  if (legacy) values.push(legacy);
+
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const normalized = normalizeProviderUrl(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+    if (out.length >= maxProviders) break;
+  }
+  return out;
+}
+
+const providerUrls = parseProviderUrls();
+
 function streamText(stream) {
   const hints = stream && typeof stream.behaviorHints === "object" ? stream.behaviorHints : {};
   return [
     stream?.name,
     stream?.title,
     stream?.description,
+    stream?.quality,
     hints?.filename,
     stream?.url
   ].filter(Boolean).join(" ").toLowerCase();
@@ -60,14 +90,68 @@ function qualityScore(stream) {
   return 0;
 }
 
+function detectedQuality(stream) {
+  const score = qualityScore(stream);
+  if (score >= 400) return "2160p";
+  if (score >= 300) return "1440p";
+  if (score >= 200) return "1080p";
+  if (score >= 100) return "720p";
+  if (score >= 50) return "SD";
+  return "unknown";
+}
+
 function streamTypeScore(stream) {
   const hints = stream && typeof stream.behaviorHints === "object" ? stream.behaviorHints : {};
   const candidate = String(hints?.filename || stream?.url || "").toLowerCase();
   return candidate.includes(".m3u8") || candidate.includes("/hls/") ? 20 : 0;
 }
 
+function isPlayableHttpStream(stream) {
+  if (!stream || typeof stream !== "object") return false;
+  const raw = String(stream.url || "").trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    return /^https?:$/.test(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function normalizeHttpStreams(streams, providerUrl) {
+  if (!Array.isArray(streams)) return [];
+  let providerOrigin = "";
+  try {
+    providerOrigin = new URL(providerUrl).origin;
+  } catch {
+    providerOrigin = "";
+  }
+
+  return streams
+    .filter(isPlayableHttpStream)
+    .map((stream) => ({
+      ...stream,
+      detectedQuality: stream.detectedQuality || detectedQuality(stream),
+      providerOrigin: stream.providerOrigin || providerOrigin || undefined,
+    }));
+}
+
+function dedupeStreams(streams) {
+  const seen = new Set();
+  const out = [];
+  for (const stream of streams) {
+    const key = String(stream?.url || "").trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(stream);
+  }
+  return out;
+}
+
 function rankStreams(streams) {
-  if (!prefer4k || !Array.isArray(streams)) return streams || [];
+  if (!Array.isArray(streams)) return [];
+  if (!prefer4k) return streams;
+
   return streams
     .map((stream, index) => ({ stream, index }))
     .sort((a, b) => {
@@ -78,18 +162,21 @@ function rankStreams(streams) {
       const aScore = qualityScore(a.stream) + streamTypeScore(a.stream);
       const bScore = qualityScore(b.stream) + streamTypeScore(b.stream);
       if (aScore !== bScore) return bScore - aScore;
+
+      const aSeeders = Number(a.stream?.seeders || 0);
+      const bSeeders = Number(b.stream?.seeders || 0);
+      if (aSeeders !== bSeeders) return bSeeders - aSeeders;
+
       return a.index - b.index;
     })
     .map((entry) => entry.stream);
 }
 
-const providerUrl = normalizeProviderUrl(process.env.OMNI_PROVIDER_URL);
-
 const manifest = {
   id: "org.flixit.local-runtime-harness",
-  version: "1.4.0",
-  name: "FlixIT Local Runtime Bridge",
-  description: "Local Stremio-compatible bridge for authorized HTTP stream providers with 4K preference",
+  version: "1.5.0",
+  name: "FlixIT Omni Runtime",
+  description: "Multi-provider HTTP stream aggregator with 4K-first ranking",
   resources: ["stream"],
   types: ["movie", "series"],
   catalogs: []
@@ -105,33 +192,42 @@ function json(res, status, payload) {
   res.end(body);
 }
 
-function providerInfo() {
-  if (!providerUrl) return { configured: false, prefer4k };
-  try {
-    const parsed = new URL(providerUrl);
-    return { configured: true, origin: parsed.origin, prefer4k };
-  } catch {
-    return { configured: false, prefer4k };
-  }
-}
-
-async function fetchProviderStreams(type, id) {
-  if (!providerUrl) return { streams: [] };
-
-  const localOrigins = new Set([
+function localOrigins() {
+  return new Set([
     `http://${host}:${port}`,
     `http://127.0.0.1:${port}`,
     `http://localhost:${port}`
   ]);
+}
+
+function providerInfo() {
+  return {
+    configured: providerUrls.length > 0,
+    count: providerUrls.length,
+    prefer4k,
+    timeoutMs: providerTimeoutMs,
+    maxProviders,
+    providers: providerUrls.map((value) => {
+      try {
+        return { origin: new URL(value).origin };
+      } catch {
+        return { origin: "invalid" };
+      }
+    })
+  };
+}
+
+async function fetchOneProvider(providerUrl, type, id) {
   let upstream;
   try {
     upstream = new URL(providerUrl);
   } catch {
-    return { streams: [] };
+    return [];
   }
-  if (localOrigins.has(upstream.origin)) {
-    console.error("[flixit-runtime] OMNI_PROVIDER_URL points back to this runtime; refusing recursive proxy");
-    return { streams: [] };
+
+  if (localOrigins().has(upstream.origin)) {
+    console.error(`[flixit-runtime] refusing recursive provider: ${upstream.origin}`);
+    return [];
   }
 
   const target = `${providerUrl}/stream/${encodeURIComponent(type)}/${encodeURIComponent(id)}.json`;
@@ -140,31 +236,42 @@ async function fetchProviderStreams(type, id) {
       method: "GET",
       headers: {
         Accept: "application/json",
-        "User-Agent": "FlixIT-Omni-Bridge/1.1"
+        "User-Agent": "FlixIT-Omni-Bridge/1.5"
       },
       redirect: "follow",
       signal: AbortSignal.timeout(providerTimeoutMs)
     });
 
-    if (response.status === 404) return { streams: [] };
+    if (response.status === 404) return [];
     if (!response.ok) {
-      console.error(`[flixit-runtime] provider returned HTTP ${response.status}`);
-      return { streams: [] };
+      console.error(`[flixit-runtime] provider ${upstream.origin} returned HTTP ${response.status}`);
+      return [];
     }
 
     const data = await response.json();
-    if (!data || !Array.isArray(data.streams)) return { streams: [] };
-
-    // Preserve standard Stremio stream objects. FlixIT's backend performs the
-    // final HTTP(S)-URL validation and ignores unsupported torrent-only items.
-    return { streams: rankStreams(data.streams) };
+    if (!data || !Array.isArray(data.streams)) return [];
+    return normalizeHttpStreams(data.streams, providerUrl);
   } catch (error) {
     const message = error && error.name === "TimeoutError"
       ? `timeout after ${providerTimeoutMs}ms`
       : (error?.message || String(error));
-    console.error(`[flixit-runtime] provider request failed: ${message}`);
-    return { streams: [] };
+    console.error(`[flixit-runtime] provider ${upstream.origin} failed: ${message}`);
+    return [];
   }
+}
+
+async function fetchProviderStreams(type, id) {
+  if (providerUrls.length === 0) return { streams: [] };
+
+  const settled = await Promise.allSettled(
+    providerUrls.map((providerUrl) => fetchOneProvider(providerUrl, type, id))
+  );
+
+  const merged = settled.flatMap((entry) =>
+    entry.status === "fulfilled" && Array.isArray(entry.value) ? entry.value : []
+  );
+
+  return { streams: rankStreams(dedupeStreams(merged)) };
 }
 
 async function streamResponse(path) {
@@ -178,7 +285,8 @@ async function streamResponse(path) {
         {
           name: "FlixIT 4K Test",
           title: "PBS public 4K multicodec HLS test pattern",
-          url: test4kUrl
+          url: test4kUrl,
+          detectedQuality: "2160p"
         }
       ]
     };
@@ -189,11 +297,17 @@ async function streamResponse(path) {
 
 const server = http.createServer(async (req, res) => {
   const path = (req.url || "/").split("?", 1)[0];
-  if (req.method === "GET" && path === "/manifest.json") return json(res, 200, manifest);
+
+  if (req.method === "GET" && path === "/manifest.json") {
+    return json(res, 200, manifest);
+  }
+
   if (req.method === "GET" && path === "/health") {
     return json(res, 200, {
       ok: true,
       service: manifest.id,
+      version: manifest.version,
+      qualityOrder: prefer4k ? ["2160p", "1440p", "1080p", "720p", "SD"] : "provider-order",
       test4k: {
         enabled: test4kEnabled,
         id: test4kId,
@@ -202,20 +316,23 @@ const server = http.createServer(async (req, res) => {
       provider: providerInfo()
     });
   }
+
   if (req.method === "GET") {
     const payload = await streamResponse(path);
     if (payload) return json(res, 200, payload);
   }
+
   return json(res, 404, { error: "not_found" });
 });
 
 server.listen(port, host, () => {
   console.log(`[flixit-runtime] listening on http://${host}:${port}`);
+  console.log(`[flixit-runtime] version ${manifest.version}`);
   console.log(
     `[flixit-runtime] 4K test mode ${test4kEnabled ? `enabled for ${test4kId}` : "disabled"}`
   );
   console.log(
-    `[flixit-runtime] provider bridge ${providerUrl ? "configured" : "disabled (OMNI_PROVIDER_URL not set)"}`
+    `[flixit-runtime] providers ${providerUrls.length > 0 ? `configured: ${providerUrls.length}` : "disabled (OMNI_PROVIDER_URLS not set)"}`
   );
   console.log(`[flixit-runtime] prefer 4K ${prefer4k ? "enabled" : "disabled"}`);
 });
