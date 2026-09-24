@@ -15,7 +15,7 @@ const HERO_TRAILER_DELAY_MS = 3000;
 export default function DetailHero({ data, mediaId, onPlay, onWarm }) {
   const {
     isTV, title, logoUrl, backdropUrl, trailerUrl, genres, year, certification,
-    seasonsCount, runtimeMinutes, progressItem, progressPercent, remainingSeconds, season, episode,
+    seasonsCount, runtimeMinutes, hasRealProgress, progressPercent, remainingSeconds, season, episode,
   } = data;
 
   const [trailerArmed, setTrailerArmed] = useState(false);
@@ -54,8 +54,8 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm }) {
   const showBackdrop = !!backdropUrl && !backdropFailed;
   const showLogo = !!logoUrl && !logoFailed;
 
-  const ctaLabel = progressItem ? "Continua a guardare" : isTV ? `Guarda S${season}:E${episode}` : "Riproduci";
-  const showResumeBlock = !!progressItem || isTV;
+  const ctaLabel = hasRealProgress ? "Continua a guardare" : isTV ? "Guarda S1:E1" : "Riproduci";
+  const showResumeBlock = hasRealProgress || isTV;
   const metaParts = [
     isTV ? "Serie" : "Film",
     genres[0],
@@ -141,7 +141,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm }) {
           <p className="dp-hero__label" data-testid="detail-hero-resume-label">{ctaLabel}</p>
         ) : null}
 
-        {progressItem ? (
+        {hasRealProgress ? (
           <div className="dp-hero__progress-row">
             <div className="dp-progress" data-testid="detail-hero-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progressPercent)}>
               <div className="dp-progress__fill" style={{ width: `${Math.max(2, progressPercent)}%` }} />
