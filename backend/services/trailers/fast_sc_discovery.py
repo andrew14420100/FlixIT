@@ -13,7 +13,6 @@ resolved here.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 from .providers.common import client
 from .providers import streamingcommunity as sc_module
@@ -51,7 +50,9 @@ async def _catalog_fast(provider, http, identity: dict, expected_tmdb: int, base
     if not paths:
         return []
 
-    jobs = [(base, path) for base in bases for path in paths]
+    # Interleave mirrors so the HTTP pool does not spend its whole first wave on
+    # one dead host. The first connection batch therefore touches every mirror.
+    jobs = [(base, path) for path in paths for base in bases]
     results = await asyncio.gather(
         *(_bounded_title(provider, http, base, path) for base, path in jobs),
         return_exceptions=False,
@@ -79,7 +80,9 @@ async def _search_fast(provider, http, identity: dict, expected_tmdb: int, bases
     if not queries:
         return []
 
-    search_jobs = [(base, query) for base in bases for query in queries]
+    # Same mirror interleaving as the catalog pass: one slow domain cannot block
+    # all other SC mirrors during the interactive deadline.
+    search_jobs = [(base, query) for query in queries for base in bases]
     search_results = await asyncio.gather(
         *(_bounded_search(provider, http, base, query) for base, query in search_jobs),
         return_exceptions=False,
@@ -108,7 +111,8 @@ async def _search_fast(provider, http, identity: dict, expected_tmdb: int, bases
     if not detail_jobs:
         return []
 
-    # Keep the interactive fan-out bounded even for very ambiguous franchises.
+    # Prefer exact-TMDB search rows first, but cap the fan-out for ambiguous
+    # franchises. Each request has its own short deadline.
     detail_jobs = detail_jobs[:48]
     details = await asyncio.gather(
         *(_bounded_title(provider, http, base, path) for base, path in detail_jobs),
