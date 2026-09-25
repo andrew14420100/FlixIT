@@ -79,6 +79,11 @@ def _install_trailer_registration_hook():
         except Exception:
             pass
         try:
+            from services.artwork_proxy import install_artwork_proxy
+            install_artwork_proxy(app)
+        except Exception:
+            pass
+        try:
             from services.home_bootstrap import install_home_bootstrap
             install_home_bootstrap(app)
             from services.home_bootstrap_fast import install_home_bootstrap_fast
