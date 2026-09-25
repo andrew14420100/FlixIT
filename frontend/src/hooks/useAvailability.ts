@@ -2,10 +2,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 const keyOf = (type, id) => `${type === "tv" ? "tv" : "movie"}-${id}`;
-const BATCH_MEMO_MS = 10 * 1000;
-const POSITIVE_TTL_MS = 2 * 60 * 60 * 1000;
-const NEGATIVE_TTL_MS = 90 * 1000;
-const AUTO_REFRESH_MS = 90 * 1000;
+const BATCH_MEMO_MS = 60 * 1000;
+const POSITIVE_TTL_MS = 6 * 60 * 60 * 1000;
+const NEGATIVE_TTL_MS = 5 * 60 * 1000;
+const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const cache = new Map<string, { available: boolean; at: number }>();
 const batchMemo = new Map<string, { at: number; promise: Promise<any> }>();
 
@@ -64,10 +64,10 @@ function availabilityBatch(items) {
   return promise;
 }
 
-// Strict Italian/playability policy: unknown/unverified items stay hidden until
-// the backend confirms both Italian-catalog membership and current provider
-// reachability. Transient upstream failures remain unknown instead of being
-// cached as a real "unavailable" result.
+// Rendering is intentionally cheap: the backend batch endpoint reads the
+// cached VixSrc lang=it catalogue and never performs one live upstream probe per
+// card. Strict per-episode Italian audio checks remain on the TV detail/season
+// path, so English/original-only episodes stay hidden without slowing the home.
 export async function filterAvailableAsync(items, getType = (item) => item.media_type || item.type || "movie") {
   if (!items?.length) return [];
   const unknown = normalizedUnknown(items, getType);
@@ -79,17 +79,12 @@ export async function filterAvailableAsync(items, getType = (item) => item.media
       const explicitlyUnavailable = new Set(
         (data.unavailable || []).map((item) => keyOf(item.type, item.id))
       );
-      const strictLivePolicy = String(data?.policy || "") === "streamportal-live-v1";
       const now = Date.now();
       unknown.forEach((item) => {
         const key = keyOf(item.type, item.id);
         if (ok.has(key)) {
           cache.set(key, { available: true, at: now });
-          return;
-        }
-        // New backend distinguishes a confirmed negative from a temporary
-        // timeout/outage. Older backends did not, so preserve their behavior.
-        if (!strictLivePolicy || explicitlyUnavailable.has(key)) {
+        } else if (explicitlyUnavailable.has(key)) {
           cache.set(key, { available: false, at: now });
         }
       });
@@ -114,7 +109,6 @@ export function useAvailableItems(items, mediaType?: string) {
   useEffect(() => {
     let alive = true;
     let running = false;
-    setFiltered([]);
 
     const refresh = async () => {
       if (running) return;
