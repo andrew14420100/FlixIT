@@ -3,9 +3,10 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "strict-italian-4k-title-search-v16";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v17";
+const SC_SOURCE = "streamingcommunity";
 
-function isBlockedVideoHost(value: string) {
+function isYouTubeHost(value: string) {
   try {
     const host = new URL(
       value,
@@ -20,16 +21,29 @@ function isBlockedVideoHost(value: string) {
       host.endsWith(".youtube-nocookie.com")
     );
   } catch {
-    return true;
+    return false;
   }
 }
 
 function directTrailerUrl(data: any) {
-  for (const value of [data?.trailer_url, data?.manifest_url, data?.trailer_key]) {
+  const selected = data?.selected && typeof data.selected === "object" ? data.selected : data;
+  const source = String(selected?.source || data?.source || "").trim().toLowerCase();
+
+  for (const value of [
+    selected?.trailer_url,
+    selected?.manifest_url,
+    selected?.trailer_key,
+    data?.trailer_url,
+    data?.manifest_url,
+    data?.trailer_key,
+  ]) {
     const text = String(value || "").trim();
     if (!text) continue;
     if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) continue;
-    if (isBlockedVideoHost(text)) continue;
+
+    // YouTube is accepted only when the backend has explicitly identified the
+    // candidate as the exact StreamingCommunity trailer for this TMDB title.
+    if (isYouTubeHost(text) && source !== SC_SOURCE) continue;
     return text;
   }
   return null;
@@ -44,11 +58,8 @@ export function browserSupportsHdr() {
   }
 }
 
-/**
- * Shared public trailer cache for Hero, hover cards and Detail.
- * Backend policy: any usable Italian trailer wins over original-language
- * fallbacks; inside the Italian pool native quality is preferred up to 4K.
- */
+/** Shared public trailer cache for Hero, hover cards and Detail.
+ * Automatic trailer policy: StreamingCommunity title metadata only. */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
   const hdr = useMemo(() => browserSupportsHdr(), []);
@@ -76,8 +87,8 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       if (candidate && data?.available !== false && data?.refresh_pending !== true) return false;
 
       const updates = Number(query?.state?.dataUpdateCount || 0);
-      if (!candidate) return updates < 4 ? 3500 : false;
-      return data?.refresh_pending === true && updates < 3 ? 5000 : false;
+      if (!candidate) return updates < 5 ? 3500 : false;
+      return data?.refresh_pending === true && updates < 4 ? 5000 : false;
     },
     refetchIntervalInBackground: false,
   });

@@ -1,11 +1,8 @@
 """Shared trailer types, matching and ranking rules.
 
-The multi-provider trailer pipeline is intentionally independent from the main
-movie/episode player. It rejects YouTube in the native resolver, never upscales,
-and prefers real native Italian trailer media up to 2160p/4K UHD. Inside the
-Italian trailer pool, native resolution is the primary quality signal: 2160p,
-then 1440p, 1080p and finally 720p. Original-language media is considered only
-when no usable Italian candidate exists.
+The automatic trailer source is StreamingCommunity. Its title metadata points to
+YouTube trailer videos, which are accepted only for an exact, verified SC/TMDB
+match. Native MP4/HLS rules remain available for explicit/manual compatibility.
 """
 from __future__ import annotations
 
@@ -106,8 +103,9 @@ def language_rank(value: Optional[str]) -> int:
 
 
 def source_rank(value: Optional[str]) -> int:
-    """Prefer localized first-party providers after language and native quality."""
     source = str(value or "").strip().lower()
+    if source == "streamingcommunity":
+        return 5
     if source in {"apple_tv", "apple_itunes_it", "theryston_apple_tv"}:
         return 4
     if source in {"prime_video", "theryston_prime_video"}:
@@ -242,13 +240,20 @@ def duration_rank(candidate: TrailerCandidate) -> int:
 
 def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = False) -> bool:
     url = candidate.trailer_url or candidate.manifest_url
-    if not url or is_blocked_url(url):
+    if not url:
         return False
+
+    blocked = is_blocked_url(url)
+    sc_youtube = candidate.source == "streamingcommunity" and blocked
+    if blocked and not sc_youtube:
+        return False
+
     height = int(candidate.height or 0)
     if height > MAX_TRAILER_HEIGHT:
         return False
     if allow_manual:
         return True
+
     duration = _known_duration(candidate)
     if duration is not None and duration < MIN_KNOWN_TRAILER_DURATION_SECONDS:
         return False
@@ -256,6 +261,13 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
         return False
     if not candidate.verified:
         return False
+
+    # SC exposes the associated YouTube trailer rather than a native rendition,
+    # so native height/bitrate checks do not apply. Exact TMDB verification above
+    # is mandatory before this exception is reached.
+    if sc_youtube:
+        return bool(candidate.browser_compatible)
+
     if height < MIN_TRAILER_HEIGHT:
         return False
     if not candidate.browser_compatible and not candidate.requires_remux:
@@ -264,12 +276,7 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
 
 
 def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = False) -> tuple:
-    """Quality ordering inside the already-selected language/type tier.
-
-    Native resolution is deliberately first so a verified Italian 2160p
-    rendition beats an otherwise equivalent 1080p rendition from a provider
-    with a higher source rank. No upscaling is performed.
-    """
+    """Quality ordering inside the already-selected language/type tier."""
     height = int(candidate.height or 0)
     bitrate = int(candidate.bitrate or 0)
     is_hdr = bool(candidate.hdr or candidate.dolby_vision)
@@ -291,7 +298,6 @@ def candidate_sort_key(candidate: TrailerCandidate, *, hdr_supported: bool = Fal
 
 
 def _selection_tier(candidate: TrailerCandidate) -> int:
-    """Explicit product policy: Trailer IT > Teaser IT > Trailer EN > everything else."""
     lang = language_rank(candidate.audio_language)
     kind = type_rank(candidate.trailer_type)
     is_it = lang == 3
@@ -315,13 +321,6 @@ def _selection_tier(candidate: TrailerCandidate) -> int:
 
 
 def pick_best(candidates: list[TrailerCandidate], *, hdr_supported: bool = False) -> Optional[TrailerCandidate]:
-    """Pick the highest native-quality trailer with Italian as absolute priority.
-
-    Selection order is effectively:
-      2160p Italian -> 1440p Italian -> 1080p Italian -> 720p Italian.
-    If no usable Italian candidate exists, the same native-quality ordering is
-    applied to the existing original/English fallback pool.
-    """
     usable = [c for c in candidates if candidate_is_usable(c)]
     if not usable:
         return None

@@ -4,17 +4,16 @@ from .apple_tv import AppleTVTrailerProvider as _AppleTVTrailerProvider
 from .imdb import IMDbTrailerProvider
 from .prime_video import PrimeVideoTrailerProvider as _PrimeVideoTrailerProvider
 from .netflix import NetflixTrailerProvider as _NetflixTrailerProvider
+from .streamingcommunity import StreamingCommunityTrailerProvider
 from .theryston import TherystonTrailerProvider
 
 
 class _TherystonAugmentedProvider:
-    """Keep the native provider as fallback while bridging first-run discovery.
+    """Keep legacy native provider classes import-compatible.
 
-    The central service already keeps Theryston as its own provider for pages
-    persisted in providerPages. This wrapper only covers the missing first-run
-    case: if the native provider discovers a provider page during this request,
-    send that newly discovered page to Theryston immediately instead of waiting
-    for a later cache refresh.
+    The automatic resolver now uses StreamingCommunity only. These wrappers are
+    retained for admin/tests and older imports, but are no longer part of the
+    automatic trailer provider list.
     """
 
     name = "provider"
@@ -31,8 +30,6 @@ class _TherystonAugmentedProvider:
         existing_page = str(existing_pages.get(self.page_key) or "").strip()
         discovered_page = ""
 
-        # Existing pages are handled by the central Theryston provider already.
-        # Only bridge a provider page that appeared for the first time now.
         if not existing_page:
             for candidate in native_rows:
                 value = str(getattr(candidate, "provider_page", None) or "").strip()
@@ -48,9 +45,6 @@ class _TherystonAugmentedProvider:
             }
             theryston_rows = await self.theryston.discover(enriched_identity)
 
-        # Put the newly materialized local media first on exact ties. Native
-        # candidates remain available as fallback and still win when the normal
-        # language/quality ranking says they are objectively better.
         return [*theryston_rows, *native_rows]
 
 
@@ -79,6 +73,7 @@ class NetflixTrailerProvider(_TherystonAugmentedProvider):
 
 
 __all__ = [
+    "StreamingCommunityTrailerProvider",
     "AppleTVTrailerProvider",
     "IMDbTrailerProvider",
     "PrimeVideoTrailerProvider",
