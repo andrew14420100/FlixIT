@@ -327,8 +327,12 @@ class StreamingCommunityTrailerProvider:
 
                         self._working_base = base
                         trailer_rows = _trailer_rows(title, base)
+                        # A currently preferred SC domain may expose the title but
+                        # omit trailer metadata. Keep looking through the other
+                        # title results/domains instead of treating that as a final
+                        # "no trailer" answer for the whole SC network.
                         if not trailer_rows:
-                            return []
+                            continue
 
                         matched_year = _int_or_none(title.get("year") or title.get("release_year"))
                         candidates: list[TrailerCandidate] = []
