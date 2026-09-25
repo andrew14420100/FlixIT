@@ -39,6 +39,14 @@ def _install_trailer_registration_hook():
             notify,
         )
 
+        # YouTube is allowed only when an exact SC title publishes youtube_id.
+        # The policy does not search YouTube or accept arbitrary YouTube URLs.
+        try:
+            from services.trailers.sc_youtube_metadata_policy import install_sc_youtube_metadata_policy
+            install_sc_youtube_metadata_policy()
+        except Exception:
+            pass
+
         # Install quality/language enrichment before the resolver instance is
         # created. This affects trailer worker discovery only and never blocks
         # homepage/card rendering.
