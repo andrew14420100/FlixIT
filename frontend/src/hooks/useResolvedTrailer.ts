@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v19-native-only";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v20-vixcloud";
 const SC_SOURCE = "streamingcommunity";
 
 function isYouTubeHost(value: string) {
@@ -29,7 +29,6 @@ function directTrailerUrl(data: any) {
   const selected = data?.selected && typeof data.selected === "object" ? data.selected : data;
   const source = String(selected?.source || data?.source || "").trim().toLowerCase();
 
-  // Hard client-side guard: only StreamingCommunity may feed automatic trailers.
   if (source !== SC_SOURCE) return null;
 
   for (const value of [
@@ -44,7 +43,8 @@ function directTrailerUrl(data: any) {
     if (!text) continue;
     if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) continue;
 
-    // Never render YouTube, even when SC itself supplied the YouTube id/url.
+    // YouTube stays blocked. SC Vixcloud embeds and direct SC trailer media are
+    // both accepted and TrailerPlayer decides whether to use iframe or <video>.
     if (isYouTubeHost(text)) continue;
     return text;
   }
@@ -61,7 +61,7 @@ export function browserSupportsHdr() {
 }
 
 /** Shared public trailer cache for Hero, hover cards and Detail.
- * Automatic trailer policy: native, non-YouTube StreamingCommunity media only. */
+ * Automatic trailer policy: StreamingCommunity Vixcloud embed or direct media. */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
   const hdr = useMemo(() => browserSupportsHdr(), []);
