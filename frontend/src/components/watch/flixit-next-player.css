@@ -1,0 +1,338 @@
+/* FlixIT Next Player — detail-page visual language for WatchPage */
+
+[data-testid="watch-page"] {
+  --flix-red: #e50914;
+  --flix-bg: #070707;
+  --flix-panel: rgba(17,17,17,.88);
+  --flix-line: rgba(255,255,255,.12);
+  --flix-muted: rgba(255,255,255,.66);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(229,9,20,.07), transparent 34%),
+    linear-gradient(180deg, #070707 0%, #030303 100%) !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  padding: 74px 24px 36px !important;
+  box-sizing: border-box !important;
+}
+
+[data-testid="watch-page"] [data-testid="custom-video-player"] {
+  width: min(1480px, calc(100vw - 48px)) !important;
+  height: min(68vh, calc((100vw - 48px) * .5625)) !important;
+  min-height: 420px;
+  max-height: 760px;
+  margin: 0 auto !important;
+  border-radius: 18px !important;
+  overflow: visible !important;
+  background: #000 !important;
+  box-shadow: 0 28px 70px rgba(0,0,0,.48);
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+[data-testid="watch-page"] [data-testid="native-video"] {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 18px !important;
+  background: #000 !important;
+}
+
+/* Hide the original large top overlay and rebuild it as a compact detail-page header */
+[data-testid="watch-page"] [data-testid="player-title"] {
+  position: absolute !important;
+  top: 26px;
+  left: 76px;
+  max-width: 54vw;
+  font-size: clamp(17px, 1.45vw, 23px) !important;
+  font-weight: 700 !important;
+  letter-spacing: -.02em;
+  z-index: 13;
+  text-shadow: 0 2px 14px rgba(0,0,0,.85) !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-episode"] {
+  position: absolute !important;
+  top: 55px;
+  left: 76px;
+  z-index: 13;
+  color: rgba(255,255,255,.66) !important;
+  font-size: 13px !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-quality"] {
+  position: absolute !important;
+  right: 28px;
+  top: 26px;
+  border-radius: 7px !important;
+  padding: 6px 9px !important;
+  background: rgba(8,8,8,.42) !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+  backdrop-filter: blur(14px);
+}
+
+[data-testid="watch-page"] [data-testid="back-button"] {
+  position: absolute !important;
+  top: 20px !important;
+  left: 20px !important;
+  width: 42px !important;
+  height: 42px !important;
+  background: rgba(8,8,8,.42) !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  backdrop-filter: blur(14px);
+  z-index: 15;
+}
+
+/* Floating glass controller like the approved mockup */
+[data-testid="watch-page"] [data-testid="player-controls"] {
+  left: 24px !important;
+  right: 24px !important;
+  bottom: 18px !important;
+  width: auto !important;
+  padding: 12px 16px !important;
+  border-radius: 16px !important;
+  background: linear-gradient(180deg, rgba(22,22,22,.74), rgba(10,10,10,.88)) !important;
+  border: 1px solid rgba(255,255,255,.13) !important;
+  box-shadow: 0 14px 36px rgba(0,0,0,.42) !important;
+  backdrop-filter: blur(18px) saturate(125%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(125%) !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-controls"] > div:first-child {
+  gap: 14px !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-seekbar"] {
+  height: 3px !important;
+  padding: 10px 0 !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-seekbar"] .MuiSlider-rail {
+  background: rgba(255,255,255,.28) !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-seekbar"] .MuiSlider-track {
+  border: 0 !important;
+  background: linear-gradient(90deg, #ff1f2f, #e50914) !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-seekbar"] .MuiSlider-thumb {
+  width: 13px !important;
+  height: 13px !important;
+  box-shadow: 0 0 0 4px rgba(229,9,20,.14) !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-time"] {
+  min-width: 104px !important;
+  font-size: 13px !important;
+  color: rgba(255,255,255,.82) !important;
+}
+
+[data-testid="watch-page"] [data-testid="play-pause-button"],
+[data-testid="watch-page"] [data-testid="skip-back-button"],
+[data-testid="watch-page"] [data-testid="skip-forward-button"],
+[data-testid="watch-page"] [data-testid="mute-button"],
+[data-testid="watch-page"] [data-testid="audio-track-button"],
+[data-testid="watch-page"] [data-testid="next-episode-button"],
+[data-testid="watch-page"] [data-testid="fullscreen-button"] {
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 11px !important;
+  background: transparent !important;
+  transition: background .18s ease, transform .18s ease !important;
+}
+
+[data-testid="watch-page"] [data-testid="play-pause-button"] {
+  background: rgba(255,255,255,.08) !important;
+}
+
+[data-testid="watch-page"] [data-testid="play-pause-button"]:hover,
+[data-testid="watch-page"] [data-testid="skip-back-button"]:hover,
+[data-testid="watch-page"] [data-testid="skip-forward-button"]:hover,
+[data-testid="watch-page"] [data-testid="mute-button"]:hover,
+[data-testid="watch-page"] [data-testid="audio-track-button"]:hover,
+[data-testid="watch-page"] [data-testid="next-episode-button"]:hover,
+[data-testid="watch-page"] [data-testid="fullscreen-button"]:hover {
+  background: rgba(255,255,255,.11) !important;
+  transform: translateY(-1px) !important;
+}
+
+[data-testid="watch-page"] [data-testid="quality-selector-bar"] {
+  max-width: 290px !important;
+  gap: 6px !important;
+}
+
+[data-testid="watch-page"] [data-testid^="quality-option-"] {
+  border-radius: 8px !important;
+  height: 30px !important;
+  min-width: 46px !important;
+  font-size: 10px !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-center-play"] > div {
+  width: 74px !important;
+  height: 74px !important;
+  border: 1px solid rgba(255,255,255,.28) !important;
+  background: rgba(10,10,10,.42) !important;
+  backdrop-filter: blur(16px) !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,.30);
+}
+
+[data-testid="watch-page"] [data-testid="player-center-play"] svg {
+  font-size: 46px !important;
+}
+
+[data-testid="watch-page"] [data-testid="player-buffering"] {
+  border-radius: 18px;
+  background: rgba(0,0,0,.16);
+}
+
+[data-testid="watch-page"] [data-testid="player-fatal-error"] {
+  border-radius: 18px;
+}
+
+/* Give the page the same visual breathing room as DetailPage */
+[data-testid="watch-page"] [data-testid="custom-video-player"]::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: calc(100% + 1px);
+  height: 150px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(17,17,17,.96), rgba(7,7,7,0));
+  border-radius: 0 0 22px 22px;
+  z-index: -1;
+}
+
+/* Mobile: approved compact phone layout — video first, controls inside it, no clutter */
+@media (max-width: 700px) {
+  [data-testid="watch-page"] {
+    padding: 0 0 28px !important;
+    min-height: 100dvh !important;
+    height: 100dvh !important;
+    background: #050505 !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="custom-video-player"] {
+    width: 100vw !important;
+    height: min(56vh, 480px) !important;
+    min-height: 330px !important;
+    max-height: none !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 0 22px 22px !important;
+    box-shadow: 0 18px 40px rgba(0,0,0,.42) !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="native-video"] {
+    object-fit: cover !important;
+    border-radius: 0 0 22px 22px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-title"] {
+    top: 18px !important;
+    left: 62px !important;
+    right: 70px !important;
+    max-width: none !important;
+    font-size: 16px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-episode"] {
+    top: 43px !important;
+    left: 62px !important;
+    right: 70px !important;
+    font-size: 11px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="back-button"] {
+    top: 13px !important;
+    left: 12px !important;
+    width: 38px !important;
+    height: 38px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-quality"] {
+    top: 16px !important;
+    right: 14px !important;
+    font-size: 9px !important;
+    padding: 5px 7px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-controls"] {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 12px !important;
+    padding: 10px 10px 8px !important;
+    border-radius: 15px !important;
+    background: rgba(14,14,14,.73) !important;
+    backdrop-filter: blur(16px) saturate(125%) !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-controls"] > div:first-child {
+    display: grid !important;
+    grid-template-columns: 1fr auto !important;
+    gap: 8px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-time"] {
+    min-width: 82px !important;
+    font-size: 11px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-controls"] > div:nth-child(2) {
+    margin-top: 2px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="play-pause-button"],
+  [data-testid="watch-page"] [data-testid="skip-back-button"],
+  [data-testid="watch-page"] [data-testid="skip-forward-button"],
+  [data-testid="watch-page"] [data-testid="mute-button"],
+  [data-testid="watch-page"] [data-testid="audio-track-button"],
+  [data-testid="watch-page"] [data-testid="next-episode-button"],
+  [data-testid="watch-page"] [data-testid="fullscreen-button"] {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="skip-forward-button"] {
+    display: none !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="quality-selector-bar"] {
+    display: none !important;
+  }
+
+  [data-testid="watch-page"] .vol-slider {
+    display: none !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-center-play"] > div {
+    width: 66px !important;
+    height: 66px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="custom-video-player"]::after {
+    height: 92px;
+    border-radius: 0 0 24px 24px;
+  }
+}
+
+@media (max-width: 420px) {
+  [data-testid="watch-page"] [data-testid="custom-video-player"] {
+    height: 52vh !important;
+    min-height: 310px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-title"] {
+    font-size: 14px !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-episode"] {
+    display: none !important;
+  }
+
+  [data-testid="watch-page"] [data-testid="player-controls"] {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 8px !important;
+  }
+}
