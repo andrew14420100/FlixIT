@@ -1,9 +1,10 @@
-"""StreamingCommunity trailer metadata provider.
+"""StreamingCommunity native trailer metadata provider.
 
 This provider intentionally reads only public title/search metadata used to locate
 the trailer associated with a title. It never requests movie/episode playback
 sources. A candidate is accepted only after the SC title page TMDB id exactly
-matches the FLIX-IT identity.
+matches the FLIX-IT identity and SC exposes a direct non-YouTube trailer media
+URL (for example MP4/HLS or an explicitly named trailer/preview URL).
 """
 from __future__ import annotations
 
@@ -12,9 +13,9 @@ import json
 import os
 import re
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
-from ..base import TrailerCandidate
+from ..base import TrailerCandidate, is_blocked_url
 from .common import client
 
 
@@ -60,30 +61,6 @@ def _inertia_page(document: str) -> Optional[dict]:
         return None
 
 
-def _youtube_id(value: Any) -> Optional[str]:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if re.fullmatch(r"[A-Za-z0-9_-]{6,20}", text):
-        return text
-    try:
-        parsed = urlparse(text)
-    except Exception:
-        return None
-    host = (parsed.hostname or "").lower()
-    path = parsed.path.strip("/")
-    candidate = None
-    if host == "youtu.be" or host.endswith(".youtu.be"):
-        candidate = path.split("/", 1)[0]
-    elif host == "youtube.com" or host.endswith(".youtube.com") or host.endswith(".youtube-nocookie.com"):
-        if path == "watch":
-            match = re.search(r"(?:^|&)v=([^&]+)", parsed.query)
-            candidate = match.group(1) if match else None
-        elif path.startswith(("embed/", "shorts/", "live/")):
-            candidate = path.split("/", 1)[1].split("/", 1)[0]
-    return candidate if candidate and re.fullmatch(r"[A-Za-z0-9_-]{6,20}", candidate) else None
-
-
 def _search_rows(payload: Any) -> list[dict]:
     if not isinstance(payload, dict):
         return []
@@ -119,22 +96,77 @@ def _title_payload(page: dict) -> dict:
     return title if isinstance(title, dict) else {}
 
 
-def _trailer_row(title: dict) -> tuple[Optional[dict], Optional[str]]:
+def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]:
+    """Return only direct, non-YouTube media that is clearly trailer/preview data.
+
+    This deliberately rejects generic watch/embed/iframe URLs so the trailer
+    resolver can never drift into movie/episode playback extraction.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    if text.startswith("/"):
+        if not base:
+            return None
+        text = urljoin(f"{base.rstrip('/')}/", text)
+    if not re.match(r"^https?://", text, re.I):
+        return None
+    if is_blocked_url(text):
+        return None
+
+    try:
+        parsed = urlparse(text)
+    except Exception:
+        return None
+    path = (parsed.path or "").lower()
+    query = (parsed.query or "").lower()
+
+    # Never treat title/movie playback pages as trailers.
+    if any(marker in path for marker in ("/watch/", "/iframe/", "/embed/")):
+        return None
+
+    direct_media = bool(re.search(r"\.(?:m3u8|mp4|webm|mov|m4v)(?:$|[?#])", text, re.I))
+    explicit_trailer = any(marker in path for marker in ("/trailer/", "/trailers/", "/preview/", "/previews/"))
+    explicit_query = any(marker in query for marker in ("trailer=", "preview="))
+    return text if (direct_media or explicit_trailer or explicit_query) else None
+
+
+def _trailer_row(title: dict, base: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
     trailers = title.get("trailers") or []
     if isinstance(trailers, dict):
         trailers = [trailers]
+
+    fields = (
+        "url",
+        "src",
+        "video_url",
+        "videoUrl",
+        "manifest_url",
+        "manifestUrl",
+        "mp4_url",
+        "mp4Url",
+        "hls_url",
+        "hlsUrl",
+        "file",
+        "file_url",
+        "fileUrl",
+    )
     if isinstance(trailers, list):
         for row in trailers:
             if not isinstance(row, dict):
                 continue
-            youtube_id = _youtube_id(row.get("youtube_id") or row.get("youtubeId") or row.get("url"))
-            if youtube_id:
-                return row, youtube_id
+            for key in fields:
+                native_url = _native_trailer_url(row.get(key), base)
+                if native_url:
+                    return row, native_url
 
-    for key in ("trailerUrl", "trailer_url", "trailer"):
-        youtube_id = _youtube_id(title.get(key))
-        if youtube_id:
-            return {}, youtube_id
+    # Only trailer-specific title fields are considered. SC's current
+    # ``trailerUrl`` is normally YouTube and is therefore rejected here.
+    for key in ("trailerUrl", "trailer_url", "trailer", "preview_video_url", "previewVideoUrl"):
+        native_url = _native_trailer_url(title.get(key), base)
+        if native_url:
+            return {}, native_url
     return None, None
 
 
@@ -209,8 +241,8 @@ class StreamingCommunityTrailerProvider:
                         if _int_or_none(title.get("tmdb_id") or title.get("tmdbId")) != expected_tmdb:
                             continue
 
-                        trailer, youtube_id = _trailer_row(title)
-                        if not youtube_id:
+                        trailer, native_url = _trailer_row(title, base)
+                        if not native_url:
                             self._working_base = base
                             return []
 
@@ -218,11 +250,13 @@ class StreamingCommunityTrailerProvider:
                         trailer = trailer or {}
                         language = str(trailer.get("language") or trailer.get("locale") or "").strip() or None
                         matched_year = _int_or_none(title.get("year") or title.get("release_year"))
+                        is_hls = bool(re.search(r"\.m3u8(?:$|[?#])", native_url, re.I))
                         return [
                             TrailerCandidate(
                                 source=self.name,
-                                trailer_url=f"https://www.youtube.com/watch?v={youtube_id}",
-                                provider_id=youtube_id,
+                                trailer_url=None if is_hls else native_url,
+                                manifest_url=native_url if is_hls else None,
+                                provider_id=str(trailer.get("id") or native_url),
                                 provider_page=provider_page,
                                 matched_title=str(title.get("name") or title.get("title") or identity.get("title") or "").strip() or None,
                                 matched_year=matched_year,
@@ -234,13 +268,13 @@ class StreamingCommunityTrailerProvider:
                                 confidence=1.0,
                                 verified=True,
                                 browser_compatible=True,
-                                compatibility="youtube-embed",
+                                compatibility="native-hls" if is_hls else "native-video",
                                 metadata={
                                     "sc_title_id": title.get("id"),
                                     "sc_slug": title.get("slug"),
                                     "sc_base_url": base,
-                                    "youtube_id": youtube_id,
                                     "tmdb_match": "exact",
+                                    "native_sc_trailer": True,
                                 },
                             )
                         ]
