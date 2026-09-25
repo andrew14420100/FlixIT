@@ -28,9 +28,11 @@ from typing import Optional
 from .base import TrailerCandidate, is_english_language, is_italian_language
 from .manifest import inspect_hls, probe_direct_file
 from .providers.common import client
+from .providers import streamingcommunity as sc_provider
 from .providers.streamingcommunity import StreamingCommunityTrailerProvider, _is_vixcloud_embed
 
 POLICY_VERSION = "streamingcommunity-italian-native-4k-v2-nonblocking"
+CURRENT_SC_BASE = "https://streamingunity-premium.to"
 _INSTALLED = False
 _DIRECT_FILE_RE = re.compile(r"\.(?:mp4|webm|mov|m4v)(?:$|[?#])", re.I)
 _HLS_RE = re.compile(r"\.m3u8(?:$|[?#])", re.I)
@@ -157,9 +159,20 @@ async def _enrich_candidate(http, candidate: TrailerCandidate) -> list[TrailerCa
     return [] if _explicit_english_only(candidate) else [candidate]
 
 
+def _install_current_sc_base() -> None:
+    """Prefer the currently observed SC/StreamingUnity host for trailer metadata."""
+    try:
+        bases = tuple(getattr(sc_provider, "DEFAULT_BASE_URLS", ()) or ())
+        if CURRENT_SC_BASE not in bases:
+            sc_provider.DEFAULT_BASE_URLS = (CURRENT_SC_BASE, *bases)
+    except Exception:
+        pass
+
+
 def install_italian_4k_trailer_policy() -> bool:
     """Patch SC discovery so workers enrich native trailer quality/audio."""
     global _INSTALLED
+    _install_current_sc_base()
     if _INSTALLED:
         return True
 
@@ -189,9 +202,6 @@ def install_italian_4k_trailer_policy() -> bool:
                 continue
             out.extend(group)
 
-        # Never let a quality-inspection failure erase every otherwise valid SC
-        # trailer. Preserve the original non-English-explicit candidate as a
-        # fallback if enrichment produced nothing.
         if not out:
             out = [row for row in rows if not _explicit_english_only(row)]
 
