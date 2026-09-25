@@ -17,7 +17,7 @@ const HOME_QUERY_KEY = ["home-bootstrap-v7-progressive"];
 const HOME_CACHE_KEY = "flix-home-bootstrap-v7-progressive";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
-const FIRST_PAINT_ROWS = 8;
+const FIRST_PAINT_ROWS = 6;
 const FIRST_PAINT_ITEMS_PER_ROW = 18;
 const ROW_REVEAL_CHUNK = 4;
 
@@ -254,8 +254,8 @@ export function Component() {
     initialDataUpdatedAt: initialCache?.savedAt || 0,
     staleTime: HOME_STALE_MS,
     gcTime: HOME_GC_MS,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     retry: 1,
   });
@@ -272,7 +272,7 @@ export function Component() {
     const controller = new AbortController();
 
     const hydrate = () => {
-      if (cancelled) return;
+      if (cancelled || document.visibilityState === "hidden") return;
       fetchFullHomeBootstrap(controller.signal)
         .then((full) => {
           if (!cancelled && full?.rows?.length) {
@@ -284,9 +284,9 @@ export function Component() {
     };
 
     if ("requestIdleCallback" in window) {
-      idleId = (window as any).requestIdleCallback(hydrate, { timeout: 3000 });
+      idleId = (window as any).requestIdleCallback(hydrate, { timeout: 7000 });
     } else {
-      timer = window.setTimeout(hydrate, 1500);
+      timer = window.setTimeout(hydrate, 4000);
     }
 
     return () => {
@@ -333,8 +333,9 @@ export function Component() {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         setVisibleRowCount((current) => Math.min(rows.length, current + ROW_REVEAL_CHUNK));
       },
-      // Start mounting the next four rails well before the user reaches them.
-      { rootMargin: "1400px 0px 1400px 0px" }
+      // Mount the next rails before they enter view, without keeping a very large
+      // off-screen DOM/network buffer alive on slower devices.
+      { rootMargin: "900px 0px 900px 0px" }
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
