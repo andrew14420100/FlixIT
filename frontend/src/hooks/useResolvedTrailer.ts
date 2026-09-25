@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v23-sc-youtube-metadata";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v24-immediate-resolve";
 const SC_SOURCE = "streamingcommunity";
 const SC_YOUTUBE_PREFIX = "/__sc-youtube/";
 
