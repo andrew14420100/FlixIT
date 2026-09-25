@@ -1,6 +1,7 @@
 """FastAPI integration for the StreamingCommunity trailer resolver."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -14,7 +15,7 @@ from .queue_policy import install_queue_policy
 
 logger = logging.getLogger(__name__)
 SC_SOURCE = "streamingcommunity"
-SC_POLICY = "streamingcommunity-vixcloud-or-direct"
+SC_POLICY = "streamingcommunity-vixcloud-direct-or-youtube-metadata"
 
 
 class ManualTrailerBody(BaseModel):
@@ -57,8 +58,9 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "source": SC_SOURCE,
             "source_policy": SC_POLICY,
             "catalog_import": "all",
-            "playback": "vixcloud-embed-or-direct",
-            "youtube_enabled": False,
+            "playback": "vixcloud-embed-direct-or-sc-youtube-metadata",
+            "youtube_enabled": True,
+            "youtube_policy": "only-explicit-streamingcommunity-youtube-id",
             "tmdb_match_required": True,
             "legacy_fallback": False,
             "manual_override": False,
@@ -68,20 +70,15 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     async def public_trailer_config():
         return quality_config()
 
-    @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
-    async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
-        result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
+    def public_payload(result: dict, *, attempted_now: bool = False) -> dict:
         selected = result.get("selected") or {}
         selected_url = selected.get("trailer_url") or selected.get("manifest_url")
         selected_source = str(selected.get("source") or result.get("source") or "").strip().lower()
         selected_meta = selected.get("metadata") or {}
+        is_native = selected_meta.get("native_sc_trailer") is True
+        is_sc_youtube = bool(selected_meta.get("sc_youtube_metadata"))
 
-        if (
-            result.get("available")
-            and selected_url
-            and selected_source == SC_SOURCE
-            and selected_meta.get("native_sc_trailer") is True
-        ):
+        if result.get("available") and selected_url and selected_source == SC_SOURCE and is_native:
             return {
                 "trailer_key": selected_url,
                 "trailer_url": selected_url,
@@ -100,8 +97,10 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "tmdb_match": selected_meta.get("tmdb_match"),
                 "native_sc_trailer": True,
                 "vixcloud_embed": bool(selected_meta.get("sc_vixcloud_embed")),
-                "youtube": False,
+                "youtube": is_sc_youtube,
+                "youtube_from_sc_metadata": is_sc_youtube,
                 "language": selected.get("audio_language") or selected.get("language"),
+                "attempted_now": attempted_now,
             }
 
         return {
@@ -123,7 +122,39 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "native_sc_trailer": False,
             "vixcloud_embed": False,
             "youtube": False,
+            "youtube_from_sc_metadata": False,
+            "attempted_now": attempted_now,
         }
+
+    @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
+    async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
+        """Return the requested trailer without making the detail page wait for the bulk queue.
+
+        The first cache lookup remains instant. If that title has no usable cached
+        trailer, resolve this single title immediately with a bounded timeout.
+        This path still accepts only exact-TMDB StreamingCommunity candidates;
+        YouTube is accepted only when SC itself publishes youtube_id metadata.
+        """
+        result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
+        if result.get("available"):
+            return public_payload(result, attempted_now=False)
+
+        attempted_now = True
+        try:
+            await asyncio.wait_for(
+                resolver.resolve(media_type, tmdb_id, force=True),
+                timeout=12.0,
+            )
+        except asyncio.TimeoutError:
+            # Keep a priority-zero background retry, but do not hold the page
+            # indefinitely when an SC host is temporarily slow.
+            resolver.enqueue(media_type, tmdb_id, priority=0, reason="interactive_trailer_timeout")
+        except Exception as exc:
+            logger.warning("Immediate SC trailer resolve failed for %s:%s: %s", media_type, tmdb_id, exc)
+            resolver.enqueue(media_type, tmdb_id, priority=0, reason="interactive_trailer_retry")
+
+        result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
+        return public_payload(result, attempted_now=attempted_now)
 
     @router.get("/api/public/trailer-file/{cache_key}")
     async def trailer_file(cache_key: str):
@@ -172,7 +203,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     @router.delete("/api/admin/trailers/{media_type}/{tmdb_id}/manual")
     async def admin_reset_manual_trailer(media_type: str, tmdb_id: int, admin=Depends(get_current_admin)):
         doc = resolver.reset_manual(media_type, tmdb_id)
-        resolver.enqueue(media_type, tmdb_id, priority=1, reason="manual_reset_sc_only")
+        resolver.enqueue(media_type, tmdb_id, priority=0, reason="manual_reset_sc_only")
         log_admin_action("RESET_MANUAL_TRAILER", str(tmdb_id), {"media_type": media_type})
         return doc
 
