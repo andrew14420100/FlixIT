@@ -1,48 +1,45 @@
-/* FlixIT Next Player — detail-page visual language for WatchPage */
+/* FlixIT Next Player — full-bleed WatchPage */
 
 [data-testid="watch-page"] {
   --flix-red: #e50914;
-  --flix-bg: #070707;
-  --flix-panel: rgba(17,17,17,.88);
-  --flix-line: rgba(255,255,255,.12);
-  --flix-muted: rgba(255,255,255,.66);
-  background:
-    radial-gradient(circle at 50% 0%, rgba(229,9,20,.07), transparent 34%),
-    linear-gradient(180deg, #070707 0%, #030303 100%) !important;
+  --flix-bg: #030303;
+  background: #030303 !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;
-  padding: 74px 24px 36px !important;
+  padding: 0 !important;
   box-sizing: border-box !important;
 }
 
+/* The video is the page hero: no centered card, no max-width, no side gutters. */
 [data-testid="watch-page"] [data-testid="custom-video-player"] {
-  width: min(1480px, calc(100vw - 48px)) !important;
-  height: min(68vh, calc((100vw - 48px) * .5625)) !important;
-  min-height: 420px;
-  max-height: 760px;
-  margin: 0 auto !important;
-  border-radius: 18px !important;
-  overflow: visible !important;
+  position: relative !important;
+  width: 100vw !important;
+  max-width: none !important;
+  height: min(72vh, 820px) !important;
+  min-height: 560px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
   background: #000 !important;
-  box-shadow: 0 28px 70px rgba(0,0,0,.48);
-  border: 1px solid rgba(255,255,255,.08);
+  box-shadow: none !important;
 }
 
 [data-testid="watch-page"] [data-testid="native-video"] {
   width: 100% !important;
   height: 100% !important;
   object-fit: cover !important;
-  border-radius: 18px !important;
+  object-position: center center !important;
+  border-radius: 0 !important;
   background: #000 !important;
 }
 
-/* Hide the original large top overlay and rebuild it as a compact detail-page header */
 [data-testid="watch-page"] [data-testid="player-title"] {
   position: absolute !important;
-  top: 26px;
-  left: 76px;
-  max-width: 54vw;
-  font-size: clamp(17px, 1.45vw, 23px) !important;
+  top: 30px !important;
+  left: 82px !important;
+  max-width: 58vw !important;
+  font-size: clamp(18px, 1.45vw, 24px) !important;
   font-weight: 700 !important;
   letter-spacing: -.02em;
   z-index: 13;
@@ -51,17 +48,17 @@
 
 [data-testid="watch-page"] [data-testid="player-episode"] {
   position: absolute !important;
-  top: 55px;
-  left: 76px;
+  top: 60px !important;
+  left: 82px !important;
   z-index: 13;
-  color: rgba(255,255,255,.66) !important;
+  color: rgba(255,255,255,.68) !important;
   font-size: 13px !important;
 }
 
 [data-testid="watch-page"] [data-testid="player-quality"] {
   position: absolute !important;
-  right: 28px;
-  top: 26px;
+  right: 36px !important;
+  top: 30px !important;
   border-radius: 7px !important;
   padding: 6px 9px !important;
   background: rgba(8,8,8,.42) !important;
@@ -71,25 +68,25 @@
 
 [data-testid="watch-page"] [data-testid="back-button"] {
   position: absolute !important;
-  top: 20px !important;
-  left: 20px !important;
-  width: 42px !important;
-  height: 42px !important;
-  background: rgba(8,8,8,.42) !important;
+  top: 24px !important;
+  left: 24px !important;
+  width: 44px !important;
+  height: 44px !important;
+  background: rgba(8,8,8,.45) !important;
   border: 1px solid rgba(255,255,255,.12) !important;
   backdrop-filter: blur(14px);
   z-index: 15;
 }
 
-/* Floating glass controller like the approved mockup */
+/* Floating controller over the full-bleed video. */
 [data-testid="watch-page"] [data-testid="player-controls"] {
-  left: 24px !important;
-  right: 24px !important;
+  left: 4vw !important;
+  right: 4vw !important;
   bottom: 18px !important;
   width: auto !important;
   padding: 12px 16px !important;
   border-radius: 16px !important;
-  background: linear-gradient(180deg, rgba(22,22,22,.74), rgba(10,10,10,.88)) !important;
+  background: linear-gradient(180deg, rgba(22,22,22,.72), rgba(10,10,10,.88)) !important;
   border: 1px solid rgba(255,255,255,.13) !important;
   box-shadow: 0 14px 36px rgba(0,0,0,.42) !important;
   backdrop-filter: blur(18px) saturate(125%) !important;
@@ -180,52 +177,48 @@
   font-size: 46px !important;
 }
 
-[data-testid="watch-page"] [data-testid="player-buffering"] {
-  border-radius: 18px;
-  background: rgba(0,0,0,.16);
-}
-
+[data-testid="watch-page"] [data-testid="player-buffering"],
 [data-testid="watch-page"] [data-testid="player-fatal-error"] {
-  border-radius: 18px;
+  border-radius: 0 !important;
 }
 
-/* Give the page the same visual breathing room as DetailPage */
 [data-testid="watch-page"] [data-testid="custom-video-player"]::after {
-  content: "";
-  position: absolute;
-  left: -1px;
-  right: -1px;
-  top: calc(100% + 1px);
-  height: 150px;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(17,17,17,.96), rgba(7,7,7,0));
-  border-radius: 0 0 22px 22px;
-  z-index: -1;
+  display: none !important;
 }
 
-/* Mobile: approved compact phone layout — video first, controls inside it, no clutter */
+@media (max-width: 900px) {
+  [data-testid="watch-page"] [data-testid="custom-video-player"] {
+    height: 62vh !important;
+    min-height: 460px !important;
+  }
+}
+
+/* Mobile: full-screen player with letterbox and safe-area controls. */
 @media (max-width: 700px) {
   [data-testid="watch-page"] {
-    padding: 0 0 28px !important;
+    padding: 0 !important;
     min-height: 100dvh !important;
     height: 100dvh !important;
-    background: #050505 !important;
+    overflow: hidden !important;
+    background: #000 !important;
   }
 
   [data-testid="watch-page"] [data-testid="custom-video-player"] {
     width: 100vw !important;
-    height: min(56vh, 480px) !important;
-    min-height: 330px !important;
-    max-height: none !important;
+    max-width: none !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
     margin: 0 !important;
     border: 0 !important;
-    border-radius: 0 0 22px 22px !important;
-    box-shadow: 0 18px 40px rgba(0,0,0,.42) !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
 
   [data-testid="watch-page"] [data-testid="native-video"] {
-    object-fit: cover !important;
-    border-radius: 0 0 22px 22px !important;
+    object-fit: contain !important;
+    object-position: center center !important;
+    border-radius: 0 !important;
   }
 
   [data-testid="watch-page"] [data-testid="player-title"] {
@@ -260,7 +253,7 @@
   [data-testid="watch-page"] [data-testid="player-controls"] {
     left: 12px !important;
     right: 12px !important;
-    bottom: 12px !important;
+    bottom: max(10px, env(safe-area-inset-bottom)) !important;
     padding: 10px 10px 8px !important;
     border-radius: 15px !important;
     background: rgba(14,14,14,.73) !important;
@@ -278,10 +271,6 @@
     font-size: 11px !important;
   }
 
-  [data-testid="watch-page"] [data-testid="player-controls"] > div:nth-child(2) {
-    margin-top: 2px !important;
-  }
-
   [data-testid="watch-page"] [data-testid="play-pause-button"],
   [data-testid="watch-page"] [data-testid="skip-back-button"],
   [data-testid="watch-page"] [data-testid="skip-forward-button"],
@@ -293,46 +282,9 @@
     height: 36px !important;
   }
 
-  [data-testid="watch-page"] [data-testid="skip-forward-button"] {
-    display: none !important;
-  }
-
-  [data-testid="watch-page"] [data-testid="quality-selector-bar"] {
-    display: none !important;
-  }
-
+  [data-testid="watch-page"] [data-testid="skip-forward-button"],
+  [data-testid="watch-page"] [data-testid="quality-selector-bar"],
   [data-testid="watch-page"] .vol-slider {
     display: none !important;
-  }
-
-  [data-testid="watch-page"] [data-testid="player-center-play"] > div {
-    width: 66px !important;
-    height: 66px !important;
-  }
-
-  [data-testid="watch-page"] [data-testid="custom-video-player"]::after {
-    height: 92px;
-    border-radius: 0 0 24px 24px;
-  }
-}
-
-@media (max-width: 420px) {
-  [data-testid="watch-page"] [data-testid="custom-video-player"] {
-    height: 52vh !important;
-    min-height: 310px !important;
-  }
-
-  [data-testid="watch-page"] [data-testid="player-title"] {
-    font-size: 14px !important;
-  }
-
-  [data-testid="watch-page"] [data-testid="player-episode"] {
-    display: none !important;
-  }
-
-  [data-testid="watch-page"] [data-testid="player-controls"] {
-    left: 8px !important;
-    right: 8px !important;
-    bottom: 8px !important;
   }
 }
