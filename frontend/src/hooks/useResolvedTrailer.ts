@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v25-catalog-first";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v26-low-poll";
 const SC_SOURCE = "streamingcommunity";
 const SC_YOUTUBE_PREFIX = "/__sc-youtube/";
 
@@ -93,7 +93,12 @@ export function browserSupportsHdr() {
 
 /** Shared public trailer cache for Hero, hover cards and Detail.
  * Automatic trailer policy: SC Vixcloud/direct media, plus YouTube only when SC
- * explicitly publishes youtube_id for the exact matched title. */
+ * explicitly publishes youtube_id for the exact matched title.
+ *
+ * Performance policy: absence of a trailer is a stable result unless the backend
+ * explicitly reports refresh_pending. This prevents the Home Hero from polling
+ * an expensive resolver every few seconds for almost a minute.
+ */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
   const hdr = useMemo(() => browserSupportsHdr(), []);
@@ -120,9 +125,11 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       if (!enabled || data?.enabled === false) return false;
       if (candidate && data?.available !== false && data?.refresh_pending !== true) return false;
 
+      // Only poll when the backend explicitly says that useful work is still in
+      // progress. A plain miss must not keep hammering the resolver in the Home.
+      if (data?.refresh_pending !== true) return false;
       const updates = Number(query?.state?.dataUpdateCount || 0);
-      if (!candidate) return updates < 12 ? 4000 : false;
-      return data?.refresh_pending === true && updates < 8 ? 5000 : false;
+      return updates < 4 ? 8000 : false;
     },
     refetchIntervalInBackground: false,
   });
