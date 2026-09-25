@@ -126,17 +126,77 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "attempted_now": attempted_now,
         }
 
+    async def resolve_visible_fast(media_type: str, tmdb_id: int) -> Optional[dict]:
+        """Discover one visible title without waiting for the background lock.
+
+        Only a positive, usable StreamingCommunity trailer is persisted. A fast
+        miss never writes an empty resolution and therefore cannot hide a trailer
+        while the complete background scan is still running.
+        """
+        from . import queue_policy as queue_policy_module
+        from . import resolver as resolver_module
+        from .fast_sc_discovery import begin_interactive_fast_only, end_interactive_fast_only
+
+        normalized_type = "tv" if media_type == "tv" else "movie"
+        normalized_id = int(tmdb_id)
+        identity = await resolver.identity(normalized_type, normalized_id)
+        if not identity:
+            return None
+
+        provider = resolver.providers[0]
+        token = begin_interactive_fast_only()
+        try:
+            candidates = await provider.discover(identity)
+        finally:
+            end_interactive_fast_only(token)
+
+        ready = []
+        for candidate in candidates or []:
+            if candidate.source != SC_SOURCE:
+                continue
+            if not resolver_module.candidate_is_usable(candidate):
+                continue
+            candidate.expires_at = resolver._expires(candidate)
+            ready.append(candidate)
+
+        deduped = {candidate.candidate_id: candidate for candidate in ready}
+        ready = list(deduped.values())
+        best = resolver_module.pick_best(ready, hdr_supported=False)
+        if not best:
+            return None
+
+        now = resolver_module._now()
+        provider_pages = {SC_SOURCE: best.provider_page} if best.provider_page else {}
+        doc = {
+            "type": normalized_type,
+            "tmdbId": normalized_id,
+            "title": identity.get("title"),
+            "originalTitle": identity.get("original_title"),
+            "year": identity.get("year"),
+            "externalIds": identity.get("external_ids") or {},
+            "providerPages": provider_pages,
+            "selected": best.to_dict(),
+            "alternatives": [row.to_dict() for row in ready],
+            "resolvedAt": now.isoformat(),
+            "metadataExpiresAt": (now + resolver.metadata_ttl()).isoformat(),
+            "lastError": None,
+            "sourcePolicy": "streamingcommunity-vixcloud-or-direct",
+            "minimumResolution": None,
+            "youtubeRejected": False,
+            "policyVersion": queue_policy_module.TRAILER_POLICY_VERSION,
+            "scNativeCheckedAt": now.isoformat(),
+            "scNativeTrailerCount": len(ready),
+        }
+        resolver.results.update_one(
+            {"type": normalized_type, "tmdbId": normalized_id},
+            {"$set": doc, "$unset": {"manual": ""}},
+            upsert=True,
+        )
+        return doc
+
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
     async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
-        """Resolve one visible title quickly without entering the slow catalog scan.
-
-        The first cache lookup remains instant. On a miss, the request uses only
-        the bounded parallel SC metadata pass. If that pass finds a trailer, the
-        normal resolver persists the positive result. If it misses or times out,
-        the previous cache document is restored and a priority-zero background
-        job performs the complete multi-host scan. Therefore an interactive miss
-        is never persisted as proof that StreamingCommunity has no trailer.
-        """
+        """Return a visible trailer quickly and leave exhaustive work to workers."""
         result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
         if result.get("available"):
             payload = public_payload(result, attempted_now=False)
@@ -144,48 +204,16 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             return payload
 
         normalized_type = "tv" if media_type == "tv" else "movie"
-        key = {"type": normalized_type, "tmdbId": int(tmdb_id)}
-        previous = resolver.results.find_one(key, {"_id": 0})
-
-        def restore_previous_resolution() -> None:
-            try:
-                if previous:
-                    resolver.results.replace_one(key, previous, upsert=True)
-                else:
-                    resolver.results.delete_one(key)
-            except Exception as exc:
-                logger.warning(
-                    "Could not restore trailer cache after interactive miss for %s:%s: %s",
-                    normalized_type,
-                    tmdb_id,
-                    exc,
-                )
-
         attempted_now = True
         interactive_lookup = "fast-miss"
-        token = None
         try:
-            from .fast_sc_discovery import begin_interactive_fast_only, end_interactive_fast_only
-
-            token = begin_interactive_fast_only()
-            try:
-                resolved_doc = await asyncio.wait_for(
-                    resolver.resolve(normalized_type, tmdb_id, force=True),
-                    timeout=11.0,
-                )
-            finally:
-                if token is not None:
-                    end_interactive_fast_only(token)
-                    token = None
-
-            selected = (resolved_doc or {}).get("selected") or {}
-            if selected.get("source") == SC_SOURCE:
+            fast_doc = await asyncio.wait_for(
+                resolve_visible_fast(normalized_type, tmdb_id),
+                timeout=11.0,
+            )
+            if fast_doc and (fast_doc.get("selected") or {}).get("source") == SC_SOURCE:
                 interactive_lookup = "fast-hit"
             else:
-                # resolver.resolve writes a normal negative document when a
-                # provider returns no candidates. That is correct for a complete
-                # background pass, but not for this bounded interactive pass.
-                restore_previous_resolution()
                 resolver.enqueue(
                     normalized_type,
                     tmdb_id,
@@ -193,14 +221,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                     reason="interactive_fast_miss_full_scan",
                 )
         except asyncio.TimeoutError:
-            if token is not None:
-                try:
-                    from .fast_sc_discovery import end_interactive_fast_only
-                    end_interactive_fast_only(token)
-                except Exception:
-                    pass
             interactive_lookup = "fast-timeout"
-            restore_previous_resolution()
             resolver.enqueue(
                 normalized_type,
                 tmdb_id,
@@ -208,14 +229,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 reason="interactive_fast_timeout_full_scan",
             )
         except Exception as exc:
-            if token is not None:
-                try:
-                    from .fast_sc_discovery import end_interactive_fast_only
-                    end_interactive_fast_only(token)
-                except Exception:
-                    pass
             interactive_lookup = "fast-error"
-            restore_previous_resolution()
             logger.warning(
                 "Immediate fast SC trailer resolve failed for %s:%s: %s",
                 normalized_type,
