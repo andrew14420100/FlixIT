@@ -1,8 +1,9 @@
 """Shared trailer types, matching and ranking rules.
 
-The automatic trailer source is StreamingCommunity. Its title metadata points to
-YouTube trailer videos, which are accepted only for an exact, verified SC/TMDB
-match. Native MP4/HLS rules remain available for explicit/manual compatibility.
+The automatic trailer source is StreamingCommunity. Automatic candidates must be
+native, non-YouTube trailer media exposed by SC and must match the FLIX-IT title
+by exact verified identity. Native MP4/HLS rules remain available for explicit
+manual compatibility.
 """
 from __future__ import annotations
 
@@ -243,9 +244,8 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
     if not url:
         return False
 
-    blocked = is_blocked_url(url)
-    sc_youtube = candidate.source == "streamingcommunity" and blocked
-    if blocked and not sc_youtube:
+    # YouTube is never allowed, including when the URL came from SC metadata.
+    if is_blocked_url(url):
         return False
 
     height = int(candidate.height or 0)
@@ -262,10 +262,15 @@ def candidate_is_usable(candidate: TrailerCandidate, *, allow_manual: bool = Fal
     if not candidate.verified:
         return False
 
-    # SC exposes the associated YouTube trailer rather than a native rendition,
-    # so native height/bitrate checks do not apply. Exact TMDB verification above
-    # is mandatory before this exception is reached.
-    if sc_youtube:
+    # SC direct trailer URLs do not always publish rendition dimensions in title
+    # metadata. Exact TMDB verification plus the provider's native-media guard is
+    # therefore sufficient; no fake resolution value is injected.
+    sc_native = bool(
+        candidate.source == "streamingcommunity"
+        and isinstance(candidate.metadata, dict)
+        and candidate.metadata.get("native_sc_trailer") is True
+    )
+    if sc_native:
         return bool(candidate.browser_compatible)
 
     if height < MIN_TRAILER_HEIGHT:
