@@ -1,4 +1,4 @@
-"""FastAPI integration for the StreamingCommunity-only trailer resolver."""
+"""FastAPI integration for the native StreamingCommunity trailer resolver."""
 from __future__ import annotations
 
 import logging
@@ -14,6 +14,7 @@ from .queue_policy import install_queue_policy
 
 logger = logging.getLogger(__name__)
 SC_SOURCE = "streamingcommunity"
+SC_POLICY = "streamingcommunity-native-only"
 
 
 class ManualTrailerBody(BaseModel):
@@ -27,7 +28,8 @@ class ProviderPageBody(BaseModel):
 
 
 class QueueBody(BaseModel):
-    limit: int = 250
+    # 0 means the complete FLIX-IT catalog.
+    limit: int = 0
 
 
 def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch_tmdb_data):
@@ -38,8 +40,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
-    # Remove any previously registered public trailer route. Do not retain or
-    # call it as a fallback: automatic playback is StreamingCommunity-only.
     kept_routes = []
     for route in app.router.routes:
         if isinstance(route, APIRoute) and route.path == "/api/public/trailer/{media_type}/{tmdb_id}" and "GET" in route.methods:
@@ -55,7 +55,8 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             **cfg,
             "automatic": True,
             "source": SC_SOURCE,
-            "source_policy": "streamingcommunity-only",
+            "source_policy": SC_POLICY,
+            "catalog_import": "all",
             "playback": "native-direct",
             "youtube_enabled": False,
             "tmdb_match_required": True,
@@ -75,8 +76,6 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         selected_source = str(selected.get("source") or result.get("source") or "").strip().lower()
         selected_meta = selected.get("metadata") or {}
 
-        # Only a verified direct SC trailer is public. YouTube ids/urls from SC
-        # metadata are intentionally rejected by both provider and base policy.
         if (
             result.get("available")
             and selected_url
@@ -97,7 +96,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "stale": result.get("stale", False),
                 "refresh_pending": False,
                 "automatic": True,
-                "source_policy": "streamingcommunity-only",
+                "source_policy": SC_POLICY,
                 "tmdb_match": selected_meta.get("tmdb_match"),
                 "native_sc_trailer": True,
                 "youtube": False,
@@ -118,7 +117,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "stale": result.get("stale", bool(selected)),
             "refresh_pending": result.get("refresh_pending", True),
             "automatic": True,
-            "source_policy": "streamingcommunity-only",
+            "source_policy": SC_POLICY,
             "reason": result.get("reason") or "streamingcommunity_native_trailer_unavailable",
             "native_sc_trailer": False,
             "youtube": False,
@@ -159,7 +158,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     async def admin_refresh_trailer(media_type: str, tmdb_id: int, admin=Depends(get_current_admin)):
         doc = await resolver.resolve(media_type, tmdb_id, force=True)
         log_admin_action("REFRESH_TRAILER", str(tmdb_id), {"media_type": media_type, "source": SC_SOURCE})
-        return {**doc, "manual_preserved": False, "source_policy": "streamingcommunity-only"}
+        return {**doc, "manual_preserved": False, "source_policy": SC_POLICY}
 
     @router.put("/api/admin/trailers/{media_type}/{tmdb_id}/manual")
     async def admin_set_manual_trailer(media_type: str, tmdb_id: int, body: ManualTrailerBody, admin=Depends(get_current_admin)):
