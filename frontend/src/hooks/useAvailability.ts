@@ -64,9 +64,10 @@ function availabilityBatch(items) {
   return promise;
 }
 
-// Strict Italian policy: unknown/unverified items stay hidden until the backend
-// confirms they are in the Italian-dubbed source catalogue. Negative entries
-// expire quickly so newly dubbed titles appear automatically without redeploys.
+// Strict Italian/playability policy: unknown/unverified items stay hidden until
+// the backend confirms both Italian-catalog membership and current provider
+// reachability. Transient upstream failures remain unknown instead of being
+// cached as a real "unavailable" result.
 export async function filterAvailableAsync(items, getType = (item) => item.media_type || item.type || "movie") {
   if (!items?.length) return [];
   const unknown = normalizedUnknown(items, getType);
@@ -75,10 +76,22 @@ export async function filterAvailableAsync(items, getType = (item) => item.media
       const data = await availabilityBatch(unknown);
       if (!data?.catalog_loaded) return [];
       const ok = new Set((data.available || []).map((item) => keyOf(item.type, item.id)));
+      const explicitlyUnavailable = new Set(
+        (data.unavailable || []).map((item) => keyOf(item.type, item.id))
+      );
+      const strictLivePolicy = String(data?.policy || "") === "streamportal-live-v1";
       const now = Date.now();
       unknown.forEach((item) => {
         const key = keyOf(item.type, item.id);
-        cache.set(key, { available: ok.has(key), at: now });
+        if (ok.has(key)) {
+          cache.set(key, { available: true, at: now });
+          return;
+        }
+        // New backend distinguishes a confirmed negative from a temporary
+        // timeout/outage. Older backends did not, so preserve their behavior.
+        if (!strictLivePolicy || explicitlyUnavailable.has(key)) {
+          cache.set(key, { available: false, at: now });
+        }
       });
     } catch {
       return [];
