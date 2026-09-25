@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 _YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _INSTALLED = False
+SC_YOUTUBE_POLICY_VERSION = "streamingcommunity-vixcloud-youtube-v7"
 
 
 def _youtube_id(value) -> str | None:
@@ -72,15 +73,21 @@ def install_sc_youtube_metadata_policy() -> bool:
         return True
 
     from services.trailers import base as base_module
+    from services.trailers import queue_policy as queue_policy_module
     from services.trailers import resolver as resolver_module
     from services.trailers.providers import streamingcommunity as sc_module
+
+    # Make all old "no trailer" cache rows stale immediately. Otherwise titles
+    # checked just before this feature was deployed would wait for their old TTL
+    # before being re-scanned for youtube_id metadata.
+    queue_policy_module.TRAILER_POLICY_VERSION = SC_YOUTUBE_POLICY_VERSION
 
     original_rows = sc_module._trailer_rows
     if not getattr(original_rows, "_flixit_sc_youtube_metadata", False):
         def trailer_rows_with_sc_youtube(title: dict, base=None):
             rows = list(original_rows(title, base))
             seen = {url for _row, url in rows}
-            trailers = title.get("trailers") or [] if isinstance(title, dict) else []
+            trailers = (title.get("trailers") or []) if isinstance(title, dict) else []
             if isinstance(trailers, dict):
                 trailers = [trailers]
             if isinstance(trailers, list):
@@ -159,4 +166,4 @@ def install_sc_youtube_metadata_policy() -> bool:
     return True
 
 
-__all__ = ["install_sc_youtube_metadata_policy"]
+__all__ = ["install_sc_youtube_metadata_policy", "SC_YOUTUBE_POLICY_VERSION"]
