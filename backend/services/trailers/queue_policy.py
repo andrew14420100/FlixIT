@@ -1,29 +1,48 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from datetime import datetime, timezone
 from types import MethodType
 
 
 SC_SOURCE = "streamingcommunity"
-TRAILER_POLICY_VERSION = "streamingcommunity-only-v3"
+TRAILER_POLICY_VERSION = "streamingcommunity-native-all-v4"
+
+
+def _fresh_expiry(value) -> bool:
+    if not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if not parsed.tzinfo:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed > datetime.now(timezone.utc)
+    except Exception:
+        return False
+
+
+def _native_selected(selected: dict) -> bool:
+    metadata = selected.get("metadata") or {}
+    return bool(
+        selected
+        and selected.get("source") == SC_SOURCE
+        and isinstance(metadata, dict)
+        and metadata.get("native_sc_trailer") is True
+    )
 
 
 def install_queue_policy(resolver):
-    """Install a strict StreamingCommunity-only trailer policy.
+    """Install strict native-SC policy and full-catalog background import.
 
-    No manual URL, old provider result, media_assets trailer_key or temporary
-    original-language fallback is allowed to become public playback. Existing
-    manual overrides are removed because older releases preserved them and they
-    could permanently block SC discovery.
+    Every available FLIX-IT catalog item is checked against StreamingCommunity.
+    A fresh check is considered complete even when SC exposes no native trailer,
+    so no-trailer titles cannot block progress through the rest of the catalog.
     """
 
     base_enqueue = resolver.enqueue
     base_public_result = resolver.public_result
     base_resolve = resolver.resolve
 
-    # One-time migration for records produced by the previous trailer systems.
     resolver.results.update_many(
         {},
         {
@@ -67,7 +86,6 @@ def install_queue_policy(resolver):
         normalized_type = "tv" if media_type == "tv" else "movie"
         normalized_id = int(tmdb_id)
 
-        # A manual override must never short-circuit TrailerResolver.resolve().
         self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
             {"$unset": {"manual": ""}},
@@ -80,17 +98,28 @@ def install_queue_policy(resolver):
         selected = cached.get("selected") or {}
         if (
             cached.get("policyVersion") != TRAILER_POLICY_VERSION
-            or (selected and selected.get("source") != SC_SOURCE)
+            or (selected and not _native_selected(selected))
         ):
             force = True
 
         doc = await base_resolve(normalized_type, normalized_id, force=force)
+        alternatives = (doc or {}).get("alternatives") or [] if isinstance(doc, dict) else []
+        native_count = sum(
+            1
+            for row in alternatives
+            if isinstance(row, dict)
+            and row.get("source") == SC_SOURCE
+            and (row.get("metadata") or {}).get("native_sc_trailer") is True
+        )
+        checked_at = datetime.now(timezone.utc).isoformat()
         self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
             {
                 "$set": {
                     "policyVersion": TRAILER_POLICY_VERSION,
-                    "sourcePolicy": "streamingcommunity-only",
+                    "sourcePolicy": "streamingcommunity-native-only",
+                    "scNativeCheckedAt": checked_at,
+                    "scNativeTrailerCount": native_count,
                 },
                 "$unset": {"manual": ""},
             },
@@ -101,7 +130,9 @@ def install_queue_policy(resolver):
             return {
                 **doc,
                 "policyVersion": TRAILER_POLICY_VERSION,
-                "sourcePolicy": "streamingcommunity-only",
+                "sourcePolicy": "streamingcommunity-native-only",
+                "scNativeCheckedAt": checked_at,
+                "scNativeTrailerCount": native_count,
             }
         return doc
 
@@ -109,53 +140,74 @@ def install_queue_policy(resolver):
         normalized_type = "tv" if media_type == "tv" else "movie"
         normalized_id = int(tmdb_id)
 
-        # Clear an override even if it was written after service startup.
         self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
             {"$unset": {"manual": ""}},
         )
 
+        cached = self.results.find_one(
+            {"type": normalized_type, "tmdbId": normalized_id},
+            {"_id": 0, "policyVersion": 1, "selected": 1, "metadataExpiresAt": 1, "scNativeTrailerCount": 1},
+        ) or {}
+        cached_selected = cached.get("selected") or {}
+        current_check = cached.get("policyVersion") == TRAILER_POLICY_VERSION and _fresh_expiry(cached.get("metadataExpiresAt"))
+
+        # A completed fresh SC check with zero native trailers is a valid terminal
+        # cache state until expiry. Do not requeue it on every page visit.
+        if current_check and not cached_selected:
+            return {
+                "enabled": True,
+                "available": False,
+                "selected": None,
+                "source": SC_SOURCE,
+                "source_policy": "streamingcommunity-native-only",
+                "policy_version": TRAILER_POLICY_VERSION,
+                "cached": True,
+                "stale": False,
+                "refresh_pending": False,
+                "fallback_original": False,
+                "sc_native_trailer_count": int(cached.get("scNativeTrailerCount") or 0),
+                "reason": "streamingcommunity_native_trailer_not_available",
+            }
+
         result = base_public_result(normalized_type, normalized_id, hdr_supported=hdr_supported)
         selected = result.get("selected") or {}
-        source = str(selected.get("source") or result.get("source") or "").strip().lower()
-        policy_ok = source == SC_SOURCE and result.get("available") is not False
+        native_ok = _native_selected(selected) and result.get("available") is not False
 
-        if policy_ok:
+        if native_ok:
             return {
                 **result,
                 "enabled": True,
                 "available": True,
                 "source": SC_SOURCE,
                 "selected": selected,
-                "source_policy": "streamingcommunity-only",
+                "source_policy": "streamingcommunity-native-only",
                 "policy_version": TRAILER_POLICY_VERSION,
                 "refresh_pending": False,
                 "fallback_original": False,
             }
 
-        # Never let the FastAPI integration fall back to the legacy endpoint.
-        # The only valid interim state is 'no trailer' while SC is resolving.
-        self.enqueue(normalized_type, normalized_id, priority=1, reason="strict_sc_only")
+        self.enqueue(normalized_type, normalized_id, priority=1, reason="strict_native_sc_only")
         return {
             "enabled": True,
             "available": False,
             "selected": None,
             "source": SC_SOURCE,
-            "source_policy": "streamingcommunity-only",
+            "source_policy": "streamingcommunity-native-only",
             "policy_version": TRAILER_POLICY_VERSION,
             "cached": bool(result.get("cached")),
             "stale": bool(result.get("stale") or selected),
             "refresh_pending": True,
             "fallback_original": False,
-            "reason": "streamingcommunity_trailer_required",
+            "reason": "streamingcommunity_native_trailer_required",
         }
 
-    def enqueue_catalog(self, limit: int = 250):
-        wanted = max(1, min(int(limit), 2000))
+    def enqueue_catalog(self, limit: int = 0):
+        """Queue every stale/unmigrated catalog title; limit<=0 means ALL."""
+        wanted = max(0, int(limit or 0))
         queued = 0
         skipped = 0
         scanned = 0
-        now = datetime.now(timezone.utc)
 
         cursor = self.contents.find(
             {"available": {"$ne": False}},
@@ -164,7 +216,7 @@ def install_queue_policy(resolver):
 
         for content in cursor:
             scanned += 1
-            if queued >= wanted:
+            if wanted and queued >= wanted:
                 break
             if content.get("tmdbId") is None:
                 skipped += 1
@@ -189,60 +241,44 @@ def install_queue_policy(resolver):
                 {"_id": 0, "selected": 1, "metadataExpiresAt": 1, "policyVersion": 1},
             ) or {}
             selected = resolved.get("selected") or {}
-            expiry = resolved.get("metadataExpiresAt")
-            metadata_fresh = False
-            if expiry:
-                try:
-                    parsed = datetime.fromisoformat(str(expiry).replace("Z", "+00:00"))
-                    if not parsed.tzinfo:
-                        parsed = parsed.replace(tzinfo=timezone.utc)
-                    metadata_fresh = parsed > now
-                except Exception:
-                    metadata_fresh = False
+            checked_current_policy = resolved.get("policyVersion") == TRAILER_POLICY_VERSION
+            metadata_fresh = _fresh_expiry(resolved.get("metadataExpiresAt"))
+            valid_selected = not selected or _native_selected(selected)
 
-            if (
-                selected.get("source") == SC_SOURCE
-                and resolved.get("policyVersion") == TRAILER_POLICY_VERSION
-                and metadata_fresh
-            ):
+            if checked_current_policy and metadata_fresh and valid_selected:
                 skipped += 1
                 continue
 
-            self.enqueue(media_type, tmdb_id, priority=1, reason="migrate_to_strict_sc")
+            self.enqueue(media_type, tmdb_id, priority=1, reason="bulk_import_native_sc")
             queued += 1
 
         return {
             "queued": queued,
             "skipped_fresh_or_active": skipped,
             "scanned": scanned,
-            "target": wanted,
+            "target": "all" if wanted == 0 else wanted,
             "source": SC_SOURCE,
-            "source_policy": "streamingcommunity-only",
+            "source_policy": "streamingcommunity-native-only",
             "policy_version": TRAILER_POLICY_VERSION,
         }
 
     async def catalog_loop(self):
-        try:
-            batch = max(50, min(2000, int(os.environ.get("TRAILER_QUEUE_BATCH", "500"))))
-        except Exception:
-            batch = 500
-        try:
-            low_watermark = max(10, min(batch, int(os.environ.get("TRAILER_QUEUE_LOW_WATERMARK", "100"))))
-        except Exception:
-            low_watermark = 100
-
+        # First pass queues the whole catalog immediately. Workers remain paced by
+        # TrailerResolver, so a large queue does not create unbounded concurrency.
+        first_pass = True
         while not self._stop.is_set():
             try:
                 self.cleanup_temp_files()
                 active = self.jobs.count_documents({"status": {"$in": ["pending", "running", "retry"]}})
-                if active < low_watermark:
-                    self.enqueue_catalog(limit=batch)
+                if first_pass or active < 100:
+                    self.enqueue_catalog(limit=0)
+                    first_pass = False
             except Exception as exc:
                 if self.logger:
-                    self.logger.warning("SC trailer catalog queue scan failed: %s", exc)
+                    self.logger.warning("SC native trailer catalog import scan failed: %s", exc)
 
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=45)
+                await asyncio.wait_for(self._stop.wait(), timeout=15 * 60)
             except asyncio.TimeoutError:
                 pass
 
