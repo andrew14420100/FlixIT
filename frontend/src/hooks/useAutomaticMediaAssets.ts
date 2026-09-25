@@ -5,8 +5,31 @@ import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
 export const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v13-tmdb-last-resort";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v14-sc-cors-proxy";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+const ARTWORK_PROXY_PATH = "/api/public/artwork-proxy";
+const SC_CDN_HOSTS = new Set([
+  "cdn.streamingunity.win",
+  "cdn.streamingcommunityz.ninja",
+]);
+
+export function browserSafeArtworkUrl(value: any) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  if (text.startsWith(`${ARTWORK_PROXY_PATH}?`)) return text;
+  if (text.startsWith("data:") || text.startsWith("blob:")) return text;
+  if (!/^https?:\/\//i.test(text)) return text.startsWith("/") ? text : null;
+  try {
+    const parsed = new URL(text);
+    if (SC_CDN_HOSTS.has(parsed.hostname.toLowerCase())) {
+      return `${ARTWORK_PROXY_PATH}?url=${encodeURIComponent(text)}`;
+    }
+  } catch {
+    return null;
+  }
+  return text;
+}
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
   return mediaType === MEDIA_TYPE.Tv || mediaType === "tv" || item?.type === "tv" || item?.media_type === "tv"
@@ -27,10 +50,11 @@ export function nonTmdbImageUrl(value: any) {
   if (!raw) return null;
   const text = String(raw).trim();
   if (!text) return null;
+  if (text.startsWith(`${ARTWORK_PROXY_PATH}?`)) return text;
   if (text.startsWith("data:") || text.startsWith("blob:")) return text;
   if (!/^https?:\/\//i.test(text)) return null;
   if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return null;
-  return text;
+  return browserSafeArtworkUrl(text);
 }
 
 export function tmdbImageUrl(value: any, size = "original") {
@@ -84,7 +108,9 @@ export function isEmbeddedCardArtwork(value: any) {
   const url = firstNonTmdbArtwork(value);
   if (!url) return false;
   return (
+    url.startsWith(`${ARTWORK_PROXY_PATH}?`) ||
     /cdn\.streamingcommunityz\.ninja\/images\//i.test(url) ||
+    /cdn\.streamingunity\.win\/images\//i.test(url) ||
     /raw\.githubusercontent\.com\//i.test(url) ||
     /(?:^|\.)githubusercontent\.com\//i.test(url) ||
     /github\.com\/[^/]+\/[^/]+\/(?:raw|blob)\//i.test(url) ||
@@ -96,6 +122,7 @@ function fallbackSource(url: any, mapped: boolean) {
   if (mapped) return "streamingcommunity_mapping";
   const text = String(url || "");
   if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return "tmdb_fallback";
+  if (text.startsWith(`${ARTWORK_PROXY_PATH}?`)) return "streamingcommunity_proxy";
   if (
     /raw\.githubusercontent\.com\//i.test(text) ||
     /(?:^|\.)githubusercontent\.com\//i.test(text) ||
@@ -111,9 +138,9 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
   const typeSlug = mediaTypeSlug(mediaType, item);
   const id = item?.id || item?.tmdbId || item?.tmdb_id;
 
-  const mappedBackdrop = id ? getCDNImageUrl(Number(id), "backdrop") : null;
-  const mappedPoster = id ? getCDNImageUrl(Number(id), "poster") : null;
-  const mappedDetailBackdrop = id ? getCDNImageUrl(Number(id), "detail_backdrop") : null;
+  const mappedBackdrop = id ? browserSafeArtworkUrl(getCDNImageUrl(Number(id), "backdrop")) : null;
+  const mappedPoster = id ? browserSafeArtworkUrl(getCDNImageUrl(Number(id), "poster")) : null;
+  const mappedDetailBackdrop = id ? browserSafeArtworkUrl(getCDNImageUrl(Number(id), "detail_backdrop")) : null;
 
   const savedLandscape = firstNonTmdbArtwork(
     item?.netflix_artwork_url,
@@ -209,7 +236,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-first_v13_tmdb-last-resort",
+    image_source_policy: "streamingcommunity-first_v14-cors-proxy",
     backdrop_source: cardBackdrop
       ? fallbackSource(cardBackdrop, !!mappedBackdrop && cardBackdrop === mappedBackdrop)
       : null,
@@ -326,7 +353,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     poster_card_ready: top10Ready,
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-first_v13_tmdb-last-resort",
+    image_source_policy: "streamingcommunity-first_v14-cors-proxy",
     upscaled: false,
     sc_cover_imported: !!official?.sc_cover_imported,
     sc_provider_id: official?.sc_provider_id || null,
