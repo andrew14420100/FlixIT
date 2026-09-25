@@ -8,12 +8,13 @@ from .theryston import TherystonTrailerProvider
 
 
 class _TherystonAugmentedProvider:
-    """Keep the native provider as fallback while preferring Theryston's clean local media.
+    """Keep the native provider as fallback while bridging first-run discovery.
 
-    Theryston works from an already-known provider page. When the native provider
-    discovers that page during the same request, pass it straight to Theryston so
-    the first resolution can already produce a local MP4 without waiting for a
-    later cache refresh.
+    The central service already keeps Theryston as its own provider for pages
+    persisted in providerPages. This wrapper only covers the missing first-run
+    case: if the native provider discovers a provider page during this request,
+    send that newly discovered page to Theryston immediately instead of waiting
+    for a later cache refresh.
     """
 
     name = "provider"
@@ -27,25 +28,29 @@ class _TherystonAugmentedProvider:
         native_rows = await self.native.discover(identity)
 
         existing_pages = identity.get("provider_pages") or {}
-        page_url = str(existing_pages.get(self.page_key) or "").strip()
-        if not page_url:
+        existing_page = str(existing_pages.get(self.page_key) or "").strip()
+        discovered_page = ""
+
+        # Existing pages are handled by the central Theryston provider already.
+        # Only bridge a provider page that appeared for the first time now.
+        if not existing_page:
             for candidate in native_rows:
                 value = str(getattr(candidate, "provider_page", None) or "").strip()
                 if value.startswith("https://"):
-                    page_url = value
+                    discovered_page = value
                     break
 
         theryston_rows = []
-        if page_url.startswith("https://"):
+        if discovered_page:
             enriched_identity = {
                 **identity,
-                "provider_pages": {self.page_key: page_url},
+                "provider_pages": {self.page_key: discovered_page},
             }
             theryston_rows = await self.theryston.discover(enriched_identity)
 
-        # Put Theryston first so an otherwise equal candidate resolves to the
-        # locally served, branding-free media. Native candidates stay available
-        # as an immediate fallback and can still win when objectively better.
+        # Put the newly materialized local media first on exact ties. Native
+        # candidates remain available as fallback and still win when the normal
+        # language/quality ranking says they are objectively better.
         return [*theryston_rows, *native_rows]
 
 
