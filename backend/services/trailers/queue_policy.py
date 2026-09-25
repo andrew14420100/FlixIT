@@ -6,7 +6,7 @@ from types import MethodType
 
 
 SC_SOURCE = "streamingcommunity"
-TRAILER_POLICY_VERSION = "streamingcommunity-native-all-v4"
+TRAILER_POLICY_VERSION = "streamingcommunity-vixcloud-all-v5"
 
 
 def _fresh_expiry(value) -> bool:
@@ -32,11 +32,13 @@ def _native_selected(selected: dict) -> bool:
 
 
 def install_queue_policy(resolver):
-    """Install strict native-SC policy and full-catalog background import.
+    """Install strict SC trailer policy and full-catalog background import.
 
     Every available FLIX-IT catalog item is checked against StreamingCommunity.
-    A fresh check is considered complete even when SC exposes no native trailer,
-    so no-trailer titles cannot block progress through the rest of the catalog.
+    Accepted playback is either an explicit SC trailer media URL or an explicit
+    Vixcloud trailer embed published in SC trailer metadata. A fresh check is
+    complete even when SC exposes no accepted trailer, so no-trailer titles do
+    not block progress through the rest of the catalog.
     """
 
     base_enqueue = resolver.enqueue
@@ -117,7 +119,7 @@ def install_queue_policy(resolver):
             {
                 "$set": {
                     "policyVersion": TRAILER_POLICY_VERSION,
-                    "sourcePolicy": "streamingcommunity-native-only",
+                    "sourcePolicy": "streamingcommunity-vixcloud-or-direct",
                     "scNativeCheckedAt": checked_at,
                     "scNativeTrailerCount": native_count,
                 },
@@ -130,7 +132,7 @@ def install_queue_policy(resolver):
             return {
                 **doc,
                 "policyVersion": TRAILER_POLICY_VERSION,
-                "sourcePolicy": "streamingcommunity-native-only",
+                "sourcePolicy": "streamingcommunity-vixcloud-or-direct",
                 "scNativeCheckedAt": checked_at,
                 "scNativeTrailerCount": native_count,
             }
@@ -152,22 +154,20 @@ def install_queue_policy(resolver):
         cached_selected = cached.get("selected") or {}
         current_check = cached.get("policyVersion") == TRAILER_POLICY_VERSION and _fresh_expiry(cached.get("metadataExpiresAt"))
 
-        # A completed fresh SC check with zero native trailers is a valid terminal
-        # cache state until expiry. Do not requeue it on every page visit.
         if current_check and not cached_selected:
             return {
                 "enabled": True,
                 "available": False,
                 "selected": None,
                 "source": SC_SOURCE,
-                "source_policy": "streamingcommunity-native-only",
+                "source_policy": "streamingcommunity-vixcloud-or-direct",
                 "policy_version": TRAILER_POLICY_VERSION,
                 "cached": True,
                 "stale": False,
                 "refresh_pending": False,
                 "fallback_original": False,
                 "sc_native_trailer_count": int(cached.get("scNativeTrailerCount") or 0),
-                "reason": "streamingcommunity_native_trailer_not_available",
+                "reason": "streamingcommunity_trailer_not_available",
             }
 
         result = base_public_result(normalized_type, normalized_id, hdr_supported=hdr_supported)
@@ -181,25 +181,25 @@ def install_queue_policy(resolver):
                 "available": True,
                 "source": SC_SOURCE,
                 "selected": selected,
-                "source_policy": "streamingcommunity-native-only",
+                "source_policy": "streamingcommunity-vixcloud-or-direct",
                 "policy_version": TRAILER_POLICY_VERSION,
                 "refresh_pending": False,
                 "fallback_original": False,
             }
 
-        self.enqueue(normalized_type, normalized_id, priority=1, reason="strict_native_sc_only")
+        self.enqueue(normalized_type, normalized_id, priority=1, reason="strict_sc_vixcloud_or_direct")
         return {
             "enabled": True,
             "available": False,
             "selected": None,
             "source": SC_SOURCE,
-            "source_policy": "streamingcommunity-native-only",
+            "source_policy": "streamingcommunity-vixcloud-or-direct",
             "policy_version": TRAILER_POLICY_VERSION,
             "cached": bool(result.get("cached")),
             "stale": bool(result.get("stale") or selected),
             "refresh_pending": True,
             "fallback_original": False,
-            "reason": "streamingcommunity_native_trailer_required",
+            "reason": "streamingcommunity_trailer_required",
         }
 
     def enqueue_catalog(self, limit: int = 0):
@@ -249,7 +249,7 @@ def install_queue_policy(resolver):
                 skipped += 1
                 continue
 
-            self.enqueue(media_type, tmdb_id, priority=1, reason="bulk_import_native_sc")
+            self.enqueue(media_type, tmdb_id, priority=1, reason="bulk_import_sc_vixcloud_or_direct")
             queued += 1
 
         return {
@@ -258,13 +258,11 @@ def install_queue_policy(resolver):
             "scanned": scanned,
             "target": "all" if wanted == 0 else wanted,
             "source": SC_SOURCE,
-            "source_policy": "streamingcommunity-native-only",
+            "source_policy": "streamingcommunity-vixcloud-or-direct",
             "policy_version": TRAILER_POLICY_VERSION,
         }
 
     async def catalog_loop(self):
-        # First pass queues the whole catalog immediately. Workers remain paced by
-        # TrailerResolver, so a large queue does not create unbounded concurrency.
         first_pass = True
         while not self._stop.is_set():
             try:
@@ -275,7 +273,7 @@ def install_queue_policy(resolver):
                     first_pass = False
             except Exception as exc:
                 if self.logger:
-                    self.logger.warning("SC native trailer catalog import scan failed: %s", exc)
+                    self.logger.warning("SC trailer catalog import scan failed: %s", exc)
 
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=15 * 60)
