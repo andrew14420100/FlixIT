@@ -6,7 +6,9 @@ accepted only after the SC title TMDB id exactly matches FLIX-IT.
 
 Supported trailer playback forms:
 - direct trailer media explicitly exposed by SC (MP4/HLS/etc.);
-- Vixcloud ``/embed/<id>`` URLs explicitly exposed by SC as trailer metadata.
+- Vixcloud ``/embed/<id>`` URLs explicitly exposed by SC as trailer metadata;
+- YouTube only through the separate SC metadata policy when the exact matched
+  SC title publishes ``trailers[].youtube_id``.
 
 Signed Vixcloud URLs are never generated or reverse engineered. They are stored
 only for their published lifetime and refreshed from SC after expiry. Parameters
@@ -27,6 +29,7 @@ from .common import client
 
 
 DEFAULT_BASE_URLS = (
+    "https://streamingunity-premium.to",
     "https://streamingcommunityz.tax",
     "https://streamingcommunityz.ninja",
     "https://streamingunity.vip",
@@ -79,7 +82,7 @@ def _search_rows(payload: Any) -> list[dict]:
 
 
 def _detail_path(row: dict) -> Optional[str]:
-    row_id = _int_or_none(row.get("id") or row.get("title_id"))
+    row_id = _int_or_none(row.get("id") or row.get("title_id") or row.get("sc_id"))
     slug = str(row.get("slug") or "").strip().strip("/")
     if row_id and slug:
         return f"/it/titles/{row_id}-{slug}"
@@ -100,6 +103,57 @@ def _title_payload(page: dict) -> dict:
         return {}
     title = props.get("title")
     return title if isinstance(title, dict) else {}
+
+
+def _query_variants(identity: dict) -> list[str]:
+    """Build a small deterministic set of SC search variants for ambiguous titles."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        text = re.sub(r"\s+", " ", str(value or "").strip())
+        key = text.casefold()
+        if text and key not in seen:
+            seen.add(key)
+            out.append(text)
+
+    for raw in (identity.get("title"), identity.get("original_title")):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        add(text)
+        add(re.sub(r"\s*\([^)]*\)\s*", " ", text))
+        parts = re.split(r"\s*[:|–—-]\s*", text, maxsplit=1)
+        if parts:
+            add(parts[0])
+    return out[:6]
+
+
+def _catalog_detail_paths(identity: dict) -> list[str]:
+    """Use the committed SC catalogue to avoid depending on search-result order.
+
+    Catalogue rows contain public SC ids/slugs only. Every resulting detail page
+    is still rejected unless its own metadata contains the exact requested TMDB
+    id, so this shortcut never weakens identity matching.
+    """
+    try:
+        from services.sc_artwork_catalog import CATALOG
+
+        CATALOG.load()
+        rows = CATALOG.candidates(identity)
+    except Exception:
+        return []
+
+    paths: list[str] = []
+    seen: set[str] = set()
+    for row in rows[:24]:
+        path = _detail_path(row)
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+        if len(paths) >= 12:
+            break
+    return paths
 
 
 def _is_vixcloud_embed(value: str) -> bool:
@@ -287,23 +341,111 @@ class StreamingCommunityTrailerProvider:
         page = _inertia_page(response.text)
         return _title_payload(page or {}), str(response.url)
 
+    def _candidates_for_title(
+        self,
+        *,
+        identity: dict,
+        expected_tmdb: int,
+        title: dict,
+        provider_page: str,
+        base: str,
+        discovery: str,
+    ) -> list[TrailerCandidate]:
+        if _int_or_none(title.get("tmdb_id") or title.get("tmdbId")) != expected_tmdb:
+            return []
+
+        trailer_rows = _trailer_rows(title, base)
+        if not trailer_rows:
+            return []
+
+        self._working_base = base
+        matched_year = _int_or_none(
+            title.get("year")
+            or title.get("release_year")
+            or str(title.get("release_date") or "")[:4]
+        )
+        candidates: list[TrailerCandidate] = []
+        for index, (trailer, playback_url) in enumerate(trailer_rows):
+            language = str(trailer.get("language") or trailer.get("locale") or "").strip() or None
+            is_hls = bool(re.search(r"\.m3u8(?:$|[?#])", playback_url, re.I))
+            is_vixcloud = _is_vixcloud_embed(playback_url)
+            candidates.append(
+                TrailerCandidate(
+                    source=self.name,
+                    trailer_url=None if is_hls else playback_url,
+                    manifest_url=playback_url if is_hls else None,
+                    provider_id=str(trailer.get("id") or f"{title.get('id') or expected_tmdb}:{index}"),
+                    provider_page=provider_page,
+                    matched_title=str(title.get("name") or title.get("title") or identity.get("title") or "").strip() or None,
+                    matched_year=matched_year,
+                    media_type=identity.get("type"),
+                    title=str(trailer.get("name") or trailer.get("title") or f"Trailer SC {index + 1}").strip(),
+                    trailer_type=str(trailer.get("type") or "Trailer").strip() or "Trailer",
+                    official=False,
+                    audio_language=language,
+                    confidence=1.0,
+                    verified=True,
+                    browser_compatible=True,
+                    compatibility=(
+                        "sc-vixcloud-embed"
+                        if is_vixcloud
+                        else "native-hls" if is_hls else "native-video"
+                    ),
+                    expires_at=_expiry_from_url(playback_url),
+                    metadata={
+                        "sc_title_id": title.get("id"),
+                        "sc_slug": title.get("slug"),
+                        "sc_base_url": base,
+                        "sc_trailer_index": index,
+                        "sc_discovery": discovery,
+                        "tmdb_match": "exact",
+                        "native_sc_trailer": True,
+                        "sc_vixcloud_embed": is_vixcloud,
+                    },
+                )
+            )
+        return candidates
+
     async def discover(self, identity: dict) -> list[TrailerCandidate]:
         expected_tmdb = _int_or_none(identity.get("tmdbId"))
         if not expected_tmdb:
             return []
 
-        queries: list[str] = []
-        for value in (identity.get("title"), identity.get("original_title")):
-            text = str(value or "").strip()
-            if text and text.casefold() not in {x.casefold() for x in queries}:
-                queries.append(text)
+        queries = _query_variants(identity)
         if not queries:
             return []
+        catalog_paths = _catalog_detail_paths(identity)
 
         async with client() as http:
             for base in self._ordered_bases():
                 seen_paths: set[str] = set()
                 base_responded = False
+
+                # First try ids/slugs already present in FLIX-IT's committed SC
+                # catalogue. This avoids losing the right title merely because SC
+                # search ranks many similarly named films/spin-offs first.
+                for path in catalog_paths:
+                    if path in seen_paths:
+                        continue
+                    seen_paths.add(path)
+                    try:
+                        title, provider_page = await self._title(http, base, path)
+                    except Exception:
+                        continue
+                    if not title:
+                        continue
+                    base_responded = True
+                    candidates = self._candidates_for_title(
+                        identity=identity,
+                        expected_tmdb=expected_tmdb,
+                        title=title,
+                        provider_page=provider_page,
+                        base=base,
+                        discovery="catalog",
+                    )
+                    if candidates:
+                        return candidates
+
                 for query in queries:
                     try:
                         rows = await self._search(http, base, query)
@@ -311,7 +453,17 @@ class StreamingCommunityTrailerProvider:
                     except Exception:
                         rows = []
 
-                    for row in rows[:16]:
+                    # If search itself exposes TMDB ids, exact matches are checked
+                    # first. Otherwise inspect a wider window than the old 16-row
+                    # cap because franchises such as Miraculous have many results.
+                    rows = sorted(
+                        rows,
+                        key=lambda row: int(
+                            _int_or_none(row.get("tmdb_id") or row.get("tmdbId")) == expected_tmdb
+                        ),
+                        reverse=True,
+                    )
+                    for row in rows[:64]:
                         path = _detail_path(row)
                         if not path or path in seen_paths:
                             continue
@@ -322,59 +474,16 @@ class StreamingCommunityTrailerProvider:
                             continue
                         if not title:
                             continue
-                        if _int_or_none(title.get("tmdb_id") or title.get("tmdbId")) != expected_tmdb:
-                            continue
-
-                        self._working_base = base
-                        trailer_rows = _trailer_rows(title, base)
-                        # A currently preferred SC domain may expose the title but
-                        # omit trailer metadata. Keep looking through the other
-                        # title results/domains instead of treating that as a final
-                        # "no trailer" answer for the whole SC network.
-                        if not trailer_rows:
-                            continue
-
-                        matched_year = _int_or_none(title.get("year") or title.get("release_year"))
-                        candidates: list[TrailerCandidate] = []
-                        for index, (trailer, playback_url) in enumerate(trailer_rows):
-                            language = str(trailer.get("language") or trailer.get("locale") or "").strip() or None
-                            is_hls = bool(re.search(r"\.m3u8(?:$|[?#])", playback_url, re.I))
-                            is_vixcloud = _is_vixcloud_embed(playback_url)
-                            candidates.append(
-                                TrailerCandidate(
-                                    source=self.name,
-                                    trailer_url=None if is_hls else playback_url,
-                                    manifest_url=playback_url if is_hls else None,
-                                    provider_id=str(trailer.get("id") or f"{title.get('id') or expected_tmdb}:{index}"),
-                                    provider_page=provider_page,
-                                    matched_title=str(title.get("name") or title.get("title") or identity.get("title") or "").strip() or None,
-                                    matched_year=matched_year,
-                                    media_type=identity.get("type"),
-                                    title=str(trailer.get("name") or trailer.get("title") or f"Trailer SC {index + 1}").strip(),
-                                    trailer_type=str(trailer.get("type") or "Trailer").strip() or "Trailer",
-                                    official=False,
-                                    audio_language=language,
-                                    confidence=1.0,
-                                    verified=True,
-                                    browser_compatible=True,
-                                    compatibility=(
-                                        "sc-vixcloud-embed"
-                                        if is_vixcloud
-                                        else "native-hls" if is_hls else "native-video"
-                                    ),
-                                    expires_at=_expiry_from_url(playback_url),
-                                    metadata={
-                                        "sc_title_id": title.get("id"),
-                                        "sc_slug": title.get("slug"),
-                                        "sc_base_url": base,
-                                        "sc_trailer_index": index,
-                                        "tmdb_match": "exact",
-                                        "native_sc_trailer": True,
-                                        "sc_vixcloud_embed": is_vixcloud,
-                                    },
-                                )
-                            )
-                        return candidates
+                        candidates = self._candidates_for_title(
+                            identity=identity,
+                            expected_tmdb=expected_tmdb,
+                            title=title,
+                            provider_page=provider_page,
+                            base=base,
+                            discovery="search",
+                        )
+                        if candidates:
+                            return candidates
 
                 if base_responded:
                     continue
