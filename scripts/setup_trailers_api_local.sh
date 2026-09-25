@@ -7,13 +7,33 @@ DATA_FOLDER="${THERYSTON_TRAILERS_DATA_DIR:-$APP_ROOT/trailers-data}"
 BUN_BIN="${BUN_BIN:-/root/.bun/bin/bun}"
 THERYSTON_PORT="${THERYSTON_PORT:-3011}"
 
+# Fresh Emergent/VS environments do not always ship with Bun. Bootstrap it
+# before touching Supervisor so trailers-api is never left unregistered.
 if [ ! -x "$BUN_BIN" ]; then
-  echo "Bun non trovato in $BUN_BIN" >&2
+  echo "Bun non trovato in $BUN_BIN: installazione automatica..."
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl non disponibile: impossibile installare Bun automaticamente" >&2
+    exit 1
+  fi
+  export BUN_INSTALL="/root/.bun"
+  curl -fsSL https://bun.sh/install | bash
+fi
+
+if [ ! -x "$BUN_BIN" ] && command -v bun >/dev/null 2>&1; then
+  BUN_BIN="$(command -v bun)"
+fi
+
+if [ ! -x "$BUN_BIN" ]; then
+  echo "Installazione Bun non riuscita" >&2
   exit 1
 fi
 
+echo "Bun: $($BUN_BIN --version) ($BUN_BIN)"
+
 if [ ! -d "$TRAILERS_API_DIR/.git" ]; then
   git clone https://github.com/Theryston/trailers-api.git "$TRAILERS_API_DIR"
+else
+  git -C "$TRAILERS_API_DIR" fetch --quiet origin || true
 fi
 
 cd "$TRAILERS_API_DIR"
@@ -78,7 +98,7 @@ if [ -x "$FFPROBE_BIN" ]; then
   ln -sf "$FFPROBE_BIN" /usr/local/bin/ffprobe
 fi
 
-mkdir -p /var/log/supervisor
+mkdir -p /var/log/supervisor /etc/supervisor/conf.d
 cat > /etc/supervisor/conf.d/trailers-api.conf <<EOF
 [program:trailers-api]
 directory=$TRAILERS_API_DIR
@@ -97,9 +117,10 @@ stdout_logfile_backups=2
 stderr_logfile_backups=2
 EOF
 
+echo "Configurazione Supervisor: /etc/supervisor/conf.d/trailers-api.conf"
 supervisorctl reread
 supervisorctl update
-supervisorctl restart trailers-api || true
+supervisorctl start trailers-api || supervisorctl restart trailers-api
 
 sleep 2
 
