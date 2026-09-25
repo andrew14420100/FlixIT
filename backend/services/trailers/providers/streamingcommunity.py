@@ -1,10 +1,10 @@
 """StreamingCommunity native trailer metadata provider.
 
-This provider intentionally reads only public title/search metadata used to locate
-the trailer associated with a title. It never requests movie/episode playback
-sources. A candidate is accepted only after the SC title page TMDB id exactly
-matches the FLIX-IT identity and SC exposes a direct non-YouTube trailer media
-URL (for example MP4/HLS or an explicitly named trailer/preview URL).
+Reads only public title/search metadata used to locate trailers associated with a
+catalog title. It never requests movie/episode playback sources. Candidates are
+accepted only after the SC title TMDB id exactly matches FLIX-IT and SC exposes
+explicit direct non-YouTube trailer media (MP4/HLS/etc.). All native trailer
+variants exposed for the matched title are returned, not only the first one.
 """
 from __future__ import annotations
 
@@ -51,7 +51,6 @@ def _int_or_none(value: Any) -> Optional[int]:
 
 
 def _inertia_page(document: str) -> Optional[dict]:
-    """Decode the JSON stored in the Inertia ``data-page`` HTML attribute."""
     match = re.search(r"\bdata-page\s*=\s*([\"'])(.*?)\1", document or "", re.I | re.S)
     if not match:
         return None
@@ -97,11 +96,7 @@ def _title_payload(page: dict) -> dict:
 
 
 def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]:
-    """Return only direct, non-YouTube media that is clearly trailer/preview data.
-
-    This deliberately rejects generic watch/embed/iframe URLs so the trailer
-    resolver can never drift into movie/episode playback extraction.
-    """
+    """Accept only explicit direct trailer media and reject playback/embed pages."""
     text = str(value or "").strip()
     if not text:
         return None
@@ -122,7 +117,6 @@ def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]
     path = (parsed.path or "").lower()
     query = (parsed.query or "").lower()
 
-    # Never treat title/movie playback pages as trailers.
     if any(marker in path for marker in ("/watch/", "/iframe/", "/embed/")):
         return None
 
@@ -132,42 +126,54 @@ def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]
     return text if (direct_media or explicit_trailer or explicit_query) else None
 
 
-def _trailer_row(title: dict, base: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
+_TRAILER_MEDIA_FIELDS = (
+    "url",
+    "src",
+    "video_url",
+    "videoUrl",
+    "manifest_url",
+    "manifestUrl",
+    "mp4_url",
+    "mp4Url",
+    "hls_url",
+    "hlsUrl",
+    "file",
+    "file_url",
+    "fileUrl",
+)
+
+
+def _trailer_rows(title: dict, base: Optional[str] = None) -> list[tuple[dict, str]]:
+    """Return every unique native trailer media URL exposed by SC metadata."""
+    found: list[tuple[dict, str]] = []
+    seen: set[str] = set()
+
     trailers = title.get("trailers") or []
     if isinstance(trailers, dict):
         trailers = [trailers]
-
-    fields = (
-        "url",
-        "src",
-        "video_url",
-        "videoUrl",
-        "manifest_url",
-        "manifestUrl",
-        "mp4_url",
-        "mp4Url",
-        "hls_url",
-        "hlsUrl",
-        "file",
-        "file_url",
-        "fileUrl",
-    )
     if isinstance(trailers, list):
         for row in trailers:
             if not isinstance(row, dict):
                 continue
-            for key in fields:
+            for key in _TRAILER_MEDIA_FIELDS:
                 native_url = _native_trailer_url(row.get(key), base)
-                if native_url:
-                    return row, native_url
+                if native_url and native_url not in seen:
+                    seen.add(native_url)
+                    found.append((row, native_url))
 
-    # Only trailer-specific title fields are considered. SC's current
-    # ``trailerUrl`` is normally YouTube and is therefore rejected here.
     for key in ("trailerUrl", "trailer_url", "trailer", "preview_video_url", "previewVideoUrl"):
         native_url = _native_trailer_url(title.get(key), base)
-        if native_url:
-            return {}, native_url
-    return None, None
+        if native_url and native_url not in seen:
+            seen.add(native_url)
+            found.append(({}, native_url))
+
+    return found
+
+
+def _trailer_row(title: dict, base: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
+    """Backward-compatible helper returning the first native SC trailer."""
+    rows = _trailer_rows(title, base)
+    return rows[0] if rows else (None, None)
 
 
 class StreamingCommunityTrailerProvider:
@@ -241,46 +247,46 @@ class StreamingCommunityTrailerProvider:
                         if _int_or_none(title.get("tmdb_id") or title.get("tmdbId")) != expected_tmdb:
                             continue
 
-                        trailer, native_url = _trailer_row(title, base)
-                        if not native_url:
-                            self._working_base = base
+                        self._working_base = base
+                        native_rows = _trailer_rows(title, base)
+                        if not native_rows:
                             return []
 
-                        self._working_base = base
-                        trailer = trailer or {}
-                        language = str(trailer.get("language") or trailer.get("locale") or "").strip() or None
                         matched_year = _int_or_none(title.get("year") or title.get("release_year"))
-                        is_hls = bool(re.search(r"\.m3u8(?:$|[?#])", native_url, re.I))
-                        return [
-                            TrailerCandidate(
-                                source=self.name,
-                                trailer_url=None if is_hls else native_url,
-                                manifest_url=native_url if is_hls else None,
-                                provider_id=str(trailer.get("id") or native_url),
-                                provider_page=provider_page,
-                                matched_title=str(title.get("name") or title.get("title") or identity.get("title") or "").strip() or None,
-                                matched_year=matched_year,
-                                media_type=identity.get("type"),
-                                title=str(trailer.get("name") or trailer.get("title") or "Trailer SC").strip(),
-                                trailer_type="Trailer",
-                                official=False,
-                                audio_language=language,
-                                confidence=1.0,
-                                verified=True,
-                                browser_compatible=True,
-                                compatibility="native-hls" if is_hls else "native-video",
-                                metadata={
-                                    "sc_title_id": title.get("id"),
-                                    "sc_slug": title.get("slug"),
-                                    "sc_base_url": base,
-                                    "tmdb_match": "exact",
-                                    "native_sc_trailer": True,
-                                },
+                        candidates: list[TrailerCandidate] = []
+                        for index, (trailer, native_url) in enumerate(native_rows):
+                            language = str(trailer.get("language") or trailer.get("locale") or "").strip() or None
+                            is_hls = bool(re.search(r"\.m3u8(?:$|[?#])", native_url, re.I))
+                            candidates.append(
+                                TrailerCandidate(
+                                    source=self.name,
+                                    trailer_url=None if is_hls else native_url,
+                                    manifest_url=native_url if is_hls else None,
+                                    provider_id=str(trailer.get("id") or f"{title.get('id') or expected_tmdb}:{index}"),
+                                    provider_page=provider_page,
+                                    matched_title=str(title.get("name") or title.get("title") or identity.get("title") or "").strip() or None,
+                                    matched_year=matched_year,
+                                    media_type=identity.get("type"),
+                                    title=str(trailer.get("name") or trailer.get("title") or f"Trailer SC {index + 1}").strip(),
+                                    trailer_type=str(trailer.get("type") or "Trailer").strip() or "Trailer",
+                                    official=False,
+                                    audio_language=language,
+                                    confidence=1.0,
+                                    verified=True,
+                                    browser_compatible=True,
+                                    compatibility="native-hls" if is_hls else "native-video",
+                                    metadata={
+                                        "sc_title_id": title.get("id"),
+                                        "sc_slug": title.get("slug"),
+                                        "sc_base_url": base,
+                                        "sc_trailer_index": index,
+                                        "tmdb_match": "exact",
+                                        "native_sc_trailer": True,
+                                    },
+                                )
                             )
-                        ]
+                        return candidates
 
-                # If the domain answered search successfully but no exact title
-                # matched, try the next configured mirror before giving up.
                 if base_responded:
                     continue
 
