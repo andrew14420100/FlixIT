@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { MEDIA_TYPE } from "src/types/Common";
 import { getCDNImageUrl } from "src/config/cdnMapping";
 
-export const TMDB_IMAGE_BASE = "";
-export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v12-poster-hero-identity";
+export const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
+export const MEDIA_ASSET_QUALITY_VERSION = "official-artwork-v13-tmdb-last-resort";
 export const DAILY_ARTWORK_REFRESH_MS = 24 * 60 * 60 * 1000;
 
 export function mediaTypeSlug(mediaType: any, item?: any) {
@@ -33,8 +33,14 @@ export function nonTmdbImageUrl(value: any) {
   return text;
 }
 
-export function tmdbImageUrl(value: any, _size = "original") {
-  return nonTmdbImageUrl(value);
+export function tmdbImageUrl(value: any, size = "original") {
+  const raw = rawArtwork(value);
+  if (!raw) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+  if (text.startsWith("/")) return `https://image.tmdb.org/t/p/${size}${text}`;
+  if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return text;
+  return null;
 }
 
 function firstNonTmdbArtwork(...values: any[]) {
@@ -43,6 +49,18 @@ function firstNonTmdbArtwork(...values: any[]) {
     if (resolved) return resolved;
   }
   return null;
+}
+
+function firstTmdbArtwork(...values: any[]) {
+  for (const value of values) {
+    const resolved = tmdbImageUrl(value, "original");
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+function anyFallbackArtwork(value: any) {
+  return nonTmdbImageUrl(value) || tmdbImageUrl(value, "original");
 }
 
 function normalizedIdentityTitle(value: any) {
@@ -77,6 +95,7 @@ export function isEmbeddedCardArtwork(value: any) {
 function fallbackSource(url: any, mapped: boolean) {
   if (mapped) return "streamingcommunity_mapping";
   const text = String(url || "");
+  if (/^https?:\/\/image\.tmdb\.org\//i.test(text)) return "tmdb_fallback";
   if (
     /raw\.githubusercontent\.com\//i.test(text) ||
     /(?:^|\.)githubusercontent\.com\//i.test(text) ||
@@ -131,6 +150,19 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     item?.contextualArtwork?.logo
   );
 
+  // TMDB is intentionally last. Existing StreamingCommunity/GitHub/custom
+  // artwork always wins; TMDB only prevents a published title becoming blank.
+  const tmdbBackdrop = firstTmdbArtwork(
+    item?.backdrop_path,
+    item?.backdrop,
+    item?.titled_backdrop_path,
+    item?.titledBackdropPath
+  );
+  const tmdbPoster = firstTmdbArtwork(
+    item?.poster_path,
+    item?.poster
+  );
+
   const savedLandscapeEmbedded = !!(
     item?.backdrop_embedded_title_treatment ||
     item?.embedded_title_treatment ||
@@ -138,10 +170,18 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     isEmbeddedCardArtwork(savedLandscape)
   );
 
-  const cardBackdrop = mappedBackdrop || null;
-  const cardPoster = mappedPoster && mappedPoster !== mappedBackdrop ? mappedPoster : null;
-  const cardBackdropEmbedded = !!cardBackdrop;
-  const cardPosterEmbedded = !!cardPoster;
+  const cardBackdrop = mappedBackdrop || savedLandscape || tmdbBackdrop || tmdbPoster || null;
+  const cardPoster = mappedPoster || savedPoster || tmdbPoster || tmdbBackdrop || cardBackdrop || null;
+  const cardBackdropEmbedded = !!(
+    cardBackdrop &&
+    (cardBackdrop === mappedBackdrop || cardBackdrop === savedLandscape) &&
+    (cardBackdrop === mappedBackdrop || savedLandscapeEmbedded || isEmbeddedCardArtwork(cardBackdrop))
+  );
+  const cardPosterEmbedded = !!(
+    cardPoster &&
+    (cardPoster === mappedPoster || cardPoster === savedPoster) &&
+    !/^https?:\/\/image\.tmdb\.org\//i.test(String(cardPoster))
+  );
   const cardReady = !!cardBackdrop;
   const posterReady = !!cardPoster;
 
@@ -152,8 +192,8 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     backdrop_path: cardBackdrop,
     poster_path: cardPoster,
     titled_backdrop_path: cardBackdropEmbedded ? cardBackdrop : null,
-    hero_backdrop_path: savedLandscape || mappedDetailBackdrop || mappedBackdrop || null,
-    detail_backdrop_path: mappedDetailBackdrop || savedLandscape || mappedBackdrop || null,
+    hero_backdrop_path: savedLandscape || mappedDetailBackdrop || mappedBackdrop || tmdbBackdrop || tmdbPoster || null,
+    detail_backdrop_path: mappedDetailBackdrop || savedLandscape || mappedBackdrop || tmdbBackdrop || tmdbPoster || null,
     logo_path: savedLogo || null,
     backdrop_embedded_title_treatment: cardBackdropEmbedded,
     poster_embedded_title_treatment: cardPosterEmbedded,
@@ -169,7 +209,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
     number_of_seasons: item?.number_of_seasons,
     certification: item?.certification,
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-exhaustive_v12_real-poster-and-hero-identity",
+    image_source_policy: "streamingcommunity-first_v13_tmdb-last-resort",
     backdrop_source: cardBackdrop
       ? fallbackSource(cardBackdrop, !!mappedBackdrop && cardBackdrop === mappedBackdrop)
       : null,
@@ -177,7 +217,7 @@ export function buildMediaAssetFallback(item: any, mediaType: any) {
       ? fallbackSource(cardPoster, !!mappedPoster && cardPoster === mappedPoster)
       : null,
     mapped_backdrop: mappedBackdrop,
-    mapped_poster: cardPoster,
+    mapped_poster: mappedPoster,
     mapped_detail_backdrop: mappedDetailBackdrop,
   };
 }
@@ -220,21 +260,31 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     ? rawFallbackPoster
     : null;
   const fallbackLogo = firstNonTmdbArtwork(fallback?.logo_path);
+  const fallbackAnyLandscape = anyFallbackArtwork(fallback?.backdrop_path);
+  const fallbackAnyPoster = anyFallbackArtwork(fallback?.poster_path);
 
   const backdrop = officialIsStreamingCommunity && officialLandscapeEmbedded
     ? officialLandscape
-    : (fallbackLandscape || (officialLandscapeEmbedded ? officialLandscape : null));
+    : (fallbackLandscape || (officialLandscapeEmbedded ? officialLandscape : null) || fallbackAnyLandscape || null);
   const poster = officialIsStreamingCommunity && officialPosterEmbedded
     ? officialPoster
-    : (fallbackPoster || (officialPosterEmbedded ? officialPoster : null));
+    : (fallbackPoster || (officialPosterEmbedded ? officialPoster : null) || fallbackAnyPoster || null);
   const hero = officialHero || fallback?.hero_backdrop_path || backdrop || null;
   const logo = officialLogo || fallbackLogo || null;
 
-  const usingFallbackBackdrop = !!fallbackLandscape && backdrop === fallbackLandscape;
-  const usingFallbackPoster = !!fallbackPoster && poster === fallbackPoster;
+  const usingFallbackBackdrop = !!fallbackAnyLandscape && backdrop === fallbackAnyLandscape;
+  const usingFallbackPoster = !!fallbackAnyPoster && poster === fallbackAnyPoster;
   const usingOfficialLogo = !!officialLogo && logo === officialLogo;
-  const backdropEmbedded = !!backdrop;
-  const posterEmbedded = !!poster;
+  const backdropEmbedded = !!(
+    backdrop &&
+    ((fallbackLandscape && backdrop === fallbackLandscape) ||
+      (officialLandscapeEmbedded && backdrop === officialLandscape))
+  );
+  const posterEmbedded = !!(
+    poster &&
+    ((fallbackPoster && poster === fallbackPoster) ||
+      (officialPosterEmbedded && poster === officialPoster))
+  );
   const cardReady = !!backdrop;
   const top10Ready = !!poster;
 
@@ -251,12 +301,12 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     official_artwork_source:
       official?.backdrop_source || official?.poster_source || official?.hero_backdrop_source || null,
     backdrop_source: usingFallbackBackdrop
-      ? (fallback?.backdrop_source || "streamingcommunity_mapping")
+      ? (fallback?.backdrop_source || "tmdb_fallback")
       : (official?.backdrop_source || null),
     poster_source: usingFallbackPoster
-      ? (fallback?.poster_source || "streamingcommunity_mapping")
+      ? (fallback?.poster_source || "tmdb_fallback")
       : (poster ? (official?.poster_source || null) : null),
-    hero_backdrop_source: official?.hero_backdrop_source || null,
+    hero_backdrop_source: official?.hero_backdrop_source || fallback?.backdrop_source || null,
     logo_source: usingOfficialLogo
       ? (official?.logo_source || null)
       : (fallbackLogo ? (fallback?.logo_source || "saved_non_tmdb") : null),
@@ -276,7 +326,7 @@ export function mergeOfficialArtwork(fallback: any, official: any) {
     poster_card_ready: top10Ready,
     complete: !!(cardReady && top10Ready),
     image_quality: "max-native",
-    image_source_policy: "streamingcommunity-exhaustive_v12_real-poster-and-hero-identity",
+    image_source_policy: "streamingcommunity-first_v13_tmdb-last-resort",
     upscaled: false,
     sc_cover_imported: !!official?.sc_cover_imported,
     sc_provider_id: official?.sc_provider_id || null,
@@ -322,10 +372,6 @@ export default function useAutomaticMediaAssets(
       const official = response.ok ? await response.json() : {};
       return mergeOfficialArtwork(immediate, official);
     },
-    // Home bootstrap and SC artwork batches already carry the exact artwork for
-    // each published card. Re-querying official-artwork for every near-viewport
-    // card created a large request fan-out on refresh. Only titles without an
-    // embedded server bundle need the individual resolver.
     enabled: !!id && !!enabled && !embedded,
     placeholderData: immediate,
     staleTime: DAILY_ARTWORK_REFRESH_MS,
