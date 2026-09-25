@@ -13,7 +13,8 @@ Policy:
   them;
 - let the existing resolver rank Italian candidates first and then prefer native
   2160p, followed by 1440p/1080p/720p;
-- never upscale or transcode a lower-resolution trailer into 4K.
+- never upscale or transcode a lower-resolution trailer into 4K;
+- never hide an already-playable SC trailer while quality enrichment is pending.
 
 All inspection happens in the trailer resolver workers, never in the homepage
 render path.
@@ -22,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from types import MethodType
 from typing import Optional
 
 from .base import TrailerCandidate, is_english_language, is_italian_language
@@ -30,8 +30,7 @@ from .manifest import inspect_hls, probe_direct_file
 from .providers.common import client
 from .providers.streamingcommunity import StreamingCommunityTrailerProvider, _is_vixcloud_embed
 
-POLICY_VERSION = "streamingcommunity-italian-native-4k-v1"
-_RECHECK_MARKER = "italian-4k-recheck-required-v1"
+POLICY_VERSION = "streamingcommunity-italian-native-4k-v2-nonblocking"
 _INSTALLED = False
 _DIRECT_FILE_RE = re.compile(r"\.(?:mp4|webm|mov|m4v)(?:$|[?#])", re.I)
 _HLS_RE = re.compile(r"\.m3u8(?:$|[?#])", re.I)
@@ -140,9 +139,9 @@ async def _enrich_direct(candidate: TrailerCandidate) -> list[TrailerCandidate]:
 async def _enrich_candidate(http, candidate: TrailerCandidate) -> list[TrailerCandidate]:
     url = candidate.manifest_url or candidate.trailer_url or ""
 
-    # Vixcloud stays an iframe/embed candidate. Do not unwrap or inspect its
-    # internal player/playlist. We only use language metadata already published
-    # by StreamingCommunity.
+    # Vixcloud remains the SC-published iframe candidate. It is not unwrapped or
+    # inspected internally. Unknown language is allowed so a previously working
+    # embed is not hidden merely because SC omitted language metadata.
     if _is_vixcloud_embed(url):
         if _explicit_english_only(candidate):
             return []
@@ -165,7 +164,7 @@ def install_italian_4k_trailer_policy() -> bool:
         return True
 
     current = StreamingCommunityTrailerProvider.discover
-    if getattr(current, "_flixit_italian_4k_v1", False):
+    if getattr(current, "_flixit_italian_4k_v2", False):
         _INSTALLED = True
         return True
 
@@ -190,12 +189,18 @@ def install_italian_4k_trailer_policy() -> bool:
                 continue
             out.extend(group)
 
+        # Never let a quality-inspection failure erase every otherwise valid SC
+        # trailer. Preserve the original non-English-explicit candidate as a
+        # fallback if enrichment produced nothing.
+        if not out:
+            out = [row for row in rows if not _explicit_english_only(row)]
+
         deduped: dict[str, TrailerCandidate] = {}
         for row in out:
             deduped[row.candidate_id] = row
         return list(deduped.values())
 
-    discover_italian_4k._flixit_italian_4k_v1 = True
+    discover_italian_4k._flixit_italian_4k_v2 = True
     discover_italian_4k._original = current
     StreamingCommunityTrailerProvider.discover = discover_italian_4k
     _INSTALLED = True
@@ -203,66 +208,17 @@ def install_italian_4k_trailer_policy() -> bool:
 
 
 def install_italian_4k_result_policy(resolver) -> None:
-    """Reject old cached selections and queue a background re-import.
+    """Non-blocking compatibility hook.
 
-    Cached trailers created before this policy have no quality/audio enrichment.
-    They are not exposed as compliant until a worker refreshes them. Re-import is
-    queued in Mongo only; it performs no provider HTTP requests on the request
-    that installs this policy.
+    4K/Italian inspection is an enhancement, never a requirement for visibility.
+    Existing SC trailer selections therefore stay playable immediately. Workers
+    may refresh them in the background and the normal resolver will pick the best
+    enriched Italian rendition when one is available.
     """
     if getattr(resolver, "italian_4k_result_policy", None) == POLICY_VERSION:
         return
 
-    try:
-        resolver.results.update_many(
-            {"selected": {"$ne": None}},
-            {"$set": {"policyVersion": _RECHECK_MARKER}},
-        )
-    except Exception:
-        pass
-
-    base_public_result = resolver.public_result
-
-    def public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
-        result = base_public_result(media_type, tmdb_id, hdr_supported=hdr_supported)
-        selected = result.get("selected") or {}
-        metadata = selected.get("metadata") or {}
-        language = selected.get("audio_language") or selected.get("language")
-        compliant = bool(
-            result.get("available")
-            and metadata.get("italian_4k_policy") == POLICY_VERSION
-            and not is_english_language(language)
-        )
-        if compliant:
-            return {
-                **result,
-                "quality_policy": POLICY_VERSION,
-                "preferred_language": "it",
-                "preferred_resolution": 2160,
-                "english_fallback": False,
-            }
-
-        self.enqueue(
-            "tv" if media_type == "tv" else "movie",
-            int(tmdb_id),
-            priority=1,
-            reason="italian_4k_trailer_refresh",
-        )
-        return {
-            **result,
-            "available": False,
-            "selected": None,
-            "refresh_pending": True,
-            "quality_policy": POLICY_VERSION,
-            "preferred_language": "it",
-            "preferred_resolution": 2160,
-            "english_fallback": False,
-            "reason": "italian_4k_trailer_refresh_required",
-        }
-
-    resolver.public_result = MethodType(public_result, resolver)
     resolver.italian_4k_result_policy = POLICY_VERSION
-
     try:
         resolver.enqueue_catalog(limit=0)
     except Exception:
