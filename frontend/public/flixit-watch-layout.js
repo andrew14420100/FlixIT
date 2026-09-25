@@ -35,10 +35,6 @@
     return node;
   }
 
-  function makePill(label) {
-    return el("span", "flixit-watch-pill", label);
-  }
-
   function mountShell(route, page, player) {
     var old = page.querySelector(".flixit-watch-details");
     if (old) old.remove();
@@ -46,46 +42,15 @@
     var details = el("section", "flixit-watch-details");
     details.setAttribute("aria-label", "Dettagli riproduzione");
 
-    var ambient = el("div", "flixit-watch-details__ambient");
-    var poster = player.querySelector("video") && player.querySelector("video").getAttribute("poster");
-    if (poster) ambient.style.backgroundImage = "url(\"" + poster.replace(/\"/g, "%22") + "\")";
-    details.appendChild(ambient);
-
     var top = el("div", "flixit-watch-details__top");
     var copy = el("div", "flixit-watch-details__copy");
-    var eyebrow = el("div", "flixit-watch-details__eyebrow", route.type === "tv" ? "STAI GUARDANDO" : "ORA IN RIPRODUZIONE");
     var title = el("h1", "flixit-watch-details__title", text('[data-testid="player-title"]') || (route.type === "tv" ? "Serie TV" : "Film"));
     var subtitleText = text('[data-testid="player-episode"]');
-    var subtitle = el("p", "flixit-watch-details__subtitle", subtitleText || (route.type === "tv" ? ("Stagione " + route.season + " · Episodio " + route.episode) : "Film"));
-    var pills = el("div", "flixit-watch-details__pills");
-    pills.appendChild(makePill(route.type === "tv" ? "Serie TV" : "Film"));
-    if (route.type === "tv") {
-      pills.appendChild(makePill("S" + route.season));
-      pills.appendChild(makePill("E" + route.episode));
-    }
+    var subtitle = el("p", "flixit-watch-details__subtitle", subtitleText || (route.type === "tv" ? ("Stagione " + route.season + " · Episodio " + route.episode) : ""));
 
-    copy.appendChild(eyebrow);
     copy.appendChild(title);
-    copy.appendChild(subtitle);
-    copy.appendChild(pills);
+    if (subtitle.textContent) copy.appendChild(subtitle);
     top.appendChild(copy);
-
-    if (route.type === "tv") {
-      var next = el("button", "flixit-watch-next", "Prossimo episodio");
-      next.type = "button";
-      next.addEventListener("click", function () {
-        var realNext = page.querySelector('[data-testid="next-episode-button"]');
-        if (realNext) realNext.click();
-        else {
-          var url = new URL(window.location.href);
-          url.searchParams.set("s", String(route.season));
-          url.searchParams.set("e", String(route.episode + 1));
-          window.location.href = url.toString();
-        }
-      });
-      top.appendChild(next);
-    }
-
     details.appendChild(top);
 
     if (route.type === "tv") {
@@ -94,6 +59,7 @@
       episodeHead.appendChild(el("h2", "flixit-watch-episodes__title", "Episodi"));
       episodeHead.appendChild(el("span", "flixit-watch-episodes__season", "Stagione " + route.season));
       episodeSection.appendChild(episodeHead);
+
       var rail = el("div", "flixit-watch-episodes__rail");
       rail.appendChild(el("div", "flixit-watch-episode-skeleton", "Caricamento episodi…"));
       episodeSection.appendChild(rail);
@@ -104,16 +70,14 @@
         .then(function (data) {
           var episodes = data && Array.isArray(data.episodes) ? data.episodes : [];
           rail.innerHTML = "";
-          if (!episodes.length) {
-            rail.appendChild(el("div", "flixit-watch-episode-skeleton", "Episodi non disponibili"));
-            return;
-          }
+          if (!episodes.length) return;
 
           var start = Math.max(0, episodes.findIndex(function (item) { return Number(item.episode_number) === route.episode; }) - 1);
-          episodes.slice(start, start + 6).forEach(function (item) {
+          episodes.slice(start, start + 8).forEach(function (item) {
             var number = Number(item.episode_number || 0);
             var card = el("button", "flixit-watch-episode" + (number === route.episode ? " is-current" : ""));
             card.type = "button";
+
             var imageWrap = el("span", "flixit-watch-episode__image");
             var still = imgUrl(item.still_path, "w780");
             if (still) {
@@ -124,10 +88,12 @@
               image.decoding = "async";
               imageWrap.appendChild(image);
             }
-            imageWrap.appendChild(el("span", "flixit-watch-episode__number", String(number || "")));
+
             var cardCopy = el("span", "flixit-watch-episode__copy");
+            cardCopy.appendChild(el("span", "flixit-watch-episode__number", "E" + number));
             cardCopy.appendChild(el("strong", "flixit-watch-episode__name", item.name || ("Episodio " + number)));
-            cardCopy.appendChild(el("small", "flixit-watch-episode__meta", number === route.episode ? "In riproduzione" : (item.runtime ? item.runtime + " min" : "Riproduci")));
+            cardCopy.appendChild(el("small", "flixit-watch-episode__meta", number === route.episode ? "In riproduzione" : (item.runtime ? item.runtime + " min" : "")));
+
             card.appendChild(imageWrap);
             card.appendChild(cardCopy);
             card.addEventListener("click", function () {
@@ -141,10 +107,7 @@
             rail.appendChild(card);
           });
         })
-        .catch(function () {
-          rail.innerHTML = "";
-          rail.appendChild(el("div", "flixit-watch-episode-skeleton", "Episodi non disponibili"));
-        });
+        .catch(function () { rail.innerHTML = ""; });
     }
 
     player.insertAdjacentElement("afterend", details);
