@@ -38,6 +38,16 @@ def _install_trailer_registration_hook():
             enrich_items,
             notify,
         )
+
+        # Install quality/language enrichment before the resolver instance is
+        # created. This affects trailer worker discovery only and never blocks
+        # homepage/card rendering.
+        try:
+            from services.trailers.italian_4k_policy import install_italian_4k_trailer_policy
+            install_italian_4k_trailer_policy()
+        except Exception:
+            pass
+
         from services.trailers import register_trailer_service
 
         register_trailer_service(
