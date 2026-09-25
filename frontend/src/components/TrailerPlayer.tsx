@@ -15,6 +15,7 @@ interface Props {
 }
 
 const MAX_TRAILER_HEIGHT = 2160;
+const SC_YOUTUBE_RE = /^\/__sc-youtube\/([A-Za-z0-9_-]{11})\.m3u8(?:[?#].*)?$/i;
 
 function isDirectUrl(value: string) {
   return /^https?:\/\//i.test(value || "") || String(value || "").startsWith("/");
@@ -24,20 +25,53 @@ function isHlsUrl(value: string) {
   return /\.m3u8(?:$|[?#])/i.test(value || "") || /\/hls\//i.test(value || "");
 }
 
-function isYouTubeUrl(value: string) {
+function youtubeId(value: string) {
+  const sentinel = String(value || "").match(SC_YOUTUBE_RE);
+  if (sentinel?.[1]) return sentinel[1];
+
   try {
-    const host = new URL(value).hostname.toLowerCase();
-    return (
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    let id = "";
+    if (host === "youtu.be" || host.endsWith(".youtu.be")) {
+      id = url.pathname.split("/").filter(Boolean)[0] || "";
+    } else if (
       host === "youtube.com" ||
       host.endsWith(".youtube.com") ||
-      host === "youtu.be" ||
-      host.endsWith(".youtu.be") ||
       host === "youtube-nocookie.com" ||
       host.endsWith(".youtube-nocookie.com")
-    );
+    ) {
+      id = url.searchParams.get("v") || "";
+      if (!id) {
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (["embed", "shorts", "live"].includes(String(parts[0] || "").toLowerCase())) {
+          id = parts[1] || "";
+        }
+      }
+    }
+    return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function youtubeEmbedUrl(id: string, muted: boolean, loop: boolean) {
+  const params = new URLSearchParams({
+    autoplay: "1",
+    mute: muted ? "1" : "0",
+    controls: "0",
+    playsinline: "1",
+    rel: "0",
+    modestbranding: "1",
+    iv_load_policy: "3",
+    disablekb: "1",
+    fs: "0",
+  });
+  if (loop) {
+    params.set("loop", "1");
+    params.set("playlist", id);
+  }
+  return `https://www.youtube-nocookie.com/embed/${id}?${params.toString()}`;
 }
 
 function isVixcloudEmbedUrl(value: string) {
@@ -152,10 +186,10 @@ function tryPlay(video: HTMLVideoElement | null, muted: boolean) {
 /** Shared trailer player for Hero, hover cards and Detail.
  *
  * Automatic policy:
- * - StreamingCommunity Vixcloud trailer embeds are rendered as the iframe URL
- *   published by SC, without extracting the underlying media stream;
+ * - StreamingCommunity Vixcloud trailer embeds are rendered as published;
  * - direct SC MP4/HLS trailers keep native playback;
- * - YouTube is rejected completely.
+ * - YouTube is allowed only through the internal SC sentinel created after the
+ *   backend verifies an explicit StreamingCommunity youtube_id for that title.
  */
 export default function TrailerPlayer({
   videoKey,
@@ -186,10 +220,15 @@ export default function TrailerPlayer({
     !propDirect && !!identity
   );
 
-  const rawPlaybackKey = propDirect ? videoKey : resolved.url;
-  const playbackKey = rawPlaybackKey && !isYouTubeUrl(rawPlaybackKey) ? rawPlaybackKey : null;
+  const playbackKey = propDirect ? videoKey : resolved.url;
   const direct = isDirectUrl(playbackKey || "");
   const vixcloudEmbed = isVixcloudEmbedUrl(playbackKey || "");
+  const scYoutubeId = youtubeId(playbackKey || "");
+  const scYoutubeEmbed = !!String(playbackKey || "").match(SC_YOUTUBE_RE) && !!scYoutubeId;
+  const iframeEmbed = vixcloudEmbed || scYoutubeEmbed;
+  const iframeSrc = scYoutubeEmbed && scYoutubeId
+    ? youtubeEmbedUrl(scYoutubeId, !!muted, !!loop)
+    : playbackKey;
 
   useEffect(() => {
     playingRef.current = playing;
@@ -212,7 +251,7 @@ export default function TrailerPlayer({
   }, [onEnded]);
 
   useEffect(() => {
-    if (vixcloudEmbed) return;
+    if (iframeEmbed) return;
     const video = videoRef.current;
     if (!video) return;
     const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
@@ -223,20 +262,20 @@ export default function TrailerPlayer({
       } catch {}
     }
     if (playingRef.current && video.paused) tryPlay(video, !!muted);
-  }, [muted, vixcloudEmbed]);
+  }, [muted, iframeEmbed]);
 
   useEffect(() => {
-    if (vixcloudEmbed) return;
+    if (iframeEmbed) return;
     const video = videoRef.current;
     if (!video) return;
     prepareInlineAutoplay(video, mutedRef.current);
     if (playing) tryPlay(video, mutedRef.current);
     else video.pause();
-  }, [playing, playbackKey, vixcloudEmbed]);
+  }, [playing, playbackKey, iframeEmbed]);
 
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState !== "visible" || !playingRef.current || vixcloudEmbed) return;
+      if (document.visibilityState !== "visible" || !playingRef.current || iframeEmbed) return;
       tryPlay(videoRef.current, mutedRef.current);
     };
     document.addEventListener("visibilitychange", onVisibility);
@@ -245,10 +284,10 @@ export default function TrailerPlayer({
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pageshow", onVisibility);
     };
-  }, [vixcloudEmbed]);
+  }, [iframeEmbed]);
 
   useEffect(() => {
-    if (!direct || !playbackKey || vixcloudEmbed) return;
+    if (!direct || !playbackKey || iframeEmbed) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -321,10 +360,10 @@ export default function TrailerPlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [direct, playbackKey, vixcloudEmbed]);
+  }, [direct, playbackKey, iframeEmbed]);
 
   if (!playbackKey || !direct) return null;
-  if (vixcloudEmbed && !playing) return null;
+  if (iframeEmbed && !playing) return null;
 
   const onReadyToPlay = () => {
     prepareInlineAutoplay(videoRef.current, mutedRef.current);
@@ -346,7 +385,7 @@ export default function TrailerPlayer({
   return (
     <div
       data-testid="trailer-player"
-      data-trailer-provider={vixcloudEmbed ? "vixcloud" : "direct"}
+      data-trailer-provider={scYoutubeEmbed ? "youtube-sc" : vixcloudEmbed ? "vixcloud" : "direct"}
       style={{
         position: "absolute",
         inset: 0,
@@ -354,9 +393,9 @@ export default function TrailerPlayer({
         background: "#000",
       }}
     >
-      {vixcloudEmbed ? (
+      {iframeEmbed ? (
         <iframe
-          src={playbackKey}
+          src={iframeSrc || undefined}
           title="Trailer StreamingCommunity"
           allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
           referrerPolicy="strict-origin-when-cross-origin"
