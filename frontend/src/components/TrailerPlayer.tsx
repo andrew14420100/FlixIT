@@ -24,62 +24,31 @@ function isHlsUrl(value: string) {
   return /\.m3u8(?:$|[?#])/i.test(value || "") || /\/hls\//i.test(value || "");
 }
 
-function youtubeVideoId(value: string) {
-  const text = String(value || "").trim();
-  if (!text) return null;
-  if (/^[A-Za-z0-9_-]{6,20}$/.test(text)) return text;
-
+function isYouTubeUrl(value: string) {
   try {
-    const url = new URL(text);
-    const host = url.hostname.toLowerCase();
-    if (host === "youtu.be" || host.endsWith(".youtu.be")) {
-      const id = url.pathname.split("/").filter(Boolean)[0];
-      return /^[A-Za-z0-9_-]{6,20}$/.test(id || "") ? id : null;
-    }
-    if (
+    const host = new URL(value).hostname.toLowerCase();
+    return (
       host === "youtube.com" ||
       host.endsWith(".youtube.com") ||
+      host === "youtu.be" ||
+      host.endsWith(".youtu.be") ||
       host === "youtube-nocookie.com" ||
       host.endsWith(".youtube-nocookie.com")
-    ) {
-      if (url.pathname === "/watch") {
-        const id = url.searchParams.get("v");
-        return /^[A-Za-z0-9_-]{6,20}$/.test(id || "") ? id : null;
-      }
-      const match = url.pathname.match(/^\/(?:embed|shorts|live)\/([A-Za-z0-9_-]{6,20})/);
-      return match?.[1] || null;
-    }
-  } catch {}
-  return null;
-}
-
-function youtubeEmbedUrl(id: string, muted: boolean, loop: boolean) {
-  const params = new URLSearchParams({
-    autoplay: "1",
-    mute: muted ? "1" : "0",
-    controls: "0",
-    rel: "0",
-    playsinline: "1",
-    enablejsapi: "1",
-    iv_load_policy: "3",
-    fs: "0",
-    disablekb: "1",
-    modestbranding: "1",
-  });
-  if (loop) {
-    params.set("loop", "1");
-    params.set("playlist", id);
-  }
-  return `https://www.youtube-nocookie.com/embed/${id}?${params.toString()}`;
-}
-
-function youtubeCommand(frame: HTMLIFrameElement | null, func: string, args: any[] = []) {
-  try {
-    frame?.contentWindow?.postMessage(
-      JSON.stringify({ event: "command", func, args }),
-      "*"
     );
-  } catch {}
+  } catch {
+    return false;
+  }
+}
+
+function isVixcloudEmbedUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (!(host === "vixcloud.co" || host.endsWith(".vixcloud.co"))) return false;
+    return /^\/embed\/\d+\/?$/i.test(url.pathname || "");
+  } catch {
+    return false;
+  }
 }
 
 function routeIdentity() {
@@ -180,9 +149,14 @@ function tryPlay(video: HTMLVideoElement | null, muted: boolean) {
   }
 }
 
-/** Trailer player shared by Hero, hover cards and Detail.
- * StreamingCommunity trailers use the associated YouTube video inside the
- * existing FLIX-IT surface; manual direct MP4/HLS URLs keep native playback. */
+/** Shared trailer player for Hero, hover cards and Detail.
+ *
+ * Automatic policy:
+ * - StreamingCommunity Vixcloud trailer embeds are rendered as the iframe URL
+ *   published by SC, without extracting the underlying media stream;
+ * - direct SC MP4/HLS trailers keep native playback;
+ * - YouTube is rejected completely.
+ */
 export default function TrailerPlayer({
   videoKey,
   muted = true,
@@ -194,7 +168,6 @@ export default function TrailerPlayer({
   onError,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const youtubeRef = useRef<HTMLIFrameElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const playingRef = useRef(playing);
   const mutedRef = useRef(muted);
@@ -212,18 +185,11 @@ export default function TrailerPlayer({
     identity?.id,
     !propDirect && !!identity
   );
-  const playbackKey = propDirect ? videoKey : resolved.url;
+
+  const rawPlaybackKey = propDirect ? videoKey : resolved.url;
+  const playbackKey = rawPlaybackKey && !isYouTubeUrl(rawPlaybackKey) ? rawPlaybackKey : null;
   const direct = isDirectUrl(playbackKey || "");
-  const youtubeId = useMemo(
-    () => youtubeVideoId(playbackKey || ""),
-    [playbackKey]
-  );
-  const youtubeSrc = useMemo(
-    () => (youtubeId ? youtubeEmbedUrl(youtubeId, muted, loop) : null),
-    // Keep the iframe stable when only mute changes; mute/unmute is sent through
-    // the YouTube JS API below instead of reloading the trailer.
-    [youtubeId, loop]
-  );
+  const vixcloudEmbed = isVixcloudEmbedUrl(playbackKey || "");
 
   useEffect(() => {
     playingRef.current = playing;
@@ -246,10 +212,7 @@ export default function TrailerPlayer({
   }, [onEnded]);
 
   useEffect(() => {
-    if (youtubeId) {
-      youtubeCommand(youtubeRef.current, muted ? "mute" : "unMute");
-      return;
-    }
+    if (vixcloudEmbed) return;
     const video = videoRef.current;
     if (!video) return;
     const currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
@@ -260,29 +223,21 @@ export default function TrailerPlayer({
       } catch {}
     }
     if (playingRef.current && video.paused) tryPlay(video, !!muted);
-  }, [muted, youtubeId]);
+  }, [muted, vixcloudEmbed]);
 
   useEffect(() => {
-    if (youtubeId) {
-      youtubeCommand(youtubeRef.current, playing ? "playVideo" : "pauseVideo");
-      youtubeCommand(youtubeRef.current, mutedRef.current ? "mute" : "unMute");
-      return;
-    }
+    if (vixcloudEmbed) return;
     const video = videoRef.current;
     if (!video) return;
     prepareInlineAutoplay(video, mutedRef.current);
     if (playing) tryPlay(video, mutedRef.current);
     else video.pause();
-  }, [playing, playbackKey, youtubeId]);
+  }, [playing, playbackKey, vixcloudEmbed]);
 
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState !== "visible" || !playingRef.current) return;
-      if (youtubeRef.current) {
-        youtubeCommand(youtubeRef.current, "playVideo");
-      } else {
-        tryPlay(videoRef.current, mutedRef.current);
-      }
+      if (document.visibilityState !== "visible" || !playingRef.current || vixcloudEmbed) return;
+      tryPlay(videoRef.current, mutedRef.current);
     };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pageshow", onVisibility);
@@ -290,37 +245,10 @@ export default function TrailerPlayer({
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pageshow", onVisibility);
     };
-  }, []);
+  }, [vixcloudEmbed]);
 
   useEffect(() => {
-    if (!youtubeId) return;
-    const listener = (event: MessageEvent) => {
-      const frame = youtubeRef.current;
-      if (!frame || event.source !== frame.contentWindow) return;
-      if (!String(event.origin || "").includes("youtube")) return;
-      let payload: any = event.data;
-      if (typeof payload === "string") {
-        try {
-          payload = JSON.parse(payload);
-        } catch {
-          return;
-        }
-      }
-      if (!payload || typeof payload !== "object") return;
-      if (payload.event === "onStateChange") {
-        if (Number(payload.info) === 1) onPlayingRef.current?.();
-        if (Number(payload.info) === 0 && !loop) onEndedRef.current?.();
-      }
-      if (payload.event === "onError") {
-        onErrorRef.current?.(Number(payload.info) || 500);
-      }
-    };
-    window.addEventListener("message", listener);
-    return () => window.removeEventListener("message", listener);
-  }, [youtubeId, loop]);
-
-  useEffect(() => {
-    if (!direct || !playbackKey || youtubeId) return;
+    if (!direct || !playbackKey || vixcloudEmbed) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -393,9 +321,10 @@ export default function TrailerPlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [direct, playbackKey, youtubeId]);
+  }, [direct, playbackKey, vixcloudEmbed]);
 
   if (!playbackKey || !direct) return null;
+  if (vixcloudEmbed && !playing) return null;
 
   const onReadyToPlay = () => {
     prepareInlineAutoplay(videoRef.current, mutedRef.current);
@@ -417,6 +346,7 @@ export default function TrailerPlayer({
   return (
     <div
       data-testid="trailer-player"
+      data-trailer-provider={vixcloudEmbed ? "vixcloud" : "direct"}
       style={{
         position: "absolute",
         inset: 0,
@@ -424,25 +354,13 @@ export default function TrailerPlayer({
         background: "#000",
       }}
     >
-      {youtubeId && youtubeSrc ? (
+      {vixcloudEmbed ? (
         <iframe
-          ref={youtubeRef}
-          src={youtubeSrc}
-          title="Trailer"
-          allow="autoplay; encrypted-media; picture-in-picture"
+          src={playbackKey}
+          title="Trailer StreamingCommunity"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
           referrerPolicy="strict-origin-when-cross-origin"
-          onLoad={() => {
-            try {
-              youtubeRef.current?.contentWindow?.postMessage(
-                JSON.stringify({ event: "listening", id: "flixit-trailer" }),
-                "*"
-              );
-            } catch {}
-            youtubeCommand(youtubeRef.current, "addEventListener", ["onStateChange"]);
-            youtubeCommand(youtubeRef.current, "addEventListener", ["onError"]);
-            youtubeCommand(youtubeRef.current, mutedRef.current ? "mute" : "unMute");
-            if (playingRef.current) youtubeCommand(youtubeRef.current, "playVideo");
-          }}
+          onLoad={() => onPlayingRef.current?.()}
           style={frameStyle}
         />
       ) : (
