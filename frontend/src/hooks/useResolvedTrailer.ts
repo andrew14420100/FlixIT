@@ -3,8 +3,9 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v22-visible-first";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v23-sc-youtube-metadata";
 const SC_SOURCE = "streamingcommunity";
+const SC_YOUTUBE_PREFIX = "/__sc-youtube/";
 
 function isYouTubeHost(value: string) {
   try {
@@ -25,11 +26,35 @@ function isYouTubeHost(value: string) {
   }
 }
 
+function youtubeId(value: string) {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    let id = "";
+    if (host === "youtu.be" || host.endsWith(".youtu.be")) {
+      id = url.pathname.split("/").filter(Boolean)[0] || "";
+    } else {
+      id = url.searchParams.get("v") || "";
+      if (!id) {
+        const parts = url.pathname.split("/").filter(Boolean);
+        if (["embed", "shorts", "live"].includes(String(parts[0] || "").toLowerCase())) {
+          id = parts[1] || "";
+        }
+      }
+    }
+    return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 function directTrailerUrl(data: any) {
   const selected = data?.selected && typeof data.selected === "object" ? data.selected : data;
   const source = String(selected?.source || data?.source || "").trim().toLowerCase();
 
   if (source !== SC_SOURCE) return null;
+
+  const scYoutubeMetadata = selected?.metadata?.sc_youtube_metadata === true;
 
   for (const value of [
     selected?.trailer_url,
@@ -43,7 +68,15 @@ function directTrailerUrl(data: any) {
     if (!text) continue;
     if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) continue;
 
-    if (isYouTubeHost(text)) continue;
+    if (isYouTubeHost(text)) {
+      if (!scYoutubeMetadata) continue;
+      const id = youtubeId(text);
+      if (!id) continue;
+      // Never expose a generic YouTube URL to the rest of the UI. The sentinel
+      // is created only after the backend proves it came from SC youtube_id
+      // metadata, and TrailerPlayer turns it into a privacy-enhanced embed.
+      return `${SC_YOUTUBE_PREFIX}${id}.m3u8`;
+    }
     return text;
   }
   return null;
@@ -59,7 +92,8 @@ export function browserSupportsHdr() {
 }
 
 /** Shared public trailer cache for Hero, hover cards and Detail.
- * Automatic trailer policy: StreamingCommunity Vixcloud embed or direct media. */
+ * Automatic trailer policy: SC Vixcloud/direct media, plus YouTube only when SC
+ * explicitly publishes youtube_id for the exact matched title. */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
   const hdr = useMemo(() => browserSupportsHdr(), []);
