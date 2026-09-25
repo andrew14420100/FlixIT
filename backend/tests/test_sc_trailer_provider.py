@@ -2,7 +2,12 @@ import html
 import json
 
 from services.trailers.base import TrailerCandidate, candidate_is_usable
-from services.trailers.providers.streamingcommunity import _inertia_page, _native_trailer_url, _trailer_row
+from services.trailers.providers.streamingcommunity import (
+    _inertia_page,
+    _native_trailer_url,
+    _trailer_row,
+    _trailer_rows,
+)
 
 
 def test_sc_youtube_candidate_is_never_usable():
@@ -58,9 +63,10 @@ def test_inertia_youtube_only_trailer_is_ignored():
     trailer, native_url = _trailer_row(decoded["props"]["title"], "https://streamingcommunity.example")
     assert trailer is None
     assert native_url is None
+    assert _trailer_rows(decoded["props"]["title"], "https://streamingcommunity.example") == []
 
 
-def test_native_sc_trailer_media_is_decoded():
+def test_all_native_sc_trailer_media_are_decoded_and_deduplicated():
     title = {
         "id": 42,
         "tmdb_id": 123,
@@ -69,12 +75,20 @@ def test_native_sc_trailer_media_is_decoded():
                 "id": 9,
                 "youtube_id": "abcdefghijk",
                 "manifest_url": "https://cdn.streamingcommunity.example/trailers/42/master.m3u8",
-            }
+                "hls_url": "https://cdn.streamingcommunity.example/trailers/42/master.m3u8",
+            },
+            {
+                "id": 10,
+                "video_url": "https://cdn.streamingcommunity.example/trailers/42/trailer-2.mp4",
+            },
         ],
     }
-    trailer, native_url = _trailer_row(title, "https://streamingcommunity.example")
-    assert trailer["id"] == 9
-    assert native_url == "https://cdn.streamingcommunity.example/trailers/42/master.m3u8"
+    rows = _trailer_rows(title, "https://streamingcommunity.example")
+    assert len(rows) == 2
+    assert rows[0][0]["id"] == 9
+    assert rows[0][1].endswith("master.m3u8")
+    assert rows[1][0]["id"] == 10
+    assert rows[1][1].endswith("trailer-2.mp4")
 
 
 def test_native_trailer_url_rejects_playback_and_youtube():
