@@ -50,13 +50,20 @@ def _install_trailer_registration_hook():
 
         from services.trailers import register_trailer_service
 
-        register_trailer_service(
+        trailer_resolver = register_trailer_service(
             app,
             db,
             get_current_admin,
             log_admin_action,
             fetch_tmdb_data,
         )
+
+        try:
+            from services.trailers.italian_4k_policy import install_italian_4k_result_policy
+            if trailer_resolver is not None:
+                install_italian_4k_result_policy(trailer_resolver)
+        except Exception:
+            pass
 
         try:
             from services.performance_api import install_performance_api
