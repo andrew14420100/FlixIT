@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v21-recovery";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v22-visible-first";
 const SC_SOURCE = "streamingcommunity";
 
 function isYouTubeHost(value: string) {
@@ -43,8 +43,6 @@ function directTrailerUrl(data: any) {
     if (!text) continue;
     if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) continue;
 
-    // YouTube stays blocked. SC Vixcloud embeds and direct SC trailer media are
-    // both accepted and TrailerPlayer decides whether to use iframe or <video>.
     if (isYouTubeHost(text)) continue;
     return text;
   }
@@ -89,8 +87,6 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       if (candidate && data?.available !== false && data?.refresh_pending !== true) return false;
 
       const updates = Number(query?.state?.dataUpdateCount || 0);
-      // Give background SC resolution enough time to recover a stale/empty cache
-      // without hammering the API. Once a trailer is available polling stops.
       if (!candidate) return updates < 12 ? 4000 : false;
       return data?.refresh_pending === true && updates < 8 ? 5000 : false;
     },
