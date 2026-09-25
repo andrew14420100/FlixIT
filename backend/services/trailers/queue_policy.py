@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import MethodType
 
 
 SC_SOURCE = "streamingcommunity"
-TRAILER_POLICY_VERSION = "streamingcommunity-vixcloud-all-v5"
+TRAILER_POLICY_VERSION = "streamingcommunity-vixcloud-all-v6-recovery"
+EMPTY_RESULT_TTL = timedelta(minutes=20)
 
 
 def _fresh_expiry(value) -> bool:
@@ -36,9 +37,9 @@ def install_queue_policy(resolver):
 
     Every available FLIX-IT catalog item is checked against StreamingCommunity.
     Accepted playback is either an explicit SC trailer media URL or an explicit
-    Vixcloud trailer embed published in SC trailer metadata. A fresh check is
-    complete even when SC exposes no accepted trailer, so no-trailer titles do
-    not block progress through the rest of the catalog.
+    Vixcloud trailer embed published in SC trailer metadata. Empty/transient
+    results expire quickly so a temporary provider failure cannot hide trailers
+    for days.
     """
 
     base_enqueue = resolver.enqueue
@@ -113,16 +114,26 @@ def install_queue_policy(resolver):
             and row.get("source") == SC_SOURCE
             and (row.get("metadata") or {}).get("native_sc_trailer") is True
         )
-        checked_at = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        checked_at = now_dt.isoformat()
+        metadata_expiry = (
+            (now_dt + EMPTY_RESULT_TTL).isoformat()
+            if native_count == 0
+            else (doc or {}).get("metadataExpiresAt")
+        )
+        update_fields = {
+            "policyVersion": TRAILER_POLICY_VERSION,
+            "sourcePolicy": "streamingcommunity-vixcloud-or-direct",
+            "scNativeCheckedAt": checked_at,
+            "scNativeTrailerCount": native_count,
+        }
+        if metadata_expiry:
+            update_fields["metadataExpiresAt"] = metadata_expiry
+
         self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
             {
-                "$set": {
-                    "policyVersion": TRAILER_POLICY_VERSION,
-                    "sourcePolicy": "streamingcommunity-vixcloud-or-direct",
-                    "scNativeCheckedAt": checked_at,
-                    "scNativeTrailerCount": native_count,
-                },
+                "$set": update_fields,
                 "$unset": {"manual": ""},
             },
             upsert=True,
@@ -131,10 +142,7 @@ def install_queue_policy(resolver):
             doc.pop("manual", None)
             return {
                 **doc,
-                "policyVersion": TRAILER_POLICY_VERSION,
-                "sourcePolicy": "streamingcommunity-vixcloud-or-direct",
-                "scNativeCheckedAt": checked_at,
-                "scNativeTrailerCount": native_count,
+                **update_fields,
             }
         return doc
 
