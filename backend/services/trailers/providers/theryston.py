@@ -10,22 +10,17 @@ from urllib.parse import unquote, urlparse
 
 import httpx
 
-from ..base import TrailerCandidate, normalize_title
+from ..base import TrailerCandidate, is_italian_language, normalize_title
 from ..manifest import probe_direct_file
 
 
 class TherystonTrailerProvider:
     """Adapter for the local Theryston/trailers-api service.
 
-    IMDb is intentionally NOT submitted here anymore: current IMDb HTML pages
-    can be returned as WAF challenge/empty documents, which breaks Theryston's
-    upstream __NEXT_DATA__ parser. FLIX-IT now resolves IMDb-hosted trailers
-    directly through its dedicated GraphQL provider.
-
-    Theryston remains the extraction engine for reliable provider pages already
-    known for Apple TV, Prime Video or Netflix. Finished media is persisted in
-    DATA_FOLDER/files and re-served by FastAPI, so normal page refreshes never
-    trigger a new provider extraction.
+    Known Apple TV, Prime Video and Netflix provider pages are resolved directly.
+    When a page is unavailable, or when the page result has no verified Italian
+    audio, Theryston's title/year search is used with lang=it-IT across services.
+    Finished media is persisted in DATA_FOLDER/files and re-served by FastAPI.
     """
 
     name = "theryston"
@@ -90,25 +85,16 @@ class TherystonTrailerProvider:
             return None
         return path
 
-    async def _run_page(self, http: httpx.AsyncClient, identity: dict, source: str, page_url: str, confidence: float) -> list[TrailerCandidate]:
-        try:
-            response = await http.post(
-                f"{self.api_url}/process/by-trailer-page",
-                json={
-                    "trailerPage": page_url,
-                    "lang": "it-IT",
-                    "fullAudioTracks": False,
-                },
-            )
-            if response.status_code != 201:
-                return []
-            process_id = str(response.json().get("processId") or "")
-            if not process_id:
-                return []
-            result = await self._wait_process(http, process_id)
-        except Exception:
-            return []
-
+    async def _candidates_from_result(
+        self,
+        result: dict | None,
+        identity: dict,
+        source: str,
+        page_url: str,
+        confidence: float,
+        *,
+        require_italian: bool = False,
+    ) -> list[TrailerCandidate]:
         if not result or str(result.get("status") or "").lower() != "done":
             return []
 
@@ -120,6 +106,11 @@ class TherystonTrailerProvider:
                 continue
             probed = await probe_direct_file(str(local_path), timeout=25.0)
             if not probed:
+                continue
+
+            audio_language = probed.get("audio_language")
+            language_verified = is_italian_language(audio_language)
+            if require_italian and not language_verified:
                 continue
 
             filename = local_path.name
@@ -142,8 +133,8 @@ class TherystonTrailerProvider:
                 TrailerCandidate(
                     source=f"theryston_{source}",
                     trailer_url=public_url,
-                    provider_id=process_id,
-                    provider_page=page_url,
+                    provider_id=str(result.get("processId") or result.get("id") or "") or None,
+                    provider_page=page_url or None,
                     matched_title=identity.get("title"),
                     matched_year=identity.get("year"),
                     media_type=identity.get("type"),
@@ -155,7 +146,7 @@ class TherystonTrailerProvider:
                     bitrate=probed.get("bitrate"),
                     codec=probed.get("codec"),
                     fps=probed.get("fps"),
-                    audio_language=probed.get("audio_language"),
+                    audio_language=audio_language,
                     audio_codec=probed.get("audio_codec"),
                     audio_bitrate=probed.get("audio_bitrate"),
                     subtitles=trailer.get("subtitles") or [],
@@ -167,19 +158,98 @@ class TherystonTrailerProvider:
                     local_cache_key=hashlib.sha256(filename.encode("utf-8")).hexdigest()[:20],
                     metadata={
                         "persistent_local": True,
-                        "theryston_process_id": process_id,
+                        "theryston_process_id": str(result.get("processId") or result.get("id") or ""),
                         "theryston_original_url": remote_url,
                         "theryston_filename": filename,
+                        "requested_language": "it-IT",
+                        "language_verified": language_verified,
+                        "audio_language_inferred": False,
+                        "theryston_title_search": source == "search",
                     },
                 )
             )
         return candidates
 
-    async def discover(self, identity: dict) -> list[TrailerCandidate]:
-        pages = self._pages(identity)
-        if not pages:
+    async def _run_page(
+        self,
+        http: httpx.AsyncClient,
+        identity: dict,
+        source: str,
+        page_url: str,
+        confidence: float,
+    ) -> list[TrailerCandidate]:
+        try:
+            response = await http.post(
+                f"{self.api_url}/process/by-trailer-page",
+                json={
+                    "trailerPage": page_url,
+                    "lang": "it-IT",
+                    "fullAudioTracks": False,
+                },
+            )
+            if response.status_code != 201:
+                return []
+            process_id = str(response.json().get("processId") or "")
+            if not process_id:
+                return []
+            result = await self._wait_process(http, process_id)
+            if result:
+                result = {**result, "processId": process_id}
+        except Exception:
             return []
 
+        return await self._candidates_from_result(
+            result,
+            identity,
+            source,
+            page_url,
+            confidence,
+            require_italian=False,
+        )
+
+    async def _run_search(self, http: httpx.AsyncClient, identity: dict) -> list[TrailerCandidate]:
+        title = str(identity.get("title") or identity.get("original_title") or "").strip()
+        try:
+            year = int(identity.get("year") or 0)
+        except Exception:
+            year = 0
+        if not title or year < 1900:
+            return []
+
+        try:
+            response = await http.post(
+                f"{self.api_url}/process",
+                json={
+                    "serviceName": "ALL",
+                    "name": title,
+                    "year": year,
+                    "lang": "it-IT",
+                    "fullAudioTracks": False,
+                },
+            )
+            if response.status_code != 201:
+                return []
+            process_id = str(response.json().get("processId") or "")
+            if not process_id:
+                return []
+            result = await self._wait_process(http, process_id)
+            if result:
+                result = {**result, "processId": process_id}
+        except Exception:
+            return []
+
+        page_url = str((result or {}).get("trailerPage") or "")
+        return await self._candidates_from_result(
+            result,
+            identity,
+            "search",
+            page_url,
+            0.96,
+            require_italian=True,
+        )
+
+    async def discover(self, identity: dict) -> list[TrailerCandidate]:
+        pages = self._pages(identity)
         timeout = httpx.Timeout(10.0, connect=2.5)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as http:
             try:
@@ -189,13 +259,20 @@ class TherystonTrailerProvider:
             except Exception:
                 return []
 
-            rows = await asyncio.gather(
-                *(self._run_page(http, identity, source, url, confidence) for source, url, confidence in pages),
-                return_exceptions=True,
-            )
+            out: list[TrailerCandidate] = []
+            if pages:
+                rows = await asyncio.gather(
+                    *(self._run_page(http, identity, source, url, confidence) for source, url, confidence in pages),
+                    return_exceptions=True,
+                )
+                for row in rows:
+                    if isinstance(row, list):
+                        out.extend(row)
 
-        out: list[TrailerCandidate] = []
-        for row in rows:
-            if isinstance(row, list):
-                out.extend(row)
-        return out
+            # If the known provider pages already gave us verified Italian audio,
+            # keep them. Otherwise ask Theryston to search by title/year in it-IT.
+            if any(is_italian_language(row.audio_language) for row in out):
+                return out
+
+            search_rows = await self._run_search(http, identity)
+            return [*search_rows, *out]
