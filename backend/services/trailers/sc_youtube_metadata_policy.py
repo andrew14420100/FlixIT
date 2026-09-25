@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 _YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _INSTALLED = False
-SC_YOUTUBE_POLICY_VERSION = "streamingcommunity-vixcloud-youtube-v7"
+SC_YOUTUBE_POLICY_VERSION = "streamingcommunity-vixcloud-youtube-v8-catalog-first"
 
 
 def _youtube_id(value) -> str | None:
