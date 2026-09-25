@@ -7,12 +7,15 @@ has Italian audio.  This overlay makes the TV policy fail closed:
 - an episode is visible only when the provider payload contains an explicit
   Italian language/audio hint;
 - English/original-only and language-unconfirmed episodes stay hidden;
-- the title-level availability verifier accepts a TV series only when at least
-  one probed episode passes the same explicit-Italian check;
+- explicit TV playability checks use the same strict Italian metadata gate;
 - old positive availability cache entries are invalidated by a policy-version
   bump.
 
-The module only inspects public provider metadata.  It does not resolve or
+The homepage/catalogue rendering path is deliberately kept separate from live
+provider probes so page loading is never blocked by dozens of upstream HTTP
+requests. The strict episode gate still applies on season/detail responses.
+
+The module only inspects public provider metadata. It does not resolve or
 inspect the underlying media stream.
 """
 from __future__ import annotations
@@ -129,12 +132,28 @@ def install_strict_italian_tv_policy(app) -> bool:
         strict_probe_endpoint._original = current_probe
         verifier_cls._probe_endpoint = strict_probe_endpoint
 
+    # Register the fast catalogue-only rendering path after the live verifier
+    # and the strict-TV overlay. This keeps home/archive loads instant while the
+    # episode/detail policy above continues to reject English/unconfirmed audio.
+    try:
+        from services.fast_catalog_availability import install_fast_catalog_availability
+        install_fast_catalog_availability(app, getattr(app.state, "db", None))
+    except Exception:
+        try:
+            # The DB argument is currently unused by the overlay; keep a fallback
+            # for applications that do not expose it on app.state.
+            from services.fast_catalog_availability import install_fast_catalog_availability
+            install_fast_catalog_availability(app, None)
+        except Exception:
+            pass
+
     try:
         app.state.flixit_strict_italian_tv_policy = {
             "installed": True,
             "episode_policy": STRICT_EPISODE_POLICY_VERSION,
             "availability_policy": STRICT_AVAILABILITY_POLICY_VERSION,
             "mode": "explicit_italian_only_fail_closed",
+            "catalog_rendering": "cached_lang_it_no_live_probe",
         }
     except Exception:
         pass
