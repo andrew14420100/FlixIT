@@ -2,204 +2,152 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import MethodType
 
 
-ITALIAN_RETRY_SECONDS = 60 * 60
-PUBLIC_RETRY_THROTTLE_SECONDS = 30 * 60
-TRAILER_POLICY_VERSION = "italian-4k-theryston-title-search-v2"
-
-
-def _dt(value):
-    if not value:
-        return None
-    try:
-        out = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return out if out.tzinfo else out.replace(tzinfo=timezone.utc)
-    except Exception:
-        return None
-
-
-def _language(value) -> str:
-    return str(value or "").strip().lower().replace("_", "-")
-
-
-def _is_italian(value) -> bool:
-    lang = _language(value)
-    return bool(
-        lang == "it"
-        or lang.startswith("it-")
-        or lang in {"ita", "italian", "italiano", "italiana"}
-        or lang.startswith("italian-")
-    )
-
-
-def _is_english(value) -> bool:
-    lang = _language(value)
-    return bool(
-        lang == "en"
-        or lang.startswith("en-")
-        or lang in {"eng", "english", "inglese"}
-        or lang.startswith("english-")
-    )
-
-
-def _candidate_has_verified_italian_audio(candidate: dict) -> bool:
-    """Require evidence that the media audio itself is Italian."""
-    if not candidate:
-        return False
-    language = candidate.get("audio_language") or candidate.get("language")
-    if not _is_italian(language):
-        return False
-
-    source = str(candidate.get("source") or "").strip().lower()
-    metadata = candidate.get("metadata") or {}
-
-    if metadata.get("audio_language_inferred") is True:
-        return False
-
-    if source in {"apple_tv", "apple_itunes_it"}:
-        langs = metadata.get("hls_audio_languages") or []
-        return any(_is_italian(value) for value in langs)
-
-    if source == "netflix":
-        if "hls_audio_languages" in metadata:
-            langs = metadata.get("hls_audio_languages") or []
-            return any(_is_italian(value) for value in langs)
-        return metadata.get("audio_language_inferred") is False
-
-    return True
+SC_SOURCE = "streamingcommunity"
+TRAILER_POLICY_VERSION = "streamingcommunity-only-v3"
 
 
 def install_queue_policy(resolver):
-    """Install a cache-aware Italian-first trailer policy.
+    """Install a strict StreamingCommunity-only trailer policy.
 
-    Verified Italian audio is always preferred. Old cached results are forcibly
-    recalculated whenever the policy version changes, so a fresh English cache
-    cannot block the new Italian title/year search. Italian 1080p results are
-    revisited in search of native 2160p/4K; no upscaling is performed.
+    No manual URL, old provider result, media_assets trailer_key or temporary
+    original-language fallback is allowed to become public playback. Existing
+    manual overrides are removed because older releases preserved them and they
+    could permanently block SC discovery.
     """
 
     base_enqueue = resolver.enqueue
     base_public_result = resolver.public_result
     base_resolve = resolver.resolve
-    resolver._italian_public_retry_at = {}
+
+    # One-time migration for records produced by the previous trailer systems.
+    resolver.results.update_many(
+        {},
+        {
+            "$unset": {
+                "manual": "",
+                "providerPages.apple_tv": "",
+                "providerPages.prime_video": "",
+                "providerPages.netflix": "",
+            }
+        },
+    )
 
     def safe_enqueue(self, media_type: str, tmdb_id: int, *, priority: int = 5, reason: str = "catalog"):
-        """Do not let repeated public polling restart a job already in flight."""
         media_type = "tv" if media_type == "tv" else "movie"
         tmdb_id = int(tmdb_id)
         job = self.jobs.find_one(
             {"type": media_type, "tmdbId": tmdb_id},
-            {"_id": 0, "status": 1, "priority": 1, "nextRunAt": 1, "updatedAt": 1},
+            {"_id": 0, "status": 1, "priority": 1},
         ) or {}
         status = job.get("status")
 
         if status in {"running", "retry"}:
             return
-
         if status == "pending":
             current_priority = int(job.get("priority") or 999)
             if int(priority) < current_priority:
                 self.jobs.update_one(
                     {"type": media_type, "tmdbId": tmdb_id, "status": "pending"},
-                    {"$set": {"priority": int(priority), "reason": reason, "updatedAt": datetime.now(timezone.utc).isoformat()}},
+                    {
+                        "$set": {
+                            "priority": int(priority),
+                            "reason": reason,
+                            "updatedAt": datetime.now(timezone.utc).isoformat(),
+                        }
+                    },
                 )
             return
-
         base_enqueue(media_type, tmdb_id, priority=priority, reason=reason)
 
-    async def policy_resolve(self, media_type: str, tmdb_id: int, *, force: bool = False):
+    async def strict_resolve(self, media_type: str, tmdb_id: int, *, force: bool = False):
         normalized_type = "tv" if media_type == "tv" else "movie"
         normalized_id = int(tmdb_id)
-        cached = self.results.find_one(
-            {"type": normalized_type, "tmdbId": normalized_id},
-            {"_id": 0, "policyVersion": 1},
-        ) or {}
 
-        # A cache created under an older discovery policy must never short-circuit
-        # the new Italian/4K resolution path just because its metadata TTL is fresh.
-        if cached and cached.get("policyVersion") != TRAILER_POLICY_VERSION:
-            force = True
-
-        doc = await base_resolve(media_type, tmdb_id, force=force)
+        # A manual override must never short-circuit TrailerResolver.resolve().
         self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
-            {"$set": {"policyVersion": TRAILER_POLICY_VERSION}},
+            {"$unset": {"manual": ""}},
+        )
+
+        cached = self.results.find_one(
+            {"type": normalized_type, "tmdbId": normalized_id},
+            {"_id": 0, "policyVersion": 1, "selected": 1},
+        ) or {}
+        selected = cached.get("selected") or {}
+        if (
+            cached.get("policyVersion") != TRAILER_POLICY_VERSION
+            or (selected and selected.get("source") != SC_SOURCE)
+        ):
+            force = True
+
+        doc = await base_resolve(normalized_type, normalized_id, force=force)
+        self.results.update_one(
+            {"type": normalized_type, "tmdbId": normalized_id},
+            {
+                "$set": {
+                    "policyVersion": TRAILER_POLICY_VERSION,
+                    "sourcePolicy": "streamingcommunity-only",
+                },
+                "$unset": {"manual": ""},
+            },
             upsert=True,
         )
         if isinstance(doc, dict):
-            return {**doc, "policyVersion": TRAILER_POLICY_VERSION}
+            doc.pop("manual", None)
+            return {
+                **doc,
+                "policyVersion": TRAILER_POLICY_VERSION,
+                "sourcePolicy": "streamingcommunity-only",
+            }
         return doc
 
-    def italian_first_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
-        """Prefer verified Italian, while actively upgrading stale policy caches."""
+    def strict_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
         normalized_type = "tv" if media_type == "tv" else "movie"
         normalized_id = int(tmdb_id)
-        cached = self.results.find_one(
+
+        # Clear an override even if it was written after service startup.
+        self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
-            {"_id": 0, "policyVersion": 1},
-        ) or {}
-        policy_stale = bool(cached and cached.get("policyVersion") != TRAILER_POLICY_VERSION)
-        if policy_stale:
-            self.enqueue(normalized_type, normalized_id, priority=1, reason="trailer_policy_upgrade_public")
+            {"$unset": {"manual": ""}},
+        )
 
-        result = base_public_result(media_type, tmdb_id, hdr_supported=hdr_supported)
-        if not result.get("enabled"):
-            return result
-
+        result = base_public_result(normalized_type, normalized_id, hdr_supported=hdr_supported)
         selected = result.get("selected") or {}
-        language = selected.get("audio_language") or selected.get("language")
-        if selected and _candidate_has_verified_italian_audio(selected) and not policy_stale:
+        source = str(selected.get("source") or result.get("source") or "").strip().lower()
+        policy_ok = source == SC_SOURCE and result.get("available") is not False
+
+        if policy_ok:
             return {
                 **result,
-                "italian_preferred": True,
-                "italian_only": False,
-                "language_required": "it",
-                "language_verified": True,
-                "fallback_original": False,
+                "enabled": True,
+                "available": True,
+                "source": SC_SOURCE,
+                "selected": selected,
+                "source_policy": "streamingcommunity-only",
+                "policy_version": TRAILER_POLICY_VERSION,
                 "refresh_pending": False,
-                "policy_version": TRAILER_POLICY_VERSION,
+                "fallback_original": False,
             }
 
-        key = f"{normalized_type}:{normalized_id}"
-        now_mono = time.monotonic()
-        last_retry = float(self._italian_public_retry_at.get(key) or 0)
-        refresh_pending = policy_stale
-        if now_mono - last_retry >= PUBLIC_RETRY_THROTTLE_SECONDS:
-            self._italian_public_retry_at[key] = now_mono
-            self.enqueue(media_type, tmdb_id, priority=1, reason="seek_verified_italian")
-            refresh_pending = True
-
-        if selected and result.get("available") is not False:
-            return {
-                **result,
-                "italian_preferred": True,
-                "italian_only": False,
-                "language_required": "it",
-                "language_verified": False,
-                "fallback_original": True,
-                "fallback_language": language or "unknown",
-                "refresh_pending": refresh_pending,
-                "reason": "temporary_original_until_italian_available",
-                "policy_version": TRAILER_POLICY_VERSION,
-            }
-
+        # Never let the FastAPI integration fall back to the legacy endpoint.
+        # The only valid interim state is 'no trailer' while SC is resolving.
+        self.enqueue(normalized_type, normalized_id, priority=1, reason="strict_sc_only")
         return {
-            **result,
+            "enabled": True,
             "available": False,
             "selected": None,
-            "source": None,
-            "italian_preferred": True,
-            "italian_only": False,
-            "language_required": "it",
-            "language_verified": False,
-            "fallback_original": False,
-            "refresh_pending": refresh_pending,
-            "reason": "italian_audio_search_pending",
+            "source": SC_SOURCE,
+            "source_policy": "streamingcommunity-only",
             "policy_version": TRAILER_POLICY_VERSION,
+            "cached": bool(result.get("cached")),
+            "stale": bool(result.get("stale") or selected),
+            "refresh_pending": True,
+            "fallback_original": False,
+            "reason": "streamingcommunity_trailer_required",
         }
 
     def enqueue_catalog(self, limit: int = 250):
@@ -208,6 +156,7 @@ def install_queue_policy(resolver):
         skipped = 0
         scanned = 0
         now = datetime.now(timezone.utc)
+
         cursor = self.contents.find(
             {"available": {"$ne": False}},
             {"_id": 0, "type": 1, "tmdbId": 1},
@@ -217,13 +166,11 @@ def install_queue_policy(resolver):
             scanned += 1
             if queued >= wanted:
                 break
-
-            tmdb_raw = content.get("tmdbId")
-            if tmdb_raw is None:
+            if content.get("tmdbId") is None:
                 skipped += 1
                 continue
             try:
-                tmdb_id = int(tmdb_raw)
+                tmdb_id = int(content.get("tmdbId"))
             except Exception:
                 skipped += 1
                 continue
@@ -239,57 +186,29 @@ def install_queue_policy(resolver):
 
             resolved = self.results.find_one(
                 {"type": media_type, "tmdbId": tmdb_id},
-                {"_id": 0},
+                {"_id": 0, "selected": 1, "metadataExpiresAt": 1, "policyVersion": 1},
             ) or {}
+            selected = resolved.get("selected") or {}
+            expiry = resolved.get("metadataExpiresAt")
+            metadata_fresh = False
+            if expiry:
+                try:
+                    parsed = datetime.fromisoformat(str(expiry).replace("Z", "+00:00"))
+                    if not parsed.tzinfo:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    metadata_fresh = parsed > now
+                except Exception:
+                    metadata_fresh = False
 
-            if resolved and resolved.get("policyVersion") != TRAILER_POLICY_VERSION:
-                self.enqueue(media_type, tmdb_id, priority=1, reason="trailer_policy_upgrade")
-                queued += 1
+            if (
+                selected.get("source") == SC_SOURCE
+                and resolved.get("policyVersion") == TRAILER_POLICY_VERSION
+                and metadata_fresh
+            ):
+                skipped += 1
                 continue
 
-            selected = resolved.get("selected") or {}
-            resolved_at = _dt(resolved.get("resolvedAt"))
-            age = (now - resolved_at) if resolved_at else timedelta(days=999)
-            metadata_exp = _dt(resolved.get("metadataExpiresAt"))
-            metadata_fresh = bool(metadata_exp and metadata_exp > now)
-
-            if selected:
-                playback_exp = _dt(selected.get("expires_at") or selected.get("expiresAt"))
-                height = int(selected.get("height") or selected.get("resolution") or 0)
-                italian_verified = _candidate_has_verified_italian_audio(selected)
-                playback_fresh = not playback_exp or playback_exp > now
-
-                if not italian_verified:
-                    if metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
-                        skipped += 1
-                        continue
-                    priority, reason = 1, "seek_verified_italian"
-                elif not playback_fresh:
-                    priority, reason = 1, "playback_expired"
-                elif height < 1080:
-                    priority, reason = 2, "below_1080_it"
-                elif height >= 2160 and metadata_fresh:
-                    skipped += 1
-                    continue
-                elif height >= 1080 and metadata_fresh and age < timedelta(hours=72):
-                    skipped += 1
-                    continue
-                else:
-                    priority, reason = 3, "seek_4k_it"
-            else:
-                if resolved_at and metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
-                    skipped += 1
-                    continue
-                legacy = self.assets.find_one(
-                    {"type": media_type, "tmdbId": tmdb_id},
-                    {"_id": 0, "trailer_key": 1},
-                ) or {}
-                if legacy.get("trailer_key"):
-                    priority, reason = 2, "legacy_youtube_rejected"
-                else:
-                    priority, reason = 1, "missing_italian"
-
-            self.enqueue(media_type, tmdb_id, priority=priority, reason=reason)
+            self.enqueue(media_type, tmdb_id, priority=1, reason="migrate_to_strict_sc")
             queued += 1
 
         return {
@@ -297,8 +216,8 @@ def install_queue_policy(resolver):
             "skipped_fresh_or_active": skipped,
             "scanned": scanned,
             "target": wanted,
-            "italian_preferred": True,
-            "italian_only": False,
+            "source": SC_SOURCE,
+            "source_policy": "streamingcommunity-only",
             "policy_version": TRAILER_POLICY_VERSION,
         }
 
@@ -320,16 +239,24 @@ def install_queue_policy(resolver):
                     self.enqueue_catalog(limit=batch)
             except Exception as exc:
                 if self.logger:
-                    self.logger.warning("Trailer catalog queue scan failed: %s", exc)
+                    self.logger.warning("SC trailer catalog queue scan failed: %s", exc)
 
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=45)
             except asyncio.TimeoutError:
                 pass
 
+    def reject_manual_url(self, media_type: str, tmdb_id: int, url: str):
+        raise ValueError("Override manuali disabilitati: i trailer usano solo StreamingCommunity")
+
+    async def reject_manual_candidate(self, media_type: str, tmdb_id: int, candidate_id: str):
+        raise ValueError("Override manuali disabilitati: i trailer usano solo StreamingCommunity")
+
     resolver.enqueue = MethodType(safe_enqueue, resolver)
-    resolver.resolve = MethodType(policy_resolve, resolver)
+    resolver.resolve = MethodType(strict_resolve, resolver)
     resolver.enqueue_catalog = MethodType(enqueue_catalog, resolver)
     resolver._catalog_loop = MethodType(catalog_loop, resolver)
-    resolver.public_result = MethodType(italian_first_public_result, resolver)
+    resolver.public_result = MethodType(strict_public_result, resolver)
+    resolver.set_manual_url = MethodType(reject_manual_url, resolver)
+    resolver.set_manual_candidate = MethodType(reject_manual_candidate, resolver)
     return resolver
