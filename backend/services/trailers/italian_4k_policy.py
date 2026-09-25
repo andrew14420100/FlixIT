@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from types import MethodType
 from typing import Optional
 
 from .base import TrailerCandidate, is_english_language, is_italian_language
@@ -156,6 +157,9 @@ async def _enrich_candidate(http, candidate: TrailerCandidate) -> list[TrailerCa
     if _DIRECT_FILE_RE.search(url):
         return await _enrich_direct(candidate)
 
+    # This also preserves the trusted SC youtube_id candidate. It is not probed
+    # or transformed here; the frontend renders it only after SC provenance was
+    # verified by the dedicated metadata policy.
     return [] if _explicit_english_only(candidate) else [candidate]
 
 
@@ -218,15 +222,36 @@ def install_italian_4k_trailer_policy() -> bool:
 
 
 def install_italian_4k_result_policy(resolver) -> None:
-    """Non-blocking compatibility hook.
+    """Keep trailer visibility non-blocking and prioritize interactive requests.
 
     4K/Italian inspection is an enhancement, never a requirement for visibility.
-    Existing SC trailer selections therefore stay playable immediately. Workers
-    may refresh them in the background and the normal resolver will pick the best
-    enriched Italian rendition when one is available.
+    Existing SC trailer selections therefore stay playable immediately. When a
+    user opens a title whose trailer is still missing/stale, that exact title is
+    promoted ahead of the background full-catalog queue instead of waiting behind
+    hundreds of bulk jobs.
     """
     if getattr(resolver, "italian_4k_result_policy", None) == POLICY_VERSION:
         return
+
+    current_public_result = resolver.public_result
+    if not getattr(current_public_result, "_flixit_interactive_trailer_priority", False):
+        def public_result_interactive_first(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
+            result = current_public_result(media_type, tmdb_id, hdr_supported=hdr_supported)
+            if not result.get("available") or result.get("refresh_pending") is True:
+                try:
+                    self.enqueue(
+                        "tv" if media_type == "tv" else "movie",
+                        int(tmdb_id),
+                        priority=0,
+                        reason="interactive_trailer_request",
+                    )
+                except Exception:
+                    pass
+            return result
+
+        public_result_interactive_first._flixit_interactive_trailer_priority = True
+        public_result_interactive_first._original = current_public_result
+        resolver.public_result = MethodType(public_result_interactive_first, resolver)
 
     resolver.italian_4k_result_policy = POLICY_VERSION
     try:
