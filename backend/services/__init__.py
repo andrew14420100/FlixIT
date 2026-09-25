@@ -65,6 +65,11 @@ def _install_trailer_registration_hook():
             install_streamportal_availability(app, db)
         except Exception:
             pass
+        try:
+            from services.strict_italian_tv import install_strict_italian_tv_policy
+            install_strict_italian_tv_policy(app)
+        except Exception:
+            pass
         return result
 
     register_with_trailers._flixit_trailer_hook = True
