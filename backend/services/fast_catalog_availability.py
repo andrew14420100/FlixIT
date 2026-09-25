@@ -2,25 +2,30 @@
 
 The live StreamPortal-style verifier is useful for explicit checks, but running
 provider HTTP probes for every card in every homepage/archive row makes page
-loading depend on dozens of upstream requests.  This overlay keeps those live
+loading depend on dozens of upstream requests. This overlay keeps those live
 checks out of the rendering path:
 
 - homepage/archive filtering uses the cached VixSrc ``lang=it`` catalogue only;
 - the public batch availability endpoint is an in-memory/Mongo catalogue lookup;
+- ordinary catalogue refresh calls return immediately from memory/Mongo and
+  refresh upstream in the background instead of blocking a page request;
 - the strict Italian episode policy remains installed and continues to hide
   English/original/unconfirmed TV episodes on season pages;
-- explicit admin/playability checks can still use the existing live verifier.
+- explicit forced/admin checks can still use the existing live verifier.
 
 No media URL is resolved or inspected here.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
+import time
 from typing import Any
 
 from fastapi import Body
 
-POLICY_VERSION = "fast-italian-catalog-v1"
+POLICY_VERSION = "fast-italian-catalog-v2"
+BACKGROUND_REFRESH_SECONDS = 5 * 60
 _INSTALLED = False
 
 
@@ -49,6 +54,11 @@ def _ensure_local_catalog(core) -> dict[str, bool]:
                 ids = set()
         loaded[kind] = bool(ids)
     return loaded
+
+
+def _catalog_counts(core) -> dict[str, int]:
+    ids_map = getattr(core, "_vix_ids", {}) or {}
+    return {kind: len(ids_map.get(kind) or set()) for kind in ("movie", "tv")}
 
 
 def _catalog_member(core, media_type: str, tmdb_id: int) -> bool:
@@ -98,6 +108,37 @@ def install_fast_catalog_availability(app, db) -> None:
 
         _ensure_local_catalog(core)
 
+        # Many public endpoints call refresh_vixsrc_catalog() before rendering.
+        # Previously that could wait for a remote catalogue request on a cold or
+        # stale cache. Keep normal calls local and schedule refresh in background;
+        # force=True remains synchronous for explicit admin/background refreshes.
+        original_refresh = getattr(core, "refresh_vixsrc_catalog", None)
+        if callable(original_refresh) and not getattr(original_refresh, "_flixit_fast_cached_v2", False):
+            refresh_state = {"last_scheduled": 0.0, "task": None}
+
+            async def fast_refresh_vixsrc_catalog(force: bool = False):
+                if force:
+                    return await original_refresh(force=True)
+
+                _ensure_local_catalog(core)
+                now = time.monotonic()
+                task = refresh_state.get("task")
+                if (
+                    now - float(refresh_state.get("last_scheduled") or 0.0) >= BACKGROUND_REFRESH_SECONDS
+                    and (task is None or task.done())
+                ):
+                    refresh_state["last_scheduled"] = now
+                    try:
+                        task = asyncio.create_task(original_refresh(force=False))
+                        refresh_state["task"] = task
+                    except Exception:
+                        pass
+                return _catalog_counts(core)
+
+            fast_refresh_vixsrc_catalog._flixit_fast_cached_v2 = True
+            fast_refresh_vixsrc_catalog._original = original_refresh
+            core.refresh_vixsrc_catalog = fast_refresh_vixsrc_catalog
+
         async def fast_filter_available(items: list, limit: int = 24) -> list:
             _ensure_local_catalog(core)
             wanted = max(1, int(limit or 24))
@@ -114,7 +155,7 @@ def install_fast_catalog_availability(app, db) -> None:
                         break
             return out
 
-        # Homepage, archive and other card rows call this helper.  Keep them
+        # Homepage, archive and other card rows call this helper. Keep them
         # independent from live provider latency.
         core.filter_available = fast_filter_available
 
