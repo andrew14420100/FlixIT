@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "strict-italian-priority-v15";
+const TRAILER_QUERY_VERSION = "strict-italian-4k-title-search-v16";
 
 function isBlockedVideoHost(value: string) {
   try {
@@ -28,7 +28,7 @@ function directTrailerUrl(data: any) {
   for (const value of [data?.trailer_url, data?.manifest_url, data?.trailer_key]) {
     const text = String(value || "").trim();
     if (!text) continue;
-    if (!( /^https?:\/\//i.test(text) || text.startsWith("/") )) continue;
+    if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) continue;
     if (isBlockedVideoHost(text)) continue;
     return text;
   }
