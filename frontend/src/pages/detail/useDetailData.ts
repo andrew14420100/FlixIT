@@ -2,7 +2,7 @@
 /**
  * FlixIT Detail Page v2 - data layer.
  * Priority: Italian detail -> English metadata fallback -> artwork/logo ->
- * progress -> trailer. Everything is cached so navigation stays fast.
+ * progress -> StreamingCommunity trailer. Everything is cached so navigation stays fast.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -161,29 +161,16 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (progressSeconds / duration) * 100)) : 0;
   const remainingSeconds = duration > 0 ? Math.max(0, duration - progressSeconds) : 0;
 
-  // 4. Trailer (real resolver, shared cache with Home/hover)
+  // 4. Trailer: ONLY the exact StreamingCommunity resolver result. Do not add
+  // TMDB detail.trailers, trailer_alternatives or any historical provider rows.
   const trailer = useResolvedTrailer(type, mediaId, !!mediaId);
 
   const trailerItems = useMemo(() => {
-    const result = [];
-    const seen = new Set();
-    const add = (value, label, source) => {
-      const url = directTrailerUrl(value);
-      if (!url || seen.has(url)) return;
-      seen.add(url);
-      result.push({ url, label, source: String(source || "") });
-    };
-    add(trailer.url, "Trailer ufficiale", trailer.data?.source);
-    [trailer.data?.alternatives, trailer.data?.candidates, detail?.trailers, detail?.trailer_alternatives].forEach((items) => {
-      if (!Array.isArray(items)) return;
-      items.forEach((item, index) => {
-        const lang = String(item?.language || item?.lang || "").toLowerCase();
-        const fallbackLabel = lang.startsWith("it") ? "Trailer italiano" : `Video ${index + 1}`;
-        add(item, String(item?.label || item?.title || item?.name || fallbackLabel), item?.source);
-      });
-    });
-    return result.slice(0, 8);
-  }, [detail?.trailer_alternatives, detail?.trailers, trailer.data, trailer.url]);
+    const url = directTrailerUrl(trailer.url);
+    const source = String(trailer.data?.selected?.source || trailer.data?.source || "").toLowerCase();
+    if (!url || source !== "streamingcommunity") return [];
+    return [{ url, label: "Trailer ufficiale", source: "streamingcommunity" }];
+  }, [trailer.data, trailer.url]);
 
   const genres = useMemo(() => (detail?.genres || EMPTY).map((genre) => genre?.name).filter(Boolean), [detail?.genres]);
   const primaryGenreId = Number(detail?.genres?.[0]?.id || 0);
