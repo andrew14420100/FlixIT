@@ -1,10 +1,16 @@
-"""StreamingCommunity native trailer metadata provider.
+"""StreamingCommunity trailer metadata provider.
 
-Reads only public title/search metadata used to locate trailers associated with a
-catalog title. It never requests movie/episode playback sources. Candidates are
-accepted only after the SC title TMDB id exactly matches FLIX-IT and SC exposes
-explicit direct non-YouTube trailer media (MP4/HLS/etc.). All native trailer
-variants exposed for the matched title are returned, not only the first one.
+Reads only StreamingCommunity title/search metadata used to locate trailers for a
+catalog title. It never resolves movie/episode playback streams. Candidates are
+accepted only after the SC title TMDB id exactly matches FLIX-IT.
+
+Supported trailer playback forms:
+- direct trailer media explicitly exposed by SC (MP4/HLS/etc.);
+- Vixcloud ``/embed/<id>`` URLs explicitly exposed by SC as trailer metadata.
+
+Signed Vixcloud URLs are never generated or reverse engineered. They are stored
+only for their published lifetime and refreshed from SC after expiry. Parameters
+whose sole purpose is bypassing ads are not propagated.
 """
 from __future__ import annotations
 
@@ -12,8 +18,9 @@ import html as html_lib
 import json
 import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from ..base import TrailerCandidate, is_blocked_url
 from .common import client
@@ -95,8 +102,52 @@ def _title_payload(page: dict) -> dict:
     return title if isinstance(title, dict) else {}
 
 
-def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]:
-    """Accept only explicit direct trailer media and reject playback/embed pages."""
+def _is_vixcloud_embed(value: str) -> bool:
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower().strip(".")
+    if not (host == "vixcloud.co" or host.endswith(".vixcloud.co")):
+        return False
+    return bool(re.fullmatch(r"/embed/\d+/?", parsed.path or "", re.I))
+
+
+def _sanitize_vixcloud_embed(value: str) -> Optional[str]:
+    """Keep the SC-published signed embed but never propagate ad-bypass flags."""
+    if not _is_vixcloud_embed(value):
+        return None
+    parsed = urlparse(value)
+    query = [
+        (key, val)
+        for key, val in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.casefold() != "canbypassads"
+    ]
+    return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+
+
+def _expiry_from_url(value: str) -> Optional[str]:
+    """Read the published expiry timestamp without deriving or changing tokens."""
+    try:
+        parsed = urlparse(value)
+        for key, val in parse_qsl(parsed.query, keep_blank_values=True):
+            if key.casefold() != "expires":
+                continue
+            timestamp = int(val)
+            expiry = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            if expiry > datetime.now(timezone.utc):
+                return expiry.isoformat()
+    except Exception:
+        return None
+    return None
+
+
+def _sc_trailer_playback_url(value: Any, base: Optional[str] = None) -> Optional[str]:
+    """Accept explicit SC trailer media or an explicit Vixcloud trailer embed.
+
+    Generic watch/embed pages remain rejected. Vixcloud is the sole iframe host
+    accepted here because SC itself uses it for trailer playback metadata.
+    """
     text = str(value or "").strip()
     if not text:
         return None
@@ -110,6 +161,10 @@ def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]
     if is_blocked_url(text):
         return None
 
+    vixcloud = _sanitize_vixcloud_embed(text)
+    if vixcloud:
+        return vixcloud
+
     try:
         parsed = urlparse(text)
     except Exception:
@@ -117,6 +172,7 @@ def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]
     path = (parsed.path or "").lower()
     query = (parsed.query or "").lower()
 
+    # Do not accidentally turn movie/episode playback pages into trailers.
     if any(marker in path for marker in ("/watch/", "/iframe/", "/embed/")):
         return None
 
@@ -126,9 +182,22 @@ def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]
     return text if (direct_media or explicit_trailer or explicit_query) else None
 
 
+# Backward-compatible alias used by existing tests/imports.
+def _native_trailer_url(value: Any, base: Optional[str] = None) -> Optional[str]:
+    return _sc_trailer_playback_url(value, base)
+
+
 _TRAILER_MEDIA_FIELDS = (
     "url",
     "src",
+    "embed",
+    "embed_url",
+    "embedUrl",
+    "iframe",
+    "iframe_url",
+    "iframeUrl",
+    "player_url",
+    "playerUrl",
     "video_url",
     "videoUrl",
     "manifest_url",
@@ -144,7 +213,7 @@ _TRAILER_MEDIA_FIELDS = (
 
 
 def _trailer_rows(title: dict, base: Optional[str] = None) -> list[tuple[dict, str]]:
-    """Return every unique native trailer media URL exposed by SC metadata."""
+    """Return every unique SC trailer playback URL exposed by title metadata."""
     found: list[tuple[dict, str]] = []
     seen: set[str] = set()
 
@@ -156,22 +225,31 @@ def _trailer_rows(title: dict, base: Optional[str] = None) -> list[tuple[dict, s
             if not isinstance(row, dict):
                 continue
             for key in _TRAILER_MEDIA_FIELDS:
-                native_url = _native_trailer_url(row.get(key), base)
-                if native_url and native_url not in seen:
-                    seen.add(native_url)
-                    found.append((row, native_url))
+                playback_url = _sc_trailer_playback_url(row.get(key), base)
+                if playback_url and playback_url not in seen:
+                    seen.add(playback_url)
+                    found.append((row, playback_url))
 
-    for key in ("trailerUrl", "trailer_url", "trailer", "preview_video_url", "previewVideoUrl"):
-        native_url = _native_trailer_url(title.get(key), base)
-        if native_url and native_url not in seen:
-            seen.add(native_url)
-            found.append(({}, native_url))
+    for key in (
+        "trailerUrl",
+        "trailer_url",
+        "trailer",
+        "trailerEmbed",
+        "trailer_embed",
+        "trailerEmbedUrl",
+        "trailer_embed_url",
+        "preview_video_url",
+        "previewVideoUrl",
+    ):
+        playback_url = _sc_trailer_playback_url(title.get(key), base)
+        if playback_url and playback_url not in seen:
+            seen.add(playback_url)
+            found.append(({}, playback_url))
 
     return found
 
 
 def _trailer_row(title: dict, base: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
-    """Backward-compatible helper returning the first native SC trailer."""
     rows = _trailer_rows(title, base)
     return rows[0] if rows else (None, None)
 
@@ -248,20 +326,21 @@ class StreamingCommunityTrailerProvider:
                             continue
 
                         self._working_base = base
-                        native_rows = _trailer_rows(title, base)
-                        if not native_rows:
+                        trailer_rows = _trailer_rows(title, base)
+                        if not trailer_rows:
                             return []
 
                         matched_year = _int_or_none(title.get("year") or title.get("release_year"))
                         candidates: list[TrailerCandidate] = []
-                        for index, (trailer, native_url) in enumerate(native_rows):
+                        for index, (trailer, playback_url) in enumerate(trailer_rows):
                             language = str(trailer.get("language") or trailer.get("locale") or "").strip() or None
-                            is_hls = bool(re.search(r"\.m3u8(?:$|[?#])", native_url, re.I))
+                            is_hls = bool(re.search(r"\.m3u8(?:$|[?#])", playback_url, re.I))
+                            is_vixcloud = _is_vixcloud_embed(playback_url)
                             candidates.append(
                                 TrailerCandidate(
                                     source=self.name,
-                                    trailer_url=None if is_hls else native_url,
-                                    manifest_url=native_url if is_hls else None,
+                                    trailer_url=None if is_hls else playback_url,
+                                    manifest_url=playback_url if is_hls else None,
                                     provider_id=str(trailer.get("id") or f"{title.get('id') or expected_tmdb}:{index}"),
                                     provider_page=provider_page,
                                     matched_title=str(title.get("name") or title.get("title") or identity.get("title") or "").strip() or None,
@@ -274,7 +353,12 @@ class StreamingCommunityTrailerProvider:
                                     confidence=1.0,
                                     verified=True,
                                     browser_compatible=True,
-                                    compatibility="native-hls" if is_hls else "native-video",
+                                    compatibility=(
+                                        "sc-vixcloud-embed"
+                                        if is_vixcloud
+                                        else "native-hls" if is_hls else "native-video"
+                                    ),
+                                    expires_at=_expiry_from_url(playback_url),
                                     metadata={
                                         "sc_title_id": title.get("id"),
                                         "sc_slug": title.get("slug"),
@@ -282,6 +366,7 @@ class StreamingCommunityTrailerProvider:
                                         "sc_trailer_index": index,
                                         "tmdb_match": "exact",
                                         "native_sc_trailer": True,
+                                        "sc_vixcloud_embed": is_vixcloud,
                                     },
                                 )
                             )
