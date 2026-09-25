@@ -1,4 +1,4 @@
-"""FastAPI integration for the native StreamingCommunity trailer resolver."""
+"""FastAPI integration for the StreamingCommunity trailer resolver."""
 from __future__ import annotations
 
 import logging
@@ -14,7 +14,7 @@ from .queue_policy import install_queue_policy
 
 logger = logging.getLogger(__name__)
 SC_SOURCE = "streamingcommunity"
-SC_POLICY = "streamingcommunity-native-only"
+SC_POLICY = "streamingcommunity-vixcloud-or-direct"
 
 
 class ManualTrailerBody(BaseModel):
@@ -57,7 +57,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "source": SC_SOURCE,
             "source_policy": SC_POLICY,
             "catalog_import": "all",
-            "playback": "native-direct",
+            "playback": "vixcloud-embed-or-direct",
             "youtube_enabled": False,
             "tmdb_match_required": True,
             "legacy_fallback": False,
@@ -99,6 +99,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "source_policy": SC_POLICY,
                 "tmdb_match": selected_meta.get("tmdb_match"),
                 "native_sc_trailer": True,
+                "vixcloud_embed": bool(selected_meta.get("sc_vixcloud_embed")),
                 "youtube": False,
                 "language": selected.get("audio_language") or selected.get("language"),
             }
@@ -118,8 +119,9 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "refresh_pending": result.get("refresh_pending", True),
             "automatic": True,
             "source_policy": SC_POLICY,
-            "reason": result.get("reason") or "streamingcommunity_native_trailer_unavailable",
+            "reason": result.get("reason") or "streamingcommunity_trailer_unavailable",
             "native_sc_trailer": False,
+            "vixcloud_embed": False,
             "youtube": False,
         }
 
