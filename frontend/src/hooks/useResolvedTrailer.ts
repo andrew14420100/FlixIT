@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v20-vixcloud";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v21-recovery";
 const SC_SOURCE = "streamingcommunity";
 
 function isYouTubeHost(value: string) {
@@ -77,7 +77,7 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       return response.ok ? response.json() : {};
     },
     enabled: !!id && !!enabled,
-    staleTime: 30 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
     gcTime: 4 * 60 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -89,8 +89,10 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       if (candidate && data?.available !== false && data?.refresh_pending !== true) return false;
 
       const updates = Number(query?.state?.dataUpdateCount || 0);
-      if (!candidate) return updates < 5 ? 3500 : false;
-      return data?.refresh_pending === true && updates < 4 ? 5000 : false;
+      // Give background SC resolution enough time to recover a stale/empty cache
+      // without hammering the API. Once a trailer is available polling stops.
+      if (!candidate) return updates < 12 ? 4000 : false;
+      return data?.refresh_pending === true && updates < 8 ? 5000 : false;
     },
     refetchIntervalInBackground: false,
   });
