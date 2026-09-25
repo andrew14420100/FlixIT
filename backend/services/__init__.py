@@ -60,6 +60,11 @@ def _install_trailer_registration_hook():
             install_home_bootstrap_fast(app)
         except Exception:
             pass
+        try:
+            from services.streamportal_availability import install_streamportal_availability
+            install_streamportal_availability(app, db)
+        except Exception:
+            pass
         return result
 
     register_with_trailers._flixit_trailer_hook = True
