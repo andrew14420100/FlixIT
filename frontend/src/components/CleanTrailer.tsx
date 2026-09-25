@@ -31,15 +31,11 @@ function routeIdentity() {
   return match ? { mediaType: match[1].toLowerCase(), id: Number(match[2]) } : null;
 }
 
-function isDirectUrl(value?: string | null) {
-  return /^https?:\/\//i.test(value || "") || String(value || "").startsWith("/");
-}
-
-/** Detail trailer panel backed by the same resolver/cache as Hero and hover. */
-export default function CleanTrailer({ videoKey, poster, testId = "clean-trailer" }) {
-  const identity = useMemo(() => routeIdentity(), [videoKey]);
+/** Detail trailer panel backed only by the StreamingCommunity resolver/cache. */
+export default function CleanTrailer({ videoKey: _videoKey, poster, testId = "clean-trailer" }) {
+  const identity = useMemo(() => routeIdentity(), []);
   const resolved = useResolvedTrailer(identity?.mediaType, identity?.id, !!identity);
-  const playbackKey = resolved.url || (isDirectUrl(videoKey) ? videoKey : null);
+  const playbackKey = resolved.url || null;
 
   const [started, setStarted] = useState(false);
   const [playing, setPlaying] = useState(true);
@@ -102,7 +98,7 @@ export default function CleanTrailer({ videoKey, poster, testId = "clean-trailer
             Trailer non disponibile
           </Typography>
           <Typography sx={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>
-            Nessun trailer verificato almeno Full HD disponibile.
+            Nessun trailer StreamingCommunity disponibile.
           </Typography>
         </Box>
       ) : !started ? (
@@ -144,7 +140,7 @@ export default function CleanTrailer({ videoKey, poster, testId = "clean-trailer
                 Trailer non disponibile
               </Typography>
               <Typography sx={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>
-                Nessun trailer verificato almeno Full HD disponibile.
+                Nessun trailer StreamingCommunity disponibile.
               </Typography>
             </>
           )}
