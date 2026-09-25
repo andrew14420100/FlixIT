@@ -111,6 +111,20 @@ function playerErrorMessage(data: PlayerPayload | null, status?: number) {
   );
 }
 
+function buildRequestHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
+
+  // Ngrok Free can return an interstitial page to browser requests unless this
+  // header is present. Add it only for ngrok targets so normal deployments stay unchanged.
+  if (/ngrok-free\.(app|dev)(?::\d+)?$/i.test(PLAYER_API_BASE.replace(/^https?:\/\//i, ""))) {
+    headers["ngrok-skip-browser-warning"] = "1";
+  }
+
+  return headers;
+}
+
 export default function useProviderPlayback() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
@@ -163,9 +177,7 @@ export default function useProviderPlayback() {
           method: "GET",
           cache: "no-store",
           signal: controller.signal,
-          headers: {
-            Accept: "application/json",
-          },
+          headers: buildRequestHeaders(),
         });
 
         const data: PlayerPayload | null = await response
