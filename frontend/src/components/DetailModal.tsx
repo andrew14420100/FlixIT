@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { forwardRef, useCallback, useRef, useState } from "react";
+import { forwardRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Grid from "@mui/material/Grid";
 import Container from "@mui/material/Container";
@@ -15,19 +15,19 @@ import AddIcon from "@mui/icons-material/Add";
 import ThumbUpOffAltIcon from "@mui/icons-material/ThumbUpOffAlt";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import VolumeOffIcon from "@mui/icons-material/VolumeOff";
-import Player from "video.js/dist/types/player";
 
 import MaxLineTypography from "./MaxLineTypography";
 import PlayButton from "./PlayButton";
 import NetflixIconButton from "./NetflixIconButton";
 import AgeLimitChip from "./AgeLimitChip";
 import QualityChip from "./QualityChip";
+import TrailerPlayer from "./TrailerPlayer";
 import { formatMinuteToReadable, getRandomNumber } from "src/utils/common";
 import SimilarVideoCard from "./SimilarVideoCard";
 import { useDetailModal } from "src/providers/DetailModalProvider";
 import { useGetSimilarVideosQuery } from "src/store/slices/discover";
 import { MEDIA_TYPE } from "src/types/Common";
-import VideoJSPlayer from "./watch/VideoJSPlayer";
+import useResolvedTrailer from "src/hooks/useResolvedTrailer";
 
 const Transition = forwardRef(function Transition(
   props: TransitionProps & {
@@ -38,28 +38,32 @@ const Transition = forwardRef(function Transition(
   return <Slide direction="up" ref={ref} {...props} />;
 });
 
+function tmdbBackdrop(value: any) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://image.tmdb.org/t/p/original${raw.startsWith("/") ? raw : `/${raw}`}`;
+}
+
+/** Legacy detail modal kept for compatibility, but trailer playback is now
+ * strictly routed through the shared StreamingCommunity resolver. */
 export default function DetailModal() {
   const { detail, setDetailType } = useDetailModal();
+  const mediaType = detail.mediaType ?? MEDIA_TYPE.Movie;
+  const mediaId = detail.id ?? 0;
   const { data: similarVideos } = useGetSimilarVideosQuery(
-    { mediaType: detail.mediaType ?? MEDIA_TYPE.Movie, id: detail.id ?? 0 },
-    { skip: !detail.id }
+    { mediaType, id: mediaId },
+    { skip: !mediaId }
   );
-  const playerRef = useRef<Player | null>(null);
+  const resolvedTrailer = useResolvedTrailer(mediaType, mediaId, !!mediaId && !!detail.mediaDetail);
+  const trailerUrl = resolvedTrailer.url || null;
   const [muted, setMuted] = useState(true);
 
-  const handleReady = useCallback((player: Player) => {
-    playerRef.current = player;
-    setMuted(player.muted());
-  }, []);
-
-  const handleMute = useCallback((status: boolean) => {
-    if (playerRef.current) {
-      playerRef.current.muted(!status);
-      setMuted(!status);
-    }
-  }, []);
-
   if (detail.mediaDetail) {
+    const backdrop = tmdbBackdrop(
+      detail.mediaDetail?.backdrop_path || detail.mediaDetail?.poster_path
+    );
+
     return (
       <Dialog
         fullWidth
@@ -83,29 +87,23 @@ export default function DetailModal() {
               sx={{
                 width: "100%",
                 position: "relative",
-                height: "calc(9 / 16 * 100%)",
+                aspectRatio: "16 / 9",
+                overflow: "hidden",
+                bgcolor: "#000",
+                backgroundImage: !trailerUrl && backdrop ? `url(${backdrop})` : "none",
+                backgroundSize: "cover",
+                backgroundPosition: "center",
               }}
             >
-              <VideoJSPlayer
-                options={{
-                  loop: true,
-                  autoplay: true,
-                  controls: false,
-                  responsive: true,
-                  fluid: true,
-                  techOrder: ["youtube"],
-                  sources: [
-                    {
-                      type: "video/youtube",
-                      src: `https://www.youtube.com/watch?v=${
-                        detail.mediaDetail?.videos.results[0]?.key ||
-                        "L3oOldViIgY"
-                      }`,
-                    },
-                  ],
-                }}
-                onReady={handleReady}
-              />
+              {trailerUrl ? (
+                <TrailerPlayer
+                  videoKey={trailerUrl}
+                  muted={muted}
+                  playing
+                  loop
+                  zoom={1.02}
+                />
+              ) : null}
 
               <Box
                 sx={{
@@ -146,6 +144,7 @@ export default function DetailModal() {
                   bgcolor: "#181818",
                   width: { xs: 22, sm: 40 },
                   height: { xs: 22, sm: 40 },
+                  zIndex: 4,
                   "&:hover": {
                     bgcolor: "primary.main",
                   },
@@ -162,10 +161,11 @@ export default function DetailModal() {
                   right: 0,
                   bottom: 16,
                   px: { xs: 2, sm: 3, md: 5 },
+                  zIndex: 3,
                 }}
               >
                 <MaxLineTypography variant="h4" maxLine={1} sx={{ mb: 2 }}>
-                  {detail.mediaDetail?.title}
+                  {detail.mediaDetail?.title || detail.mediaDetail?.name}
                 </MaxLineTypography>
                 <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
                   <PlayButton
@@ -183,13 +183,15 @@ export default function DetailModal() {
                     <ThumbUpOffAltIcon />
                   </NetflixIconButton>
                   <Box flexGrow={1} />
-                  <NetflixIconButton
-                    size="large"
-                    onClick={() => handleMute(muted)}
-                    sx={{ zIndex: 2 }}
-                  >
-                    {!muted ? <VolumeUpIcon /> : <VolumeOffIcon />}
-                  </NetflixIconButton>
+                  {trailerUrl ? (
+                    <NetflixIconButton
+                      size="large"
+                      onClick={() => setMuted((value) => !value)}
+                      sx={{ zIndex: 2 }}
+                    >
+                      {!muted ? <VolumeUpIcon /> : <VolumeOffIcon />}
+                    </NetflixIconButton>
+                  ) : null}
                 </Stack>
 
                 <Container
@@ -205,7 +207,7 @@ export default function DetailModal() {
                           sx={{ color: "success.main" }}
                         >{`${getRandomNumber(100)}% Match`}</Typography>
                         <Typography variant="body2">
-                          {detail.mediaDetail?.release_date.substring(0, 4)}
+                          {String(detail.mediaDetail?.release_date || detail.mediaDetail?.first_air_date || "").substring(0, 4)}
                         </Typography>
                         <AgeLimitChip label={`${getRandomNumber(20)}+`} />
                         <Typography variant="subtitle2">{`${formatMinuteToReadable(
@@ -224,12 +226,12 @@ export default function DetailModal() {
                     </Grid>
                     <Grid item xs={12} sm={6} md={4}>
                       <Typography variant="body2" sx={{ my: 1 }}>
-                        {`Genres : ${detail.mediaDetail?.genres
+                        {`Genres : ${(detail.mediaDetail?.genres || [])
                           .map((g) => g.name)
                           .join(", ")}`}
                       </Typography>
                       <Typography variant="body2" sx={{ my: 1 }}>
-                        {`Available in : ${detail.mediaDetail?.spoken_languages
+                        {`Available in : ${(detail.mediaDetail?.spoken_languages || [])
                           .map((l) => l.name)
                           .join(", ")}`}
                       </Typography>
