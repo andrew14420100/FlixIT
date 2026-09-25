@@ -56,7 +56,8 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "automatic": True,
             "source": SC_SOURCE,
             "source_policy": "streamingcommunity-only",
-            "playback": "youtube-embed",
+            "playback": "native-direct",
+            "youtube_enabled": False,
             "tmdb_match_required": True,
             "legacy_fallback": False,
             "manual_override": False,
@@ -72,11 +73,16 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         selected = result.get("selected") or {}
         selected_url = selected.get("trailer_url") or selected.get("manifest_url")
         selected_source = str(selected.get("source") or result.get("source") or "").strip().lower()
+        selected_meta = selected.get("metadata") or {}
 
-        # SC metadata is accepted only after the provider has already matched the
-        # exact TMDB id. Language metadata is optional on SC and must not cause a
-        # valid SC trailer to be replaced by an older provider or hidden.
-        if result.get("available") and selected_url and selected_source == SC_SOURCE:
+        # Only a verified direct SC trailer is public. YouTube ids/urls from SC
+        # metadata are intentionally rejected by both provider and base policy.
+        if (
+            result.get("available")
+            and selected_url
+            and selected_source == SC_SOURCE
+            and selected_meta.get("native_sc_trailer") is True
+        ):
             return {
                 "trailer_key": selected_url,
                 "trailer_url": selected_url,
@@ -92,8 +98,9 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "refresh_pending": False,
                 "automatic": True,
                 "source_policy": "streamingcommunity-only",
-                "tmdb_match": (selected.get("metadata") or {}).get("tmdb_match"),
-                "youtube": True,
+                "tmdb_match": selected_meta.get("tmdb_match"),
+                "native_sc_trailer": True,
+                "youtube": False,
                 "language": selected.get("audio_language") or selected.get("language"),
             }
 
@@ -112,8 +119,9 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "refresh_pending": result.get("refresh_pending", True),
             "automatic": True,
             "source_policy": "streamingcommunity-only",
-            "reason": result.get("reason") or "streamingcommunity_trailer_unavailable",
-            "youtube": True,
+            "reason": result.get("reason") or "streamingcommunity_native_trailer_unavailable",
+            "native_sc_trailer": False,
+            "youtube": False,
         }
 
     @router.get("/api/public/trailer-file/{cache_key}")
