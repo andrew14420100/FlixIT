@@ -16,7 +16,8 @@ from urllib.parse import parse_qs, urlparse
 
 _YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _INSTALLED = False
-SC_YOUTUBE_POLICY_VERSION = "streamingcommunity-vixcloud-youtube-v9-fast-discovery"
+SC_YOUTUBE_POLICY_VERSION = "streamingcommunity-vixcloud-youtube-v10-review-mirror"
+CURRENT_SC_MIRROR = "https://streamingcommunityz.review"
 
 
 def _youtube_id(value) -> str | None:
@@ -76,6 +77,14 @@ def install_sc_youtube_metadata_policy() -> bool:
     from services.trailers import queue_policy as queue_policy_module
     from services.trailers import resolver as resolver_module
     from services.trailers.providers import streamingcommunity as sc_module
+
+    # Keep the currently reachable public SC mirror first. Mirrors change over
+    # time, so the rest of the configured list remains as fallback.
+    bases = tuple(getattr(sc_module, "DEFAULT_BASE_URLS", ()) or ())
+    sc_module.DEFAULT_BASE_URLS = (
+        CURRENT_SC_MIRROR,
+        *[base for base in bases if str(base).rstrip("/") != CURRENT_SC_MIRROR],
+    )
 
     # Make all old "no trailer" cache rows stale immediately. Otherwise titles
     # checked just before this feature was deployed would wait for their old TTL
@@ -175,4 +184,8 @@ def install_sc_youtube_metadata_policy() -> bool:
     return True
 
 
-__all__ = ["install_sc_youtube_metadata_policy", "SC_YOUTUBE_POLICY_VERSION"]
+__all__ = [
+    "install_sc_youtube_metadata_policy",
+    "SC_YOUTUBE_POLICY_VERSION",
+    "CURRENT_SC_MIRROR",
+]
