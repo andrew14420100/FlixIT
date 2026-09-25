@@ -7,9 +7,9 @@ from datetime import datetime, timedelta, timezone
 from types import MethodType
 
 
-ITALIAN_RETRY_SECONDS = 6 * 60 * 60
+ITALIAN_RETRY_SECONDS = 60 * 60
 PUBLIC_RETRY_THROTTLE_SECONDS = 30 * 60
-TRAILER_POLICY_VERSION = "apple-it-native-search-v1"
+TRAILER_POLICY_VERSION = "italian-4k-theryston-title-search-v2"
 
 
 def _dt(value):
@@ -47,13 +47,7 @@ def _is_english(value) -> bool:
 
 
 def _candidate_has_verified_italian_audio(candidate: dict) -> bool:
-    """Require evidence that the media audio itself is Italian.
-
-    A localized provider page alone is not sufficient evidence. When an HLS
-    manifest or a direct-file probe exposes the audio language, that evidence is
-    preferred. Provider-specific metadata may also prove that the selected audio
-    track itself is Italian.
-    """
+    """Require evidence that the media audio itself is Italian."""
     if not candidate:
         return False
     language = candidate.get("audio_language") or candidate.get("language")
@@ -82,16 +76,10 @@ def _candidate_has_verified_italian_audio(candidate: dict) -> bool:
 def install_queue_policy(resolver):
     """Install a cache-aware Italian-first trailer policy.
 
-    Verified Italian audio is always preferred. If providers have not exposed a
-    verifiable Italian rendition yet, the best already-resolved trailer remains
-    playable instead of making Hero/Detail/hover lose the trailer completely.
-    That fallback is temporary: it is re-queued periodically until an Italian
-    candidate replaces it automatically. Italian 1080p is also revisited later
-    in search of native 2160p/4K.
-
-    The policy version forces older cached trailer results to be resolved again
-    once when discovery logic changes (for example native Apple Italy search),
-    so users do not have to wait for the previous metadata TTL to expire.
+    Verified Italian audio is always preferred. Old cached results are forcibly
+    recalculated whenever the policy version changes, so a fresh English cache
+    cannot block the new Italian title/year search. Italian 1080p results are
+    revisited in search of native 2160p/4K; no upscaling is performed.
     """
 
     base_enqueue = resolver.enqueue
@@ -124,9 +112,19 @@ def install_queue_policy(resolver):
         base_enqueue(media_type, tmdb_id, priority=priority, reason=reason)
 
     async def policy_resolve(self, media_type: str, tmdb_id: int, *, force: bool = False):
-        doc = await base_resolve(media_type, tmdb_id, force=force)
         normalized_type = "tv" if media_type == "tv" else "movie"
         normalized_id = int(tmdb_id)
+        cached = self.results.find_one(
+            {"type": normalized_type, "tmdbId": normalized_id},
+            {"_id": 0, "policyVersion": 1},
+        ) or {}
+
+        # A cache created under an older discovery policy must never short-circuit
+        # the new Italian/4K resolution path just because its metadata TTL is fresh.
+        if cached and cached.get("policyVersion") != TRAILER_POLICY_VERSION:
+            force = True
+
+        doc = await base_resolve(media_type, tmdb_id, force=force)
         self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
             {"$set": {"policyVersion": TRAILER_POLICY_VERSION}},
@@ -137,14 +135,24 @@ def install_queue_policy(resolver):
         return doc
 
     def italian_first_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
-        """Prefer verified Italian, but keep a temporary original-language fallback visible."""
+        """Prefer verified Italian, while actively upgrading stale policy caches."""
+        normalized_type = "tv" if media_type == "tv" else "movie"
+        normalized_id = int(tmdb_id)
+        cached = self.results.find_one(
+            {"type": normalized_type, "tmdbId": normalized_id},
+            {"_id": 0, "policyVersion": 1},
+        ) or {}
+        policy_stale = bool(cached and cached.get("policyVersion") != TRAILER_POLICY_VERSION)
+        if policy_stale:
+            self.enqueue(normalized_type, normalized_id, priority=1, reason="trailer_policy_upgrade_public")
+
         result = base_public_result(media_type, tmdb_id, hdr_supported=hdr_supported)
         if not result.get("enabled"):
             return result
 
         selected = result.get("selected") or {}
         language = selected.get("audio_language") or selected.get("language")
-        if selected and _candidate_has_verified_italian_audio(selected):
+        if selected and _candidate_has_verified_italian_audio(selected) and not policy_stale:
             return {
                 **result,
                 "italian_preferred": True,
@@ -152,12 +160,14 @@ def install_queue_policy(resolver):
                 "language_required": "it",
                 "language_verified": True,
                 "fallback_original": False,
+                "refresh_pending": False,
+                "policy_version": TRAILER_POLICY_VERSION,
             }
 
-        key = f"{'tv' if media_type == 'tv' else 'movie'}:{int(tmdb_id)}"
+        key = f"{normalized_type}:{normalized_id}"
         now_mono = time.monotonic()
         last_retry = float(self._italian_public_retry_at.get(key) or 0)
-        refresh_pending = False
+        refresh_pending = policy_stale
         if now_mono - last_retry >= PUBLIC_RETRY_THROTTLE_SECONDS:
             self._italian_public_retry_at[key] = now_mono
             self.enqueue(media_type, tmdb_id, priority=1, reason="seek_verified_italian")
@@ -174,6 +184,7 @@ def install_queue_policy(resolver):
                 "fallback_language": language or "unknown",
                 "refresh_pending": refresh_pending,
                 "reason": "temporary_original_until_italian_available",
+                "policy_version": TRAILER_POLICY_VERSION,
             }
 
         return {
@@ -188,6 +199,7 @@ def install_queue_policy(resolver):
             "fallback_original": False,
             "refresh_pending": refresh_pending,
             "reason": "italian_audio_search_pending",
+            "policy_version": TRAILER_POLICY_VERSION,
         }
 
     def enqueue_catalog(self, limit: int = 250):
@@ -230,8 +242,6 @@ def install_queue_policy(resolver):
                 {"_id": 0},
             ) or {}
 
-            # Discovery changed: re-run each old cached title once immediately so
-            # native Apple Italia search can replace old IMDb/original fallbacks.
             if resolved and resolved.get("policyVersion") != TRAILER_POLICY_VERSION:
                 self.enqueue(media_type, tmdb_id, priority=1, reason="trailer_policy_upgrade")
                 queued += 1
