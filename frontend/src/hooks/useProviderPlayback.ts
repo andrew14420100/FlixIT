@@ -2,11 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MAIN_PATH } from "src/constant";
 
-// In production the frontend must call the backend through the same origin
-// (/api/...) so nginx/Emergent can proxy the request correctly. A browser-side
-// localhost URL would point to the visitor's own computer, not the FlixIT server.
-// Keep an optional explicit base URL for environments that really need one.
-const PROVIDER_API_BASE = String(
+// Use the same origin in production so nginx/Emergent proxies /api correctly.
+// An explicit backend base can still be supplied for local/split deployments.
+const PLAYER_API_BASE = String(
   process.env.REACT_APP_PROVIDER_API_BASE ||
     process.env.REACT_APP_BACKEND_URL ||
     ""
@@ -25,14 +23,16 @@ type StartPlaybackOptions = {
   startTime?: number;
 };
 
-type ProviderPayload = {
+type PlayerPayload = {
   success?: boolean;
+  stream?: string;
   streamUrl?: string;
   type?: string;
   source?: string;
   message?: string;
   detail?: string;
   error?: string;
+  reason?: string;
 };
 
 function inferStreamType(streamUrl: string, explicitType?: string) {
@@ -43,7 +43,7 @@ function inferStreamType(streamUrl: string, explicitType?: string) {
   return "hls";
 }
 
-function cacheProviderStream(
+function cachePlayerStream(
   mediaType: MediaType,
   mediaId: number,
   season: number,
@@ -61,7 +61,7 @@ function cacheProviderStream(
   const normalized = {
     stream: streamUrl,
     type,
-    source: source || "provider-play",
+    source: source || "player-api",
     savedAt: now,
   };
 
@@ -88,7 +88,7 @@ function cacheProviderStream(
       `stream-${mediaType}-${mediaId}-${s}-${e}`,
     ].forEach((key) => sessionStorage.setItem(key, legacyPayload));
 
-    // WatchPage historically accepted movie aliases using 1:1 as well as 0:0.
+    // WatchPage supports the historical movie alias using 1:1 as well as 0:0.
     if (mediaType === "movie") {
       sessionStorage.setItem(
         `${STREAM_CACHE_PREFIX}movie:${mediaId}:1:1`,
@@ -96,16 +96,18 @@ function cacheProviderStream(
       );
     }
   } catch {
-    // Playback can still continue through navigation if browser storage is disabled.
+    // If storage is unavailable, WatchPage can still resolve again after navigation.
   }
 }
 
-function providerErrorMessage(data: ProviderPayload | null, status?: number) {
+function playerErrorMessage(data: PlayerPayload | null, status?: number) {
   return (
     data?.message ||
     data?.detail ||
     data?.error ||
-    (status ? `Il server ha risposto con errore ${status}` : "Sorgente video non disponibile")
+    (status
+      ? `Il server ha risposto con errore ${status}`
+      : "Sorgente video non disponibile")
   );
 }
 
@@ -127,7 +129,6 @@ export default function useProviderPlayback() {
 
   const startPlayback = useCallback(
     async ({
-      contentTitle,
       mediaType,
       mediaId,
       season = 1,
@@ -140,9 +141,8 @@ export default function useProviderPlayback() {
       const numericId = Number(mediaId);
       const normalizedSeason = Math.max(1, Number(season) || 1);
       const normalizedEpisode = Math.max(1, Number(episode) || 1);
-      const query = String(contentTitle || mediaId || "").trim();
 
-      if (!Number.isInteger(numericId) || numericId <= 0 || !query) {
+      if (!Number.isInteger(numericId) || numericId <= 0) {
         setError("Impossibile identificare correttamente il contenuto selezionato.");
         return false;
       }
@@ -154,37 +154,40 @@ export default function useProviderPlayback() {
       controllerRef.current = controller;
 
       try {
-        const response = await fetch(
-          `${PROVIDER_API_BASE}/api/provider/play?q=${encodeURIComponent(query)}`,
-          {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-            headers: {
-              Accept: "application/json",
-            },
-          }
-        );
+        const endpoint =
+          normalizedType === "tv"
+            ? `${PLAYER_API_BASE}/api/player/tv/${numericId}/${normalizedSeason}/${normalizedEpisode}`
+            : `${PLAYER_API_BASE}/api/player/movie/${numericId}`;
 
-        const data: ProviderPayload | null = await response
+        const response = await fetch(endpoint, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+          headers: {
+            Accept: "application/json",
+          },
+        });
+
+        const data: PlayerPayload | null = await response
           .json()
           .catch(() => null);
 
         if (!response.ok) {
-          throw new Error(providerErrorMessage(data, response.status));
+          throw new Error(playerErrorMessage(data, response.status));
         }
 
-        if (!data?.success || !data.streamUrl) {
-          throw new Error(providerErrorMessage(data));
+        const resolvedStream = data?.stream || data?.streamUrl;
+        if (!data?.success || !resolvedStream) {
+          throw new Error(playerErrorMessage(data));
         }
 
-        const streamType = inferStreamType(data.streamUrl, data.type);
-        cacheProviderStream(
+        const streamType = inferStreamType(resolvedStream, data.type);
+        cachePlayerStream(
           normalizedType,
           numericId,
           normalizedSeason,
           normalizedEpisode,
-          data.streamUrl,
+          resolvedStream,
           streamType,
           data.source
         );
@@ -204,16 +207,17 @@ export default function useProviderPlayback() {
         const queryString = params.toString();
         if (queryString) watchUrl += `?${queryString}`;
 
-        setIsLoading(false);
         controllerRef.current = null;
         navigate(watchUrl);
         return true;
       } catch (requestError: any) {
         if (requestError?.name !== "AbortError") {
-          setError(
-            requestError?.message ||
-              "Impossibile preparare la sorgente video. Riprova tra poco."
-          );
+          const message =
+            requestError?.message === "Failed to fetch"
+              ? "Backend FlixIT non raggiungibile. Verifica che il servizio backend sia avviato."
+              : requestError?.message ||
+                "Impossibile preparare la sorgente video. Riprova tra poco.";
+          setError(message);
         }
         return false;
       } finally {
