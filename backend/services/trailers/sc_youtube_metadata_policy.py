@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 _YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _INSTALLED = False
-SC_YOUTUBE_POLICY_VERSION = "streamingcommunity-vixcloud-youtube-v8-catalog-first"
+SC_YOUTUBE_POLICY_VERSION = "streamingcommunity-vixcloud-youtube-v9-fast-discovery"
 
 
 def _youtube_id(value) -> str | None:
@@ -107,6 +107,15 @@ def install_sc_youtube_metadata_policy() -> bool:
         trailer_rows_with_sc_youtube._flixit_sc_youtube_metadata = True
         trailer_rows_with_sc_youtube._original = original_rows
         sc_module._trailer_rows = trailer_rows_with_sc_youtube
+
+    # Install the bounded parallel SC metadata pass before wrapping discover for
+    # youtube_id provenance. This means fast-path YouTube candidates still flow
+    # through the exact same SC-only provenance marking below.
+    try:
+        from services.trailers.fast_sc_discovery import install_fast_sc_discovery
+        install_fast_sc_discovery()
+    except Exception:
+        pass
 
     current_discover = sc_module.StreamingCommunityTrailerProvider.discover
     if not getattr(current_discover, "_flixit_sc_youtube_metadata", False):
