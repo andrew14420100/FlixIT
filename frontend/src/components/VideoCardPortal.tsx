@@ -24,48 +24,16 @@ import { useGetGenresQuery } from "src/store/slices/genre";
 import { MAIN_PATH } from "src/constant";
 import Box from "@mui/material/Box";
 import { getMediaImageUrl } from "src/hooks/useCDNImage";
-import {
-  useGetAppendedVideosQuery,
-  useGetMediaImagesQuery,
-  useGetAllVideosQuery,
-} from "src/store/slices/discover";
+import { useGetMediaImagesQuery } from "src/store/slices/discover";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
+import useResolvedTrailer from "src/hooks/useResolvedTrailer";
+import TrailerPlayer from "./TrailerPlayer";
 
 interface VideoCardModalProps {
   video: Movie;
   anchorElement: HTMLElement;
   mediaType?: MEDIA_TYPE;
 }
-
-// Helper to get Italian trailer
-const getItalianTrailerKey = (detailVideos: any[], allVideos: any[]): string | null => {
-  const videoMap = new Map<string, any>();
-  [...(detailVideos || []), ...(allVideos || [])].forEach(v => {
-    if (v.site === "YouTube" && v.key) {
-      videoMap.set(v.key, v);
-    }
-  });
-  const videos = Array.from(videoMap.values());
-  
-  if (!videos.length) return null;
-  
-  const italianTrailer = videos.find((v: any) => v.iso_639_1 === "it" && v.type === "Trailer");
-  if (italianTrailer) return italianTrailer.key;
-  
-  const italianTeaser = videos.find((v: any) => v.iso_639_1 === "it" && v.type === "Teaser");
-  if (italianTeaser) return italianTeaser.key;
-  
-  const italianVideo = videos.find((v: any) => v.iso_639_1 === "it");
-  if (italianVideo) return italianVideo.key;
-  
-  const englishTrailer = videos.find((v: any) => v.iso_639_1 === "en" && v.type === "Trailer");
-  if (englishTrailer) return englishTrailer.key;
-  
-  const anyTrailer = videos.find((v: any) => v.type === "Trailer");
-  if (anyTrailer) return anyTrailer.key;
-  
-  return videos[0]?.key || null;
-};
 
 export default function VideoCardModal({
   video,
@@ -80,48 +48,40 @@ export default function VideoCardModal({
   const rect = anchorElement.getBoundingClientRect();
   const [muted, setMuted] = useState(true);
   const [showVideo, setShowVideo] = useState(false);
+  const [trailerFailed, setTrailerFailed] = useState(false);
 
-  // Fetch videos and images
-  const { data: detailData } = useGetAppendedVideosQuery({
-    mediaType,
-    id: video.id,
-  });
-  
-  const { data: allVideosData } = useGetAllVideosQuery({
-    mediaType,
-    id: video.id,
-  });
-  
+  // Resolve the clean direct trailer immediately so it is warm by the time the
+  // intentional hover delay expires. This is independent from the movie player.
+  const resolvedTrailer = useResolvedTrailer(mediaType, video.id, true);
+  const trailerUrl = resolvedTrailer?.url || null;
+
   const { data: imagesData } = useGetMediaImagesQuery({
     mediaType,
     id: video.id,
   });
 
-  const trailerKey = useMemo(() => {
-    return getItalianTrailerKey(
-      detailData?.videos?.results || [],
-      allVideosData?.results || []
-    );
-  }, [detailData?.videos?.results, allVideosData?.results]);
-
   // Get logo from TMDB
   const logoPath = useMemo(() => {
     if (imagesData?.logos && imagesData.logos.length > 0) {
-      const italianLogo = imagesData.logos.find((l: any) => l.iso_639_1 === 'it');
-      const englishLogo = imagesData.logos.find((l: any) => l.iso_639_1 === 'en');
+      const italianLogo = imagesData.logos.find((l: any) => l.iso_639_1 === "it");
+      const englishLogo = imagesData.logos.find((l: any) => l.iso_639_1 === "en");
       const logo = italianLogo || englishLogo || imagesData.logos[0];
       return `https://image.tmdb.org/t/p/w500${logo.file_path}`;
     }
     return null;
   }, [imagesData]);
 
-  // ✅ Wait 6 SECONDS before starting video
+  // Intentional user-defined delay: keep the image visible for 6 seconds.
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowVideo(true);
     }, 6000);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    setTrailerFailed(false);
+  }, [trailerUrl]);
 
   const handleNavigateToDetail = () => {
     setPortal(null, null);
@@ -131,21 +91,21 @@ export default function VideoCardModal({
   const handlePlayClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     setPortal(null, null);
-    
-    const mType = mediaType === MEDIA_TYPE.Tv ? 'tv' : 'movie';
-    
+
+    const mType = mediaType === MEDIA_TYPE.Tv ? "tv" : "movie";
+
     // Save to Continue Watching
     saveProgress({
       tmdb_id: video.id,
       media_type: mType,
-      title: video.title || video.name || '',
-      backdrop_path: video.backdrop_path || '',
-      poster_path: video.poster_path || video.backdrop_path || '',
+      title: video.title || video.name || "",
+      backdrop_path: video.backdrop_path || "",
+      poster_path: video.poster_path || video.backdrop_path || "",
       progress: 0,
-      duration: mType === 'tv' ? 2700 : 7200,
+      duration: mType === "tv" ? 2700 : 7200,
       ...(mediaType === MEDIA_TYPE.Tv && { season: 1, episode: 1 }),
     });
-    
+
     // Check for saved progress to resume
     const saved = getProgress(video.id);
     if (mediaType === MEDIA_TYPE.Tv) {
@@ -163,19 +123,13 @@ export default function VideoCardModal({
 
   const imageUrl = getMediaImageUrl(
     video.id,
-    'backdrop',
+    "backdrop",
     video.backdrop_path,
     configuration?.images.base_url,
-    'w780'
+    "w780"
   );
 
-  // ✅ Build YouTube embed URL with mute parameter
-  const youtubeEmbedUrl = useMemo(() => {
-    if (!trailerKey) return null;
-    
-    const muteParam = muted ? '1' : '0';
-    return `https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${muteParam}&loop=1&playlist=${trailerKey}&controls=0&showinfo=0&rel=0&modestbranding=1&iv_load_policy=3&disablekb=1&fs=0&playsinline=1`;
-  }, [trailerKey, muted]);
+  const trailerVisible = !!showVideo && !!trailerUrl && !trailerFailed;
 
   return (
     <Card
@@ -210,7 +164,7 @@ export default function VideoCardModal({
         onClick={handleNavigateToDetail}
         data-testid={`video-card-image-${video.id}`}
       >
-        {/* ✅ Background Image - Visible for 6 seconds */}
+        {/* Background image intentionally remains visible for the configured delay. */}
         <img
           src={imageUrl}
           style={{
@@ -220,15 +174,15 @@ export default function VideoCardModal({
             height: "100%",
             objectFit: "cover",
             position: "absolute",
-            opacity: showVideo ? 0 : 1,
+            opacity: trailerVisible ? 0 : 1,
             transition: "opacity 0.8s ease-in-out",
-            zIndex: showVideo ? 0 : 2,
+            zIndex: trailerVisible ? 0 : 2,
           }}
           alt={video.title}
         />
 
-        {/* ✅ YouTube Trailer - Direct iframe embed */}
-        {youtubeEmbedUrl && showVideo && (
+        {/* Direct MP4/HLS trailer: no YouTube iframe, controls or provider branding. */}
+        {trailerVisible ? (
           <Box
             sx={{
               position: "absolute",
@@ -237,41 +191,35 @@ export default function VideoCardModal({
               width: "100%",
               height: "100%",
               zIndex: 1,
-              opacity: showVideo ? 1 : 0,
+              opacity: 1,
               transition: "opacity 0.8s ease-in-out",
+              overflow: "hidden",
             }}
           >
-            <iframe
-              key={muted ? 'muted' : 'unmuted'} // Force reload on mute change
-              src={youtubeEmbedUrl}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
-                border: "none",
-              }}
-              allow="autoplay; encrypted-media"
-              title="Trailer"
+            <TrailerPlayer
+              videoKey={trailerUrl}
+              muted={muted}
+              playing={trailerVisible}
+              loop
+              zoom={1.15}
+              onError={() => setTrailerFailed(true)}
             />
-            {/* ✅ COMPLETE OVERLAY - Blocks ALL interactions with video */}
             <Box
               sx={{
-                position: 'absolute',
+                position: "absolute",
                 top: 0,
                 left: 0,
                 right: 0,
                 bottom: 0,
                 zIndex: 100,
-                backgroundColor: 'transparent',
-                cursor: 'pointer',
-                pointerEvents: 'all',
+                backgroundColor: "transparent",
+                cursor: "pointer",
+                pointerEvents: "all",
               }}
               onClick={handleNavigateToDetail}
             />
           </Box>
-        )}
+        ) : null}
 
         {/* Gradient overlay for better readability */}
         <Box
@@ -287,7 +235,7 @@ export default function VideoCardModal({
           }}
         />
 
-        {/* ✅ Logo in bottom left - NO TEXT TITLE */}
+        {/* Logo in bottom left - no text title */}
         {logoPath && (
           <Box
             sx={{
@@ -312,7 +260,6 @@ export default function VideoCardModal({
           </Box>
         )}
 
-        {/* Audio toggle button - Actually works by reloading iframe */}
         <Box
           sx={{
             position: "absolute",
@@ -343,13 +290,13 @@ export default function VideoCardModal({
             >
               <PlayCircleIcon sx={{ width: 40, height: 40 }} />
             </NetflixIconButton>
-            <NetflixIconButton 
+            <NetflixIconButton
               onClick={(e) => e.stopPropagation()}
               data-testid={`video-card-add-${video.id}`}
             >
               <AddIcon />
             </NetflixIconButton>
-            <NetflixIconButton 
+            <NetflixIconButton
               onClick={(e) => e.stopPropagation()}
               data-testid={`video-card-like-${video.id}`}
             >
@@ -367,10 +314,9 @@ export default function VideoCardModal({
             </NetflixIconButton>
           </Stack>
           <Stack direction="row" spacing={1} alignItems="center">
-            <Typography
-              variant="subtitle1"
-              sx={{ color: "success.main" }}
-            >{`${Math.round(video.vote_average * 10)}% Corrispondenza`}</Typography>
+            <Typography variant="subtitle1" sx={{ color: "success.main" }}>
+              {`${Math.round(video.vote_average * 10)}% Corrispondenza`}
+            </Typography>
             <AgeLimitChip label={video.adult ? "18+" : "13+"} />
             <Typography variant="subtitle2">{`${formatMinuteToReadable(
               video.runtime || (mediaType === MEDIA_TYPE.Tv ? 45 : 120)
