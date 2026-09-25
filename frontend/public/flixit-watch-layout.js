@@ -25,7 +25,7 @@
     var value = String(path || "").trim();
     if (!value) return "";
     if (/^https?:\/\//i.test(value)) return value;
-    return "https://image.tmdb.org/t/p/" + (size || "w780") + value;
+    return "https://image.tmdb.org/t/p/" + (size || "original") + value;
   }
 
   function el(tag, className, content) {
@@ -35,6 +35,12 @@
     return node;
   }
 
+  function appendMeta(container, value) {
+    if (!value) return;
+    if (container.childNodes.length) container.appendChild(el("span", "flixit-watch-meta__dot", "·"));
+    container.appendChild(el("span", "flixit-watch-meta__item", value));
+  }
+
   function mountShell(route, page, player) {
     var old = page.querySelector(".flixit-watch-details");
     if (old) old.remove();
@@ -42,76 +48,153 @@
     var details = el("section", "flixit-watch-details");
     details.setAttribute("aria-label", "Dettagli riproduzione");
 
-    var top = el("div", "flixit-watch-details__top");
-    var copy = el("div", "flixit-watch-details__copy");
-    var title = el("h1", "flixit-watch-details__title", text('[data-testid="player-title"]') || (route.type === "tv" ? "Serie TV" : "Film"));
-    var subtitleText = text('[data-testid="player-episode"]');
-    var subtitle = el("p", "flixit-watch-details__subtitle", subtitleText || (route.type === "tv" ? ("Stagione " + route.season + " · Episodio " + route.episode) : ""));
+    var backdrop = player.querySelector("video") && player.querySelector("video").getAttribute("poster");
+    var ambient = el("div", "flixit-watch-details__ambient");
+    if (backdrop) ambient.style.backgroundImage = "url(\"" + backdrop.replace(/\"/g, "%22") + "\")";
+    details.appendChild(ambient);
 
-    copy.appendChild(title);
-    if (subtitle.textContent) copy.appendChild(subtitle);
-    top.appendChild(copy);
-    details.appendChild(top);
+    var inner = el("div", "flixit-watch-details__inner");
+    details.appendChild(inner);
+
+    var posterWrap = el("div", "flixit-watch-poster");
+    var poster = document.createElement("img");
+    poster.alt = "";
+    poster.decoding = "async";
+    poster.loading = "lazy";
+    posterWrap.appendChild(poster);
+    inner.appendChild(posterWrap);
+
+    var main = el("div", "flixit-watch-main");
+    var title = el("h1", "flixit-watch-details__title", text('[data-testid="player-title"]') || (route.type === "tv" ? "Serie TV" : "Film"));
+    main.appendChild(title);
+    main.appendChild(el("div", "flixit-watch-title-line"));
+
+    var meta = el("div", "flixit-watch-meta");
+    main.appendChild(meta);
+
+    var description = el("p", "flixit-watch-description", "");
+    main.appendChild(description);
+
+    var actions = el("div", "flixit-watch-actions");
+    var resume = el("button", "flixit-watch-action flixit-watch-action--primary", "Riprendi");
+    resume.type = "button";
+    resume.addEventListener("click", function () {
+      var play = page.querySelector('[data-testid="play-pause-button"]');
+      if (play) play.click();
+    });
+    actions.appendChild(resume);
 
     if (route.type === "tv") {
-      var episodeSection = el("div", "flixit-watch-episodes");
-      var episodeHead = el("div", "flixit-watch-episodes__head");
-      episodeHead.appendChild(el("h2", "flixit-watch-episodes__title", "Episodi"));
-      episodeHead.appendChild(el("span", "flixit-watch-episodes__season", "Stagione " + route.season));
-      episodeSection.appendChild(episodeHead);
+      var episodesAction = el("button", "flixit-watch-action flixit-watch-action--secondary", "Episodi");
+      episodesAction.type = "button";
+      episodesAction.addEventListener("click", function () {
+        var panel = details.querySelector(".flixit-watch-episodes-panel");
+        if (panel) panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+      actions.appendChild(episodesAction);
+    }
+    main.appendChild(actions);
+    inner.appendChild(main);
 
-      var rail = el("div", "flixit-watch-episodes__rail");
-      rail.appendChild(el("div", "flixit-watch-episode-skeleton", "Caricamento episodi…"));
-      episodeSection.appendChild(rail);
-      details.appendChild(episodeSection);
-
-      fetch("/api/public/tv/" + route.id + "/season/" + route.season, { headers: { Accept: "application/json" } })
-        .then(function (response) { return response.ok ? response.json() : null; })
-        .then(function (data) {
-          var episodes = data && Array.isArray(data.episodes) ? data.episodes : [];
-          rail.innerHTML = "";
-          if (!episodes.length) return;
-
-          var start = Math.max(0, episodes.findIndex(function (item) { return Number(item.episode_number) === route.episode; }) - 1);
-          episodes.slice(start, start + 8).forEach(function (item) {
-            var number = Number(item.episode_number || 0);
-            var card = el("button", "flixit-watch-episode" + (number === route.episode ? " is-current" : ""));
-            card.type = "button";
-
-            var imageWrap = el("span", "flixit-watch-episode__image");
-            var still = imgUrl(item.still_path, "w780");
-            if (still) {
-              var image = document.createElement("img");
-              image.src = still;
-              image.alt = "";
-              image.loading = "lazy";
-              image.decoding = "async";
-              imageWrap.appendChild(image);
-            }
-
-            var cardCopy = el("span", "flixit-watch-episode__copy");
-            cardCopy.appendChild(el("span", "flixit-watch-episode__number", "E" + number));
-            cardCopy.appendChild(el("strong", "flixit-watch-episode__name", item.name || ("Episodio " + number)));
-            cardCopy.appendChild(el("small", "flixit-watch-episode__meta", number === route.episode ? "In riproduzione" : (item.runtime ? item.runtime + " min" : "")));
-
-            card.appendChild(imageWrap);
-            card.appendChild(cardCopy);
-            card.addEventListener("click", function () {
-              if (number === route.episode) return;
-              var url = new URL(window.location.href);
-              url.searchParams.set("s", String(route.season));
-              url.searchParams.set("e", String(number));
-              url.searchParams.delete("t");
-              window.location.href = url.toString();
-            });
-            rail.appendChild(card);
-          });
-        })
-        .catch(function () { rail.innerHTML = ""; });
+    var panel = null;
+    var list = null;
+    if (route.type === "tv") {
+      panel = el("aside", "flixit-watch-episodes-panel");
+      var panelHead = el("div", "flixit-watch-episodes-panel__head");
+      panelHead.appendChild(el("span", "flixit-watch-episodes-panel__season", "Stagione " + route.season));
+      panelHead.appendChild(el("span", "flixit-watch-episodes-panel__chevron", "›"));
+      panel.appendChild(panelHead);
+      list = el("div", "flixit-watch-episodes-panel__list");
+      panel.appendChild(list);
+      inner.appendChild(panel);
     }
 
     player.insertAdjacentElement("afterend", details);
-    requestAnimationFrame(function () { details.classList.add("is-ready"); });
+
+    var assetPromise = fetch("/api/public/media-assets/" + route.type + "/" + route.id, { headers: { Accept: "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+
+    var seasonPromise = route.type === "tv"
+      ? fetch("/api/public/tv/" + route.id + "/season/" + route.season, { headers: { Accept: "application/json" } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .catch(function () { return null; })
+      : Promise.resolve(null);
+
+    Promise.all([assetPromise, seasonPromise]).then(function (values) {
+      var asset = values[0] || {};
+      var seasonData = values[1] || {};
+      var episodes = Array.isArray(seasonData.episodes) ? seasonData.episodes : [];
+      var currentEpisode = episodes.find(function (item) { return Number(item.episode_number) === route.episode; }) || null;
+
+      var resolvedTitle = asset.title || asset.name || title.textContent;
+      title.textContent = resolvedTitle || title.textContent;
+
+      var posterSrc = imgUrl(asset.poster_path || asset.poster_url, "w500");
+      if (!posterSrc && backdrop) posterSrc = backdrop;
+      if (posterSrc) poster.src = posterSrc;
+      else posterWrap.style.display = "none";
+
+      var year = String(asset.release_date || asset.first_air_date || asset.year || "").slice(0, 4);
+      var seasonsCount = asset.number_of_seasons || asset.seasons || (route.type === "tv" ? route.season : "");
+      var genres = Array.isArray(asset.genres)
+        ? asset.genres.map(function (g) { return typeof g === "string" ? g : g && g.name; }).filter(Boolean).slice(0, 2).join(", ")
+        : (asset.genre || asset.genres || "");
+      var certification = asset.certification || asset.rating || "";
+
+      appendMeta(meta, year);
+      if (route.type === "tv" && seasonsCount) appendMeta(meta, String(seasonsCount) + (Number(seasonsCount) === 1 ? " Stagione" : " Stagioni"));
+      if (genres) appendMeta(meta, genres);
+      if (asset.quality) appendMeta(meta, String(asset.quality));
+      if (certification) appendMeta(meta, String(certification));
+
+      description.textContent = asset.overview || asset.description || (currentEpisode && currentEpisode.overview) || (currentEpisode && currentEpisode.name ? ("Stagione " + route.season + ", episodio " + route.episode + ": " + currentEpisode.name + ".") : "");
+      if (!description.textContent) description.style.display = "none";
+
+      if (panel && list) {
+        list.innerHTML = "";
+        var start = Math.max(0, episodes.findIndex(function (item) { return Number(item.episode_number) === route.episode; }));
+        var subset = episodes.slice(start, start + 3);
+        if (!subset.length) subset = episodes.slice(0, 3);
+
+        subset.forEach(function (item) {
+          var number = Number(item.episode_number || 0);
+          var row = el("button", "flixit-watch-episode-row" + (number === route.episode ? " is-current" : ""));
+          row.type = "button";
+          row.appendChild(el("span", "flixit-watch-episode-row__number", String(number)));
+
+          var thumb = el("span", "flixit-watch-episode-row__thumb");
+          var still = imgUrl(item.still_path, "w500");
+          if (still) {
+            var img = document.createElement("img");
+            img.src = still;
+            img.alt = "";
+            img.loading = "lazy";
+            img.decoding = "async";
+            thumb.appendChild(img);
+          }
+          row.appendChild(thumb);
+
+          var copy = el("span", "flixit-watch-episode-row__copy");
+          copy.appendChild(el("strong", "flixit-watch-episode-row__name", item.name || ("Episodio " + number)));
+          copy.appendChild(el("small", "flixit-watch-episode-row__runtime", item.runtime ? item.runtime + " min" : ""));
+          row.appendChild(copy);
+          row.appendChild(el("span", "flixit-watch-episode-row__play", "▶"));
+
+          row.addEventListener("click", function () {
+            if (number === route.episode) return;
+            var url = new URL(window.location.href);
+            url.searchParams.set("s", String(route.season));
+            url.searchParams.set("e", String(number));
+            url.searchParams.delete("t");
+            window.location.href = url.toString();
+          });
+          list.appendChild(row);
+        });
+      }
+
+      details.classList.add("is-ready");
+    });
   }
 
   function tryMount() {
