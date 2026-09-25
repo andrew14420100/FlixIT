@@ -195,7 +195,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         return doc
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
-    async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
+    async def public_trailer(
+        media_type: str,
+        tmdb_id: int,
+        hdr: bool = Query(False),
+        debug: bool = Query(False),
+    ):
         """Return a visible trailer quickly and leave exhaustive work to workers."""
         result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
         if result.get("available"):
@@ -246,6 +251,26 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         result = resolver.public_result(normalized_type, tmdb_id, hdr_supported=bool(hdr))
         payload = public_payload(result, attempted_now=attempted_now)
         payload["interactive_lookup"] = interactive_lookup
+
+        if debug and interactive_lookup != "fast-hit":
+            try:
+                from .sc_trailer_diagnostics import diagnose_sc_title
+
+                identity = await resolver.identity(normalized_type, int(tmdb_id))
+                if identity:
+                    payload["sc_diagnostic"] = await asyncio.wait_for(
+                        diagnose_sc_title(resolver.providers[0], identity),
+                        timeout=9.0,
+                    )
+                else:
+                    payload["sc_diagnostic"] = {"result": "identity_unavailable"}
+            except asyncio.TimeoutError:
+                payload["sc_diagnostic"] = {"result": "diagnostic_timeout"}
+            except Exception as exc:
+                payload["sc_diagnostic"] = {
+                    "result": "diagnostic_error",
+                    "error_type": exc.__class__.__name__,
+                }
         return payload
 
     @router.get("/api/public/trailer-file/{cache_key}")
