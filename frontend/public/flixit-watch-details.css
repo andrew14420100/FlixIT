@@ -1,19 +1,14 @@
-/* Detail-page continuation for the FlixIT player */
+/* Minimal DetailPage continuation for the approved FlixIT player */
 .flixit-watch-details {
-  position: relative;
-  isolation: isolate;
   width: min(1480px, calc(100vw - 48px));
-  margin: 20px auto 54px;
-  padding: 26px 28px 30px;
+  margin: 18px auto 56px;
+  padding: 0 4px;
   box-sizing: border-box;
-  overflow: hidden;
-  border-radius: 20px;
-  border: 1px solid rgba(255,255,255,.08);
-  background: linear-gradient(180deg, rgba(19,19,19,.92), rgba(9,9,9,.96));
-  box-shadow: 0 24px 70px rgba(0,0,0,.30);
+  color: #fff;
+  font-family: "Netflix Sans Local", "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   opacity: 0;
-  transform: translateY(12px);
-  transition: opacity .3s ease, transform .3s ease;
+  transform: translateY(8px);
+  transition: opacity .25s ease, transform .25s ease;
 }
 
 .flixit-watch-details.is-ready {
@@ -21,110 +16,39 @@
   transform: translateY(0);
 }
 
-.flixit-watch-details__ambient {
-  position: absolute;
-  inset: 0;
-  z-index: -2;
-  background-position: center 30%;
-  background-size: cover;
-  opacity: .10;
-  filter: blur(28px) saturate(.85);
-  transform: scale(1.08);
-}
-
-.flixit-watch-details::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(90deg, rgba(8,8,8,.98) 0%, rgba(8,8,8,.92) 47%, rgba(8,8,8,.78) 100%);
-  pointer-events: none;
-}
-
 .flixit-watch-details__top {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 28px;
+  gap: 24px;
+  padding: 0 2px 18px;
 }
 
 .flixit-watch-details__copy { min-width: 0; }
 
-.flixit-watch-details__eyebrow {
-  margin-bottom: 8px;
-  color: #e50914;
-  font-size: 11px;
-  line-height: 1;
-  font-weight: 800;
-  letter-spacing: .16em;
-}
-
 .flixit-watch-details__title {
   margin: 0;
-  max-width: 850px;
+  max-width: 900px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #fff;
-  font-family: Inter, sans-serif;
-  font-size: clamp(25px, 2.1vw, 36px);
+  font-size: clamp(22px, 1.75vw, 31px);
   line-height: 1.08;
-  font-weight: 760;
-  letter-spacing: -.035em;
+  font-weight: 700;
+  letter-spacing: -.025em;
 }
 
 .flixit-watch-details__subtitle {
-  margin: 8px 0 0;
-  max-width: 850px;
-  color: rgba(255,255,255,.63);
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.flixit-watch-details__pills {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 7px;
-  margin-top: 15px;
-}
-
-.flixit-watch-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 27px;
-  padding: 0 10px;
-  border: 1px solid rgba(255,255,255,.10);
-  border-radius: 999px;
-  background: rgba(255,255,255,.055);
-  color: rgba(255,255,255,.76);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.flixit-watch-next {
-  flex: 0 0 auto;
-  min-height: 44px;
-  padding: 0 18px;
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: 12px;
-  background: #fff;
-  color: #080808;
-  font-family: Inter, sans-serif;
+  margin: 7px 0 0;
+  max-width: 900px;
+  color: rgba(255,255,255,.62);
   font-size: 13px;
-  font-weight: 750;
-  cursor: pointer;
-  transition: transform .18s ease, background .18s ease;
-}
-
-.flixit-watch-next:hover {
-  transform: translateY(-1px);
-  background: rgba(255,255,255,.88);
+  line-height: 1.4;
 }
 
 .flixit-watch-episodes {
-  margin-top: 28px;
-  padding-top: 24px;
+  padding-top: 20px;
   border-top: 1px solid rgba(255,255,255,.08);
 }
 
@@ -132,32 +56,31 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 14px;
+  gap: 16px;
+  margin-bottom: 13px;
 }
 
 .flixit-watch-episodes__title {
   margin: 0;
   color: #fff;
-  font-size: 17px;
-  font-weight: 720;
+  font-size: 18px;
+  font-weight: 700;
   letter-spacing: -.02em;
 }
 
 .flixit-watch-episodes__season {
-  color: rgba(255,255,255,.44);
+  color: rgba(255,255,255,.48);
   font-size: 12px;
 }
 
 .flixit-watch-episodes__rail {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(245px, 1fr);
+  grid-auto-columns: minmax(250px, 280px);
   gap: 10px;
   overflow-x: auto;
   overflow-y: hidden;
   padding: 1px 1px 8px;
-  scroll-snap-type: x proximity;
   scrollbar-width: none;
 }
 
@@ -165,190 +88,116 @@
 
 .flixit-watch-episode {
   display: grid;
-  grid-template-columns: 116px minmax(0, 1fr);
+  grid-template-columns: 118px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  width: 100%;
   min-width: 0;
-  padding: 8px;
-  border: 1px solid rgba(255,255,255,.07);
-  border-radius: 14px;
-  background: rgba(255,255,255,.035);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #fff;
   text-align: left;
   cursor: pointer;
-  scroll-snap-align: start;
-  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+  opacity: .78;
+  transition: opacity .16s ease, transform .16s ease;
 }
 
-.flixit-watch-episode:hover {
-  transform: translateY(-2px);
-  border-color: rgba(255,255,255,.16);
-  background: rgba(255,255,255,.065);
-}
-
+.flixit-watch-episode:hover,
 .flixit-watch-episode.is-current {
-  border-color: rgba(229,9,20,.42);
-  background: linear-gradient(135deg, rgba(229,9,20,.12), rgba(255,255,255,.035));
+  opacity: 1;
+  transform: translateY(-1px);
 }
 
 .flixit-watch-episode__image {
-  position: relative;
   display: block;
-  width: 116px;
+  width: 118px;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border-radius: 10px;
-  background: #151515;
+  border-radius: 8px;
+  background: #101820;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+
+.flixit-watch-episode.is-current .flixit-watch-episode__image {
+  box-shadow: inset 0 0 0 2px #e50914;
 }
 
 .flixit-watch-episode__image img {
   width: 100%;
   height: 100%;
+  display: block;
   object-fit: cover;
-  display: block;
 }
 
-.flixit-watch-episode__image::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, transparent 40%, rgba(0,0,0,.55));
-}
+.flixit-watch-episode__copy { min-width: 0; }
 
-.flixit-watch-episode__number {
-  position: absolute;
-  left: 8px;
-  bottom: 6px;
-  z-index: 2;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.flixit-watch-episode__copy {
-  display: block;
-  min-width: 0;
-}
-
+.flixit-watch-episode__number,
 .flixit-watch-episode__name,
 .flixit-watch-episode__meta { display: block; }
+
+.flixit-watch-episode__number {
+  margin-bottom: 3px;
+  color: rgba(255,255,255,.5);
+  font-size: 10px;
+  font-weight: 700;
+}
 
 .flixit-watch-episode__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  font-weight: 680;
+  font-weight: 650;
 }
 
 .flixit-watch-episode__meta {
-  margin-top: 6px;
-  color: rgba(255,255,255,.48);
-  font-size: 11px;
+  margin-top: 5px;
+  color: rgba(255,255,255,.42);
+  font-size: 10px;
 }
 
 .flixit-watch-episode.is-current .flixit-watch-episode__meta { color: #ff4a55; }
 
 .flixit-watch-episode-skeleton {
-  min-width: 245px;
-  min-height: 82px;
+  min-width: 250px;
+  min-height: 67px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255,255,255,.06);
-  border-radius: 14px;
-  background: rgba(255,255,255,.025);
-  color: rgba(255,255,255,.35);
+  color: rgba(255,255,255,.3);
   font-size: 12px;
 }
 
-/* Remove the old fake empty extension now that real detail content exists. */
 [data-testid="watch-page"] [data-testid="custom-video-player"]::after { display: none !important; }
 
+/* Mobile follows the approved player mockup: no extra card below, no crop. */
 @media (max-width: 700px) {
-  .flixit-watch-details {
-    width: calc(100vw - 24px);
-    margin: 14px 12px 34px;
-    padding: 20px 18px 22px;
-    border-radius: 18px;
+  .flixit-watch-details { display: none !important; }
+
+  [data-testid="watch-page"] [data-testid="custom-video-player"] {
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #000 !important;
   }
 
-  .flixit-watch-details::after {
-    background: linear-gradient(180deg, rgba(8,8,8,.92), rgba(8,8,8,.98));
+  [data-testid="watch-page"] [data-testid="native-video"] {
+    object-fit: contain !important;
+    object-position: center center !important;
+    border-radius: 0 !important;
+    background: #000 !important;
   }
 
-  .flixit-watch-details__top {
-    align-items: flex-start;
-    gap: 16px;
+  [data-testid="watch-page"] {
+    padding: 0 !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    overflow: hidden !important;
+    background: #000 !important;
   }
 
-  .flixit-watch-details__eyebrow {
-    margin-bottom: 7px;
-    font-size: 9px;
+  [data-testid="watch-page"] [data-testid="player-controls"] {
+    bottom: max(10px, env(safe-area-inset-bottom)) !important;
   }
-
-  .flixit-watch-details__title {
-    font-size: 22px;
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-
-  .flixit-watch-details__subtitle {
-    margin-top: 7px;
-    font-size: 12px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  .flixit-watch-details__pills { margin-top: 12px; }
-
-  .flixit-watch-next {
-    min-height: 40px;
-    padding: 0 13px;
-    border-radius: 11px;
-    font-size: 0;
-  }
-
-  .flixit-watch-next::after {
-    content: "Prossimo";
-    font-size: 11px;
-  }
-
-  .flixit-watch-episodes {
-    margin-top: 22px;
-    padding-top: 19px;
-  }
-
-  .flixit-watch-episodes__rail {
-    grid-auto-columns: minmax(225px, 82vw);
-    margin-right: -18px;
-    padding-right: 18px;
-  }
-
-  .flixit-watch-episode {
-    grid-template-columns: 105px minmax(0, 1fr);
-  }
-
-  .flixit-watch-episode__image { width: 105px; }
-}
-
-@media (max-width: 420px) {
-  .flixit-watch-details {
-    width: calc(100vw - 16px);
-    margin: 10px 8px 28px;
-    padding: 17px 14px 18px;
-  }
-
-  .flixit-watch-next {
-    position: absolute;
-    right: 14px;
-    top: 17px;
-  }
-
-  .flixit-watch-details__copy { padding-right: 74px; }
-  .flixit-watch-episodes__rail { margin-right: -14px; padding-right: 14px; }
 }
