@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v18-strict";
+const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v19-native-only";
 const SC_SOURCE = "streamingcommunity";
 
 function isYouTubeHost(value: string) {
@@ -29,8 +29,7 @@ function directTrailerUrl(data: any) {
   const selected = data?.selected && typeof data.selected === "object" ? data.selected : data;
   const source = String(selected?.source || data?.source || "").trim().toLowerCase();
 
-  // Hard client-side guard: even if an old backend/cache responds with a manual,
-  // Apple/IMDb/Prime/Netflix/TMDB URL, it must never be rendered as a trailer.
+  // Hard client-side guard: only StreamingCommunity may feed automatic trailers.
   if (source !== SC_SOURCE) return null;
 
   for (const value of [
@@ -45,12 +44,9 @@ function directTrailerUrl(data: any) {
     if (!text) continue;
     if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) continue;
 
-    // SC currently identifies its trailer through YouTube metadata, while this
-    // helper also keeps support for an SC-owned direct media URL if SC changes
-    // representation later.
-    if (isYouTubeHost(text) || /^https?:\/\//i.test(text) || text.startsWith("/")) {
-      return text;
-    }
+    // Never render YouTube, even when SC itself supplied the YouTube id/url.
+    if (isYouTubeHost(text)) continue;
+    return text;
   }
   return null;
 }
@@ -65,7 +61,7 @@ export function browserSupportsHdr() {
 }
 
 /** Shared public trailer cache for Hero, hover cards and Detail.
- * Automatic trailer policy: StreamingCommunity title metadata only. */
+ * Automatic trailer policy: native, non-YouTube StreamingCommunity media only. */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
   const hdr = useMemo(() => browserSupportsHdr(), []);
