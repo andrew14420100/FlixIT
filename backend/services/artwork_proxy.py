@@ -27,6 +27,23 @@ _ALLOWED_CONTENT_TYPES = {
     "image/webp",
 }
 
+# Reuse upstream TCP/TLS connections across artwork requests. Creating a fresh
+# AsyncClient for every card image forces repeated DNS/TCP/TLS setup and becomes
+# very expensive when a Home row reveals several images at once.
+_ARTWORK_HTTP = httpx.AsyncClient(
+    timeout=httpx.Timeout(15.0, connect=6.0),
+    follow_redirects=False,
+    limits=httpx.Limits(
+        max_connections=64,
+        max_keepalive_connections=24,
+        keepalive_expiry=30.0,
+    ),
+    headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    },
+)
+
 
 def _validated_image_url(value: str) -> str:
     text = str(value or "").strip()
@@ -45,22 +62,14 @@ def _validated_image_url(value: str) -> str:
 
 async def _download_image(url: str) -> httpx.Response:
     current = _validated_image_url(url)
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(15.0, connect=6.0),
-        follow_redirects=False,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36",
-            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        },
-    ) as client:
-        for _ in range(4):
-            response = await client.get(current)
-            if response.status_code not in {301, 302, 303, 307, 308}:
-                return response
-            location = response.headers.get("location")
-            if not location:
-                return response
-            current = _validated_image_url(urljoin(current, location))
+    for _ in range(4):
+        response = await _ARTWORK_HTTP.get(current)
+        if response.status_code not in {301, 302, 303, 307, 308}:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        current = _validated_image_url(urljoin(current, location))
     raise HTTPException(status_code=502, detail="Troppi redirect artwork")
 
 
