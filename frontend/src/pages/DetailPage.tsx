@@ -4,8 +4,9 @@
  * Pure declarative React; the whole page is styled by pages/detail/detail-page.css (prefix dp-).
  */
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import Box from "@mui/material/Box";
+import { MAIN_PATH } from "src/constant";
 import useDetailData from "./detail/useDetailData";
 import useSimilarTitles from "./detail/useSimilarTitles";
 import useEpisodes from "./detail/useEpisodes";
@@ -17,9 +18,7 @@ import DetailEpisodes from "./detail/DetailEpisodes";
 import DetailTrailers from "./detail/DetailTrailers";
 import DetailDownload from "./detail/DetailDownload";
 import DetailSimilar from "./detail/DetailSimilar";
-import ProviderPlaybackFeedback from "src/components/ProviderPlaybackFeedback";
-import useProviderPlayback from "src/hooks/useProviderPlayback";
-import { API_URL, detailTabsFor } from "./detail/detailUtils";
+import { API_URL, detailTabsFor, warmPlayback } from "./detail/detailUtils";
 import "./detail/detail-page.css";
 
 export async function loader() {
@@ -33,6 +32,7 @@ function parseMediaId(raw) {
 
 export function Component() {
   const { mediaType, id } = useParams();
+  const navigate = useNavigate();
   const mediaId = parseMediaId(id);
   const validType = mediaType === "tv" || mediaType === "movie";
   const typeSlug = mediaType === "tv" ? "tv" : "movie";
@@ -40,12 +40,6 @@ export function Component() {
   const data = useDetailData(typeSlug, validType ? mediaId : 0);
   const [activeTab, setActiveTab] = useState("overview");
   const [italianAvailability, setItalianAvailability] = useState("checking");
-  const {
-    isLoading: playbackLoading,
-    error: playbackError,
-    clearError: clearPlaybackError,
-    startPlayback,
-  } = useProviderPlayback();
 
   useEffect(() => {
     setActiveTab("overview");
@@ -116,39 +110,16 @@ export function Component() {
   );
   const tabs = detailTabsFor(data.isTV);
 
-  // Provider resolution is intentionally click-driven. Real-Debrid/provider work
-  // must not start just because a user hovers the play control.
-  const warm = useCallback(() => undefined, []);
-
-  const goPlay = useCallback(async () => {
-    if (italianAvailability !== "available" || playbackLoading) return;
-
+  const warm = useCallback(
+    () => warmPlayback(typeSlug, mediaId, data.season, data.episode),
+    [typeSlug, mediaId, data.season, data.episode]
+  );
+  const goPlay = useCallback(() => {
+    if (italianAvailability !== "available") return;
+    warm();
     window.scrollTo(0, 0);
-    await startPlayback({
-      contentTitle:
-        data.title ||
-        data.detail?.title ||
-        data.detail?.name ||
-        String(mediaId),
-      mediaType: typeSlug,
-      mediaId,
-      season: data.season,
-      episode: data.episode,
-      startTime: Number(data.progressItem?.progress || 0),
-    });
-  }, [
-    data.detail?.name,
-    data.detail?.title,
-    data.episode,
-    data.progressItem?.progress,
-    data.season,
-    data.title,
-    italianAvailability,
-    mediaId,
-    playbackLoading,
-    startPlayback,
-    typeSlug,
-  ]);
+    navigate(`/${MAIN_PATH.watch}/${typeSlug}/${mediaId}${data.isTV ? `?s=${data.season}&e=${data.episode}` : ""}`);
+  }, [data.episode, data.isTV, data.season, italianAvailability, mediaId, navigate, typeSlug, warm]);
 
   const showMoreInfo = useCallback(() => {
     setActiveTab("overview");
@@ -224,13 +195,6 @@ export function Component() {
           {activeTab === "similar" ? <DetailSimilar items={similar.items} loading={similar.loading} isTV={data.isTV} /> : null}
         </section>
       </div>
-
-      <ProviderPlaybackFeedback
-        loading={playbackLoading}
-        error={playbackError}
-        title={data.title}
-        onCloseError={clearPlaybackError}
-      />
     </Box>
   );
 }
