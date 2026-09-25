@@ -2,8 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { MAIN_PATH } from "src/constant";
 
+// In production the frontend must call the backend through the same origin
+// (/api/...) so nginx/Emergent can proxy the request correctly. A browser-side
+// localhost URL would point to the visitor's own computer, not the FlixIT server.
+// Keep an optional explicit base URL for environments that really need one.
 const PROVIDER_API_BASE = String(
-  process.env.REACT_APP_PROVIDER_API_BASE || "http://localhost:8000"
+  process.env.REACT_APP_PROVIDER_API_BASE ||
+    process.env.REACT_APP_BACKEND_URL ||
+    ""
 ).replace(/\/+$/, "");
 
 const STREAM_CACHE_PREFIX = "watch_stream_cache:";
@@ -156,7 +162,6 @@ export default function useProviderPlayback() {
             signal: controller.signal,
             headers: {
               Accept: "application/json",
-              "Content-Type": "application/json",
             },
           }
         );
