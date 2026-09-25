@@ -128,33 +128,111 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
     async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
-        """Return the requested trailer without making the detail page wait for the bulk queue.
+        """Resolve one visible title quickly without entering the slow catalog scan.
 
-        The first cache lookup remains instant. If that title has no usable cached
-        trailer, resolve this single title immediately with a bounded timeout.
-        This path still accepts only exact-TMDB StreamingCommunity candidates;
-        YouTube is accepted only when SC itself publishes youtube_id metadata.
+        The first cache lookup remains instant. On a miss, the request uses only
+        the bounded parallel SC metadata pass. If that pass finds a trailer, the
+        normal resolver persists the positive result. If it misses or times out,
+        the previous cache document is restored and a priority-zero background
+        job performs the complete multi-host scan. Therefore an interactive miss
+        is never persisted as proof that StreamingCommunity has no trailer.
         """
         result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
         if result.get("available"):
-            return public_payload(result, attempted_now=False)
+            payload = public_payload(result, attempted_now=False)
+            payload["interactive_lookup"] = "cache-hit"
+            return payload
+
+        normalized_type = "tv" if media_type == "tv" else "movie"
+        key = {"type": normalized_type, "tmdbId": int(tmdb_id)}
+        previous = resolver.results.find_one(key, {"_id": 0})
+
+        def restore_previous_resolution() -> None:
+            try:
+                if previous:
+                    resolver.results.replace_one(key, previous, upsert=True)
+                else:
+                    resolver.results.delete_one(key)
+            except Exception as exc:
+                logger.warning(
+                    "Could not restore trailer cache after interactive miss for %s:%s: %s",
+                    normalized_type,
+                    tmdb_id,
+                    exc,
+                )
 
         attempted_now = True
+        interactive_lookup = "fast-miss"
+        token = None
         try:
-            await asyncio.wait_for(
-                resolver.resolve(media_type, tmdb_id, force=True),
-                timeout=12.0,
-            )
-        except asyncio.TimeoutError:
-            # Keep a priority-zero background retry, but do not hold the page
-            # indefinitely when an SC host is temporarily slow.
-            resolver.enqueue(media_type, tmdb_id, priority=0, reason="interactive_trailer_timeout")
-        except Exception as exc:
-            logger.warning("Immediate SC trailer resolve failed for %s:%s: %s", media_type, tmdb_id, exc)
-            resolver.enqueue(media_type, tmdb_id, priority=0, reason="interactive_trailer_retry")
+            from .fast_sc_discovery import begin_interactive_fast_only, end_interactive_fast_only
 
-        result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
-        return public_payload(result, attempted_now=attempted_now)
+            token = begin_interactive_fast_only()
+            try:
+                resolved_doc = await asyncio.wait_for(
+                    resolver.resolve(normalized_type, tmdb_id, force=True),
+                    timeout=11.0,
+                )
+            finally:
+                if token is not None:
+                    end_interactive_fast_only(token)
+                    token = None
+
+            selected = (resolved_doc or {}).get("selected") or {}
+            if selected.get("source") == SC_SOURCE:
+                interactive_lookup = "fast-hit"
+            else:
+                # resolver.resolve writes a normal negative document when a
+                # provider returns no candidates. That is correct for a complete
+                # background pass, but not for this bounded interactive pass.
+                restore_previous_resolution()
+                resolver.enqueue(
+                    normalized_type,
+                    tmdb_id,
+                    priority=0,
+                    reason="interactive_fast_miss_full_scan",
+                )
+        except asyncio.TimeoutError:
+            if token is not None:
+                try:
+                    from .fast_sc_discovery import end_interactive_fast_only
+                    end_interactive_fast_only(token)
+                except Exception:
+                    pass
+            interactive_lookup = "fast-timeout"
+            restore_previous_resolution()
+            resolver.enqueue(
+                normalized_type,
+                tmdb_id,
+                priority=0,
+                reason="interactive_fast_timeout_full_scan",
+            )
+        except Exception as exc:
+            if token is not None:
+                try:
+                    from .fast_sc_discovery import end_interactive_fast_only
+                    end_interactive_fast_only(token)
+                except Exception:
+                    pass
+            interactive_lookup = "fast-error"
+            restore_previous_resolution()
+            logger.warning(
+                "Immediate fast SC trailer resolve failed for %s:%s: %s",
+                normalized_type,
+                tmdb_id,
+                exc,
+            )
+            resolver.enqueue(
+                normalized_type,
+                tmdb_id,
+                priority=0,
+                reason="interactive_fast_error_full_scan",
+            )
+
+        result = resolver.public_result(normalized_type, tmdb_id, hdr_supported=bool(hdr))
+        payload = public_payload(result, attempted_now=attempted_now)
+        payload["interactive_lookup"] = interactive_lookup
+        return payload
 
     @router.get("/api/public/trailer-file/{cache_key}")
     async def trailer_file(cache_key: str):
