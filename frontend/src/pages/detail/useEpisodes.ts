@@ -1,17 +1,40 @@
 // @ts-nocheck
 /**
  * FlixIT Detail Page v2 - seasons/episodes data for TV titles.
- * Strict Italian policy: only explicitly confirmed Italian-dubbed episodes are
- * shown. Episode data is prefetched while the user is still on Panoramica so
- * opening the Episodi tab is effectively instant.
+ * Only explicitly confirmed Italian episodes are exposed. Data and thumbnails
+ * are warmed before the Episodi tab opens and mirrored in sessionStorage so tab
+ * switches/back navigation do not flash a fresh loading state.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { API_URL } from "./detailUtils";
 
 async function getJson(path, signal) {
-  const response = await fetch(path, { signal, headers: { Accept: "application/json" } });
+  const response = await fetch(path, {
+    signal,
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
   return response.ok ? response.json() : null;
+}
+
+function readSession(key) {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSession(key, value) {
+  if (typeof window === "undefined" || !value) return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {}
 }
 
 /** Episode stills only exist on TMDB: allowed here as the single exception, with backdrop fallback. */
@@ -24,18 +47,25 @@ export function episodeStillUrl(value) {
 
 export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
   const preferred = Math.max(1, Number(preferredSeason || 1));
+  const seasonsCacheKey = `flixit:it-seasons:${mediaId}`;
 
   const seasonsQuery = useQuery({
-    queryKey: ["dp-seasons", mediaId],
+    queryKey: ["dp-seasons-it-v2", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
+    initialData: () => readSession(seasonsCacheKey),
+    initialDataUpdatedAt: 0,
     staleTime: 30 * 60 * 1000,
     gcTime: 12 * 60 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
+
+  useEffect(() => {
+    if (seasonsQuery.data?.seasons) writeSession(seasonsCacheKey, seasonsQuery.data);
+  }, [seasonsCacheKey, seasonsQuery.data]);
 
   const seasons = useMemo(
     () => (seasonsQuery.data?.seasons || []).filter(
@@ -44,9 +74,6 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     [seasonsQuery.data]
   );
 
-  // Start with the user's current season (or season 1) immediately instead of
-  // waiting for the seasons endpoint. This lets the season request run in
-  // parallel with the seasons metadata request.
   const [selected, setSelected] = useState(preferred);
 
   useEffect(() => {
@@ -63,38 +90,51 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     });
   }, [seasons, preferredSeason]);
 
+  const episodeCacheKey = `flixit:it-episodes:${mediaId}:${selected}`;
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes", mediaId, selected],
+    queryKey: ["dp-season-episodes-it-v3", mediaId, selected],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
-    // Important: preload even while the Episodi tab is closed.
     enabled: !!mediaId && !!selected && !!enabled,
+    initialData: () => readSession(episodeCacheKey),
+    initialDataUpdatedAt: 0,
+    placeholderData: (previous) => previous,
     staleTime: 15 * 60 * 1000,
     gcTime: 12 * 60 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
-    // Only keep the Italian availability recheck alive while the user is
-    // actually looking at the episodes tab. Hidden preloading does one request.
+    // The first season response can arrive before the backend has finished the
+    // strict language checks. Continue that verification in the background even
+    // while Panoramica is visible, so opening Episodi does not start the wait.
     refetchInterval: (query) => {
-      if (!active) return false;
-      const seconds = Number(query?.state?.data?.pending_recheck_seconds || 90);
-      return Math.max(10000, Math.min(90 * 1000, seconds * 1000));
+      const data = query?.state?.data || {};
+      if (Number(data?.pending_recheck_seconds || 0) > 0) return 4000;
+      if (active && query?.state?.isFetching) return 6000;
+      return false;
     },
+    refetchIntervalInBackground: true,
   });
+
+  useEffect(() => {
+    const data = episodesQuery.data;
+    if (!data || !Array.isArray(data.episodes)) return;
+    writeSession(episodeCacheKey, data);
+  }, [episodeCacheKey, episodesQuery.data]);
 
   const episodes = useMemo(
     () => (episodesQuery.data?.episodes || []).filter(
-      (episode) => episode?.vixsrc_available !== false && episode?.italian_available === true
+      (episode) =>
+        episode?.vixsrc_available !== false &&
+        episode?.italian_available === true &&
+        String(episode?.italian_audio_status || "italian") === "italian"
     ),
     [episodesQuery.data]
   );
 
-  // Warm the episode thumbnails before the tab is opened so cards do not pop
-  // in one-by-one after the user clicks Episodi.
   useEffect(() => {
     if (typeof Image === "undefined" || !episodes.length) return;
-    episodes.slice(0, 30).forEach((episode) => {
+    episodes.slice(0, 40).forEach((episode) => {
       const src = episodeStillUrl(episode?.still_path);
       if (!src) return;
       const image = new Image();
@@ -108,9 +148,9 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     selected,
     setSelected,
     episodes,
-    loadingSeasons: seasonsQuery.isLoading,
-    loadingEpisodes: episodesQuery.isLoading || (episodesQuery.isFetching && !episodesQuery.data),
-    checkingItalian: !!episodesQuery.data?.pending_recheck_seconds,
+    loadingSeasons: seasonsQuery.isLoading && !seasonsQuery.data,
+    loadingEpisodes: episodesQuery.isLoading && !episodesQuery.data,
+    checkingItalian: Number(episodesQuery.data?.pending_recheck_seconds || 0) > 0,
     seasonsError: seasonsQuery.isError,
   };
 }
