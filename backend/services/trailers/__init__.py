@@ -1,8 +1,11 @@
-"""FastAPI integration for the StreamingCommunity trailer resolver."""
+"""FastAPI integration for the central multi-provider TrailerResolver."""
 from __future__ import annotations
 
-import asyncio
+import inspect
 import logging
+import os
+import re
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,10 +15,11 @@ from pydantic import BaseModel
 
 from .resolver import TrailerResolver
 from .queue_policy import install_queue_policy
+from .providers import TherystonTrailerProvider
+from .base import is_blocked_url
 
 logger = logging.getLogger(__name__)
-SC_SOURCE = "streamingcommunity"
-SC_POLICY = "streamingcommunity-vixcloud-direct-or-youtube-metadata"
+SOURCE_POLICY = "direct-multiprovider-no-youtube"
 
 
 class ManualTrailerBody(BaseModel):
@@ -29,8 +33,7 @@ class ProviderPageBody(BaseModel):
 
 
 class QueueBody(BaseModel):
-    # 0 means the complete FLIX-IT catalog.
-    limit: int = 0
+    limit: int = 250
 
 
 def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch_tmdb_data):
@@ -38,12 +41,17 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         return getattr(app.state, "trailer_resolver", None)
 
     resolver = install_queue_policy(TrailerResolver(db, fetch_tmdb_data, logger=logger))
+    # Theryston is a direct-media bridge for supported official provider pages;
+    # YouTube URLs are still rejected by the shared candidate filter.
+    resolver.providers.insert(1, TherystonTrailerProvider())
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
+    legacy_endpoint = None
     kept_routes = []
     for route in app.router.routes:
         if isinstance(route, APIRoute) and route.path == "/api/public/trailer/{media_type}/{tmdb_id}" and "GET" in route.methods:
+            legacy_endpoint = route.endpoint
             continue
         kept_routes.append(route)
     app.router.routes[:] = kept_routes
@@ -54,224 +62,127 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         cfg = resolver.config()
         return {
             **cfg,
+            "quality_mode": "max_available",
+            "preferred_resolution": 2160,
+            "preferred_label": "4K UHD",
+            "minimum_resolution": 1080,
+            "fallback_resolution": 720,
+            "upscaling": False,
             "automatic": True,
-            "source": SC_SOURCE,
-            "source_policy": SC_POLICY,
-            "catalog_import": "all",
-            "playback": "vixcloud-embed-direct-or-sc-youtube-metadata",
-            "youtube_enabled": True,
-            "youtube_policy": "only-explicit-streamingcommunity-youtube-id",
-            "tmdb_match_required": True,
-            "legacy_fallback": False,
-            "manual_override": False,
+            "italian_preferred": True,
+            "italian_only": False,
+            "youtube_enabled": False,
+            "source_policy": SOURCE_POLICY,
+            "providers": [getattr(provider, "name", provider.__class__.__name__) for provider in resolver.providers],
         }
+
+    def _language(value) -> str:
+        return str(value or "").strip().lower().replace("_", "-")
+
+    def _is_italian_language(value) -> bool:
+        lang = _language(value)
+        return bool(
+            lang == "it"
+            or lang.startswith("it-")
+            or lang in {"ita", "italian", "italiano", "italiana"}
+            or lang.startswith("italian-")
+        )
 
     @router.get("/api/public/trailer-config")
     async def public_trailer_config():
-        return quality_config()
+        cfg = quality_config()
+        return {
+            **cfg,
+            "enabled": cfg["enabled"],
+            "youtube_enabled": False,
+            "fallback_language": "original-temporary",
+            "theryston_enabled": True,
+            "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
+            "language_priority": ["it-IT", "ita", "it", "original"],
+        }
 
-    def public_payload(result: dict, *, attempted_now: bool = False) -> dict:
+    @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
+    async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
+        result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
+        if not result.get("enabled"):
+            if legacy_endpoint is None:
+                return {"trailer_key": None, "source": "legacy", "enabled": False, "youtube": False}
+            value = legacy_endpoint(media_type=media_type, tmdb_id=tmdb_id)
+            if inspect.isawaitable(value):
+                value = await value
+            if isinstance(value, dict):
+                # Even in legacy-disabled mode, never expose a YouTube URL through
+                # the new public trailer contract.
+                candidate = value.get("trailer_url") or value.get("trailer_key")
+                if candidate and is_blocked_url(str(candidate)):
+                    candidate = None
+                return {**value, "trailer_key": candidate, "trailer_url": candidate, "enabled": False, "resolved": False, "youtube": False}
+            return value
+
         selected = result.get("selected") or {}
         selected_url = selected.get("trailer_url") or selected.get("manifest_url")
-        selected_source = str(selected.get("source") or result.get("source") or "").strip().lower()
-        selected_meta = selected.get("metadata") or {}
-        is_native = selected_meta.get("native_sc_trailer") is True
-        is_sc_youtube = bool(selected_meta.get("sc_youtube_metadata"))
+        if selected_url and is_blocked_url(str(selected_url)):
+            selected_url = None
+        selected_language = selected.get("audio_language") or selected.get("language")
+        italian = _is_italian_language(selected_language)
+        fallback_original = bool(result.get("fallback_original"))
 
-        if result.get("available") and selected_url and selected_source == SC_SOURCE and is_native:
+        if selected_url and (italian or fallback_original or result.get("language_verified")):
             return {
                 "trailer_key": selected_url,
                 "trailer_url": selected_url,
                 "manifest_url": selected.get("manifest_url"),
-                "source": SC_SOURCE,
+                "source": result.get("source") or selected.get("source"),
                 "selected": selected,
-                "candidate": selected,
                 "enabled": True,
                 "resolved": True,
                 "available": True,
+                "candidate": selected,
                 "cached": result.get("cached", True),
                 "stale": result.get("stale", False),
-                "refresh_pending": False,
+                "quality_mode": "max_available",
+                "preferred_resolution": 2160,
+                "minimum_resolution": 1080,
+                "fallback_resolution": 720,
+                "language": selected_language,
+                "language_priority": ["it-IT", "ita", "it", "original"],
+                "italian_preferred": True,
+                "italian_only": False,
+                "language_verified": bool(result.get("language_verified")),
+                "fallback_original": fallback_original,
+                "refresh_pending": result.get("refresh_pending", False),
                 "automatic": True,
-                "source_policy": SC_POLICY,
-                "tmdb_match": selected_meta.get("tmdb_match"),
-                "native_sc_trailer": True,
-                "vixcloud_embed": bool(selected_meta.get("sc_vixcloud_embed")),
-                "youtube": is_sc_youtube,
-                "youtube_from_sc_metadata": is_sc_youtube,
-                "language": selected.get("audio_language") or selected.get("language"),
-                "attempted_now": attempted_now,
+                "youtube": False,
+                "source_policy": SOURCE_POLICY,
             }
 
         return {
             "trailer_key": None,
             "trailer_url": None,
             "manifest_url": None,
-            "source": SC_SOURCE,
+            "source": None,
             "selected": None,
-            "candidate": None,
             "enabled": True,
             "resolved": True,
             "available": False,
+            "candidate": None,
             "cached": result.get("cached", bool(selected)),
             "stale": result.get("stale", bool(selected)),
-            "refresh_pending": result.get("refresh_pending", True),
+            "quality_mode": "max_available",
+            "preferred_resolution": 2160,
+            "minimum_resolution": 1080,
+            "fallback_resolution": 720,
+            "language_priority": ["it-IT", "ita", "it", "original"],
+            "italian_preferred": True,
+            "italian_only": False,
+            "language_verified": False,
+            "fallback_original": False,
+            "reason": result.get("reason") or "direct_trailer_unavailable",
+            "refresh_pending": result.get("refresh_pending", False),
             "automatic": True,
-            "source_policy": SC_POLICY,
-            "reason": result.get("reason") or "streamingcommunity_trailer_unavailable",
-            "native_sc_trailer": False,
-            "vixcloud_embed": False,
             "youtube": False,
-            "youtube_from_sc_metadata": False,
-            "attempted_now": attempted_now,
+            "source_policy": SOURCE_POLICY,
         }
-
-    async def resolve_visible_fast(media_type: str, tmdb_id: int) -> Optional[dict]:
-        """Discover one visible title without waiting for the background lock.
-
-        Only a positive, usable StreamingCommunity trailer is persisted. A fast
-        miss never writes an empty resolution and therefore cannot hide a trailer
-        while the complete background scan is still running.
-        """
-        from . import queue_policy as queue_policy_module
-        from . import resolver as resolver_module
-        from .fast_sc_discovery import begin_interactive_fast_only, end_interactive_fast_only
-
-        normalized_type = "tv" if media_type == "tv" else "movie"
-        normalized_id = int(tmdb_id)
-        identity = await resolver.identity(normalized_type, normalized_id)
-        if not identity:
-            return None
-
-        provider = resolver.providers[0]
-        token = begin_interactive_fast_only()
-        try:
-            candidates = await provider.discover(identity)
-        finally:
-            end_interactive_fast_only(token)
-
-        ready = []
-        for candidate in candidates or []:
-            if candidate.source != SC_SOURCE:
-                continue
-            if not resolver_module.candidate_is_usable(candidate):
-                continue
-            candidate.expires_at = resolver._expires(candidate)
-            ready.append(candidate)
-
-        deduped = {candidate.candidate_id: candidate for candidate in ready}
-        ready = list(deduped.values())
-        best = resolver_module.pick_best(ready, hdr_supported=False)
-        if not best:
-            return None
-
-        now = resolver_module._now()
-        provider_pages = {SC_SOURCE: best.provider_page} if best.provider_page else {}
-        doc = {
-            "type": normalized_type,
-            "tmdbId": normalized_id,
-            "title": identity.get("title"),
-            "originalTitle": identity.get("original_title"),
-            "year": identity.get("year"),
-            "externalIds": identity.get("external_ids") or {},
-            "providerPages": provider_pages,
-            "selected": best.to_dict(),
-            "alternatives": [row.to_dict() for row in ready],
-            "resolvedAt": now.isoformat(),
-            "metadataExpiresAt": (now + resolver.metadata_ttl()).isoformat(),
-            "lastError": None,
-            "sourcePolicy": "streamingcommunity-vixcloud-or-direct",
-            "minimumResolution": None,
-            "youtubeRejected": False,
-            "policyVersion": queue_policy_module.TRAILER_POLICY_VERSION,
-            "scNativeCheckedAt": now.isoformat(),
-            "scNativeTrailerCount": len(ready),
-        }
-        resolver.results.update_one(
-            {"type": normalized_type, "tmdbId": normalized_id},
-            {"$set": doc, "$unset": {"manual": ""}},
-            upsert=True,
-        )
-        return doc
-
-    @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
-    async def public_trailer(
-        media_type: str,
-        tmdb_id: int,
-        hdr: bool = Query(False),
-        debug: bool = Query(False),
-    ):
-        """Return a visible trailer quickly and leave exhaustive work to workers."""
-        result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
-        if result.get("available"):
-            payload = public_payload(result, attempted_now=False)
-            payload["interactive_lookup"] = "cache-hit"
-            return payload
-
-        normalized_type = "tv" if media_type == "tv" else "movie"
-        attempted_now = True
-        interactive_lookup = "fast-miss"
-        try:
-            fast_doc = await asyncio.wait_for(
-                resolve_visible_fast(normalized_type, tmdb_id),
-                timeout=11.0,
-            )
-            if fast_doc and (fast_doc.get("selected") or {}).get("source") == SC_SOURCE:
-                interactive_lookup = "fast-hit"
-            else:
-                resolver.enqueue(
-                    normalized_type,
-                    tmdb_id,
-                    priority=0,
-                    reason="interactive_fast_miss_full_scan",
-                )
-        except asyncio.TimeoutError:
-            interactive_lookup = "fast-timeout"
-            resolver.enqueue(
-                normalized_type,
-                tmdb_id,
-                priority=0,
-                reason="interactive_fast_timeout_full_scan",
-            )
-        except Exception as exc:
-            interactive_lookup = "fast-error"
-            logger.warning(
-                "Immediate fast SC trailer resolve failed for %s:%s: %s",
-                normalized_type,
-                tmdb_id,
-                exc,
-            )
-            resolver.enqueue(
-                normalized_type,
-                tmdb_id,
-                priority=0,
-                reason="interactive_fast_error_full_scan",
-            )
-
-        result = resolver.public_result(normalized_type, tmdb_id, hdr_supported=bool(hdr))
-        payload = public_payload(result, attempted_now=attempted_now)
-        payload["interactive_lookup"] = interactive_lookup
-
-        if debug and interactive_lookup != "fast-hit":
-            try:
-                from .sc_trailer_diagnostics import diagnose_sc_title
-
-                identity = await resolver.identity(normalized_type, int(tmdb_id))
-                if identity:
-                    payload["sc_diagnostic"] = await asyncio.wait_for(
-                        diagnose_sc_title(resolver.providers[0], identity),
-                        timeout=9.0,
-                    )
-                else:
-                    payload["sc_diagnostic"] = {"result": "identity_unavailable"}
-            except asyncio.TimeoutError:
-                payload["sc_diagnostic"] = {"result": "diagnostic_timeout"}
-            except Exception as exc:
-                payload["sc_diagnostic"] = {
-                    "result": "diagnostic_error",
-                    "error_type": exc.__class__.__name__,
-                }
-        return payload
 
     @router.get("/api/public/trailer-file/{cache_key}")
     async def trailer_file(cache_key: str):
@@ -285,6 +196,24 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="Trailer temporaneo scaduto")
         return FileResponse(path, media_type="video/mp4")
+
+    @router.get("/api/public/theryston-file/{filename}")
+    async def theryston_file(filename: str):
+        if not filename or not re.fullmatch(r"[A-Za-z0-9._-]+", filename):
+            raise HTTPException(status_code=400, detail="Invalid trailer filename")
+        files_dir = (Path(os.environ.get("THERYSTON_TRAILERS_DATA_DIR", "/app/trailers-data")) / "files").resolve()
+        path = (files_dir / filename).resolve()
+        try:
+            path.relative_to(files_dir)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid trailer file path")
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail="Trailer non disponibile")
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @router.get("/api/admin/trailers/config")
     async def admin_trailer_config(admin=Depends(get_current_admin)):
@@ -306,30 +235,41 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
 
     @router.post("/api/admin/trailers/{media_type}/{tmdb_id}/refresh")
     async def admin_refresh_trailer(media_type: str, tmdb_id: int, admin=Depends(get_current_admin)):
+        before = resolver.get_admin(media_type, tmdb_id)
+        manual = (before.get("manual") or {}).get("enabled")
         doc = await resolver.resolve(media_type, tmdb_id, force=True)
-        log_admin_action("REFRESH_TRAILER", str(tmdb_id), {"media_type": media_type, "source": SC_SOURCE})
-        return {**doc, "manual_preserved": False, "source_policy": SC_POLICY}
+        log_admin_action("REFRESH_TRAILER", str(tmdb_id), {"media_type": media_type, "manual_preserved": bool(manual)})
+        return {**doc, "manual_preserved": bool(manual)}
 
     @router.put("/api/admin/trailers/{media_type}/{tmdb_id}/manual")
     async def admin_set_manual_trailer(media_type: str, tmdb_id: int, body: ManualTrailerBody, admin=Depends(get_current_admin)):
-        raise HTTPException(
-            status_code=400,
-            detail="Override manuali disabilitati: i trailer usano solo StreamingCommunity",
-        )
+        try:
+            if body.candidate_id:
+                doc = await resolver.set_manual_candidate(media_type, tmdb_id, body.candidate_id)
+            elif body.url:
+                doc = resolver.set_manual_url(media_type, tmdb_id, body.url)
+            else:
+                raise ValueError("Specificare url oppure candidate_id")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        log_admin_action("SET_MANUAL_TRAILER", str(tmdb_id), {"media_type": media_type, "candidate_id": body.candidate_id, "has_url": bool(body.url)})
+        return doc
 
     @router.delete("/api/admin/trailers/{media_type}/{tmdb_id}/manual")
     async def admin_reset_manual_trailer(media_type: str, tmdb_id: int, admin=Depends(get_current_admin)):
         doc = resolver.reset_manual(media_type, tmdb_id)
-        resolver.enqueue(media_type, tmdb_id, priority=0, reason="manual_reset_sc_only")
+        resolver.enqueue(media_type, tmdb_id, priority=1, reason="manual_reset")
         log_admin_action("RESET_MANUAL_TRAILER", str(tmdb_id), {"media_type": media_type})
         return doc
 
     @router.put("/api/admin/trailers/{media_type}/{tmdb_id}/provider-page")
     async def admin_set_provider_page(media_type: str, tmdb_id: int, body: ProviderPageBody, admin=Depends(get_current_admin)):
-        raise HTTPException(
-            status_code=400,
-            detail="Provider page legacy disabilitate: i trailer usano solo StreamingCommunity",
-        )
+        try:
+            doc = resolver.set_provider_page(media_type, tmdb_id, body.provider, body.url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        resolver.enqueue(media_type, tmdb_id, priority=1, reason="provider_page_changed")
+        return doc
 
     app.include_router(router)
     app.add_event_handler("startup", resolver.start)
