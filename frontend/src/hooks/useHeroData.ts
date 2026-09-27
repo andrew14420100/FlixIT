@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useQuery } from '@tanstack/react-query';
+import { browserSafeArtworkUrl, tmdbImageUrl } from './useAutomaticMediaAssets';
 
 interface HeroSettings {
   contentId: string;
@@ -27,26 +28,73 @@ function heroViewport() {
   return window.innerWidth < 700 ? 'mobile' : 'desktop';
 }
 
+function rawArtwork(value: any) {
+  if (!value) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value?.url === 'string') return value.url.trim();
+  if (typeof value?.artwork?.url === 'string') return value.artwork.url.trim();
+  return '';
+}
+
+function heroArtworkUrl(...values: any[]) {
+  for (const value of values) {
+    const raw = rawArtwork(value);
+    if (!raw) continue;
+
+    if (raw.startsWith('/api/') || raw.startsWith('/assets/') || raw.startsWith('/static/')) {
+      return raw;
+    }
+
+    if (raw.startsWith('/')) {
+      const tmdb = tmdbImageUrl(raw, 'original');
+      if (tmdb) return tmdb;
+    }
+
+    const safe = browserSafeArtworkUrl(raw);
+    if (safe) return safe;
+  }
+  return null;
+}
+
+function normalizeHero(value: any) {
+  if (!value?.contentId) return value || null;
+  const assets = value?.assets || {};
+  const detail = value?.detail || {};
+  return {
+    ...value,
+    mediaType: value.mediaType || 'tv',
+    // HeroSection treats customBackdrop as already browser-ready. Supplying the
+    // best saved artwork here prevents an external/proxied artwork URL from
+    // being incorrectly reinterpreted as a TMDB-only path later in the Hero.
+    customBackdrop: heroArtworkUrl(
+      value?.customBackdrop,
+      assets?.hero_backdrop_path,
+      assets?.detail_backdrop_path,
+      assets?.backdrop_path,
+      assets?.titled_backdrop_path,
+      detail?.backdrop_path,
+      assets?.poster_path,
+      detail?.poster_path
+    ),
+  };
+}
+
 function bootstrappedHero() {
   if (typeof window === 'undefined') return null;
   const value = (window as any).__flixitHomeHero;
-  return value?.contentId ? value : null;
+  return value?.contentId ? normalizeHero(value) : null;
 }
 
-/**
- * All Home Hero consumers share one React Query key. Previously the cache key
- * included the current Hero revision, so MainLayout helpers and HeroSection could
- * issue parallel /api/public/hero requests during the same refresh. A stable key
- * lets React Query coalesce them into one request while focus/reconnect still
- * revalidate Admin changes immediately.
- */
+/** Shared Home Hero query. Hero artwork is normalized before it reaches the
+ * billboard so saved StreamingCommunity/GitHub/custom artwork and TMDB fallback
+ * paths all remain visible instead of producing an empty Hero background. */
 export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
-  const hydrated = initialHero?.contentId ? initialHero : bootstrappedHero();
+  const hydrated = initialHero?.contentId ? normalizeHero(initialHero) : bootstrappedHero();
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v5', profile, viewport],
+    queryKey: ['hero-settings-v6-artwork-recovery', profile, viewport],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
@@ -57,30 +105,19 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
         if (!response.ok) return hydrated || null;
         const data = await response.json();
         if (!data?.contentId) return hydrated || null;
-        const normalized = {
-          ...data,
-          mediaType: data.mediaType || 'tv',
-        };
+        const normalized = normalizeHero(data);
         if (typeof window !== 'undefined') (window as any).__flixitHomeHero = normalized;
         return normalized;
       } catch {
         return hydrated || null;
       }
     },
-    initialData: hydrated?.contentId
-      ? {
-          ...hydrated,
-          mediaType: hydrated.mediaType || 'tv',
-        }
-      : undefined,
+    initialData: hydrated?.contentId ? normalizeHero(hydrated) : undefined,
     initialDataUpdatedAt: hydrated?.contentId ? Date.now() : undefined,
     staleTime: 0,
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
-    // If the Home bootstrap already supplied the Hero there is no reason to
-    // duplicate that network request during the same mount. Returning to the
-    // tab still revalidates because staleTime stays at zero.
     refetchOnMount: hydrated?.contentId ? false : 'always',
     retry: 1,
   });
