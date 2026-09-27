@@ -1,7 +1,6 @@
 """FastAPI integration for the central multi-provider TrailerResolver."""
 from __future__ import annotations
 
-import inspect
 import logging
 import os
 import re
@@ -19,7 +18,7 @@ from .providers import TherystonTrailerProvider
 from .base import is_blocked_url
 
 logger = logging.getLogger(__name__)
-SOURCE_POLICY = "direct-multiprovider-no-youtube"
+SOURCE_POLICY = "direct-multiprovider-no-youtube-italian-only"
 
 
 class ManualTrailerBody(BaseModel):
@@ -47,11 +46,11 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
-    legacy_endpoint = None
+    # Remove the old public trailer route. The strict Italian-only contract below
+    # is the single public path and never falls back to legacy/YouTube trailers.
     kept_routes = []
     for route in app.router.routes:
         if isinstance(route, APIRoute) and route.path == "/api/public/trailer/{media_type}/{tmdb_id}" and "GET" in route.methods:
-            legacy_endpoint = route.endpoint
             continue
         kept_routes.append(route)
     app.router.routes[:] = kept_routes
@@ -70,7 +69,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "upscaling": False,
             "automatic": True,
             "italian_preferred": True,
-            "italian_only": False,
+            "italian_only": True,
             "youtube_enabled": False,
             "source_policy": SOURCE_POLICY,
             "providers": [getattr(provider, "name", provider.__class__.__name__) for provider in resolver.providers],
@@ -95,39 +94,45 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             **cfg,
             "enabled": cfg["enabled"],
             "youtube_enabled": False,
-            "fallback_language": "original-temporary",
+            "fallback_language": None,
             "theryston_enabled": True,
             "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
-            "language_priority": ["it-IT", "ita", "it", "original"],
+            "language_priority": ["it-IT", "ita", "it"],
         }
 
     @router.get("/api/public/trailer/{media_type}/{tmdb_id}")
     async def public_trailer(media_type: str, tmdb_id: int, hdr: bool = Query(False)):
         result = resolver.public_result(media_type, tmdb_id, hdr_supported=bool(hdr))
         if not result.get("enabled"):
-            if legacy_endpoint is None:
-                return {"trailer_key": None, "source": "legacy", "enabled": False, "youtube": False}
-            value = legacy_endpoint(media_type=media_type, tmdb_id=tmdb_id)
-            if inspect.isawaitable(value):
-                value = await value
-            if isinstance(value, dict):
-                # Even in legacy-disabled mode, never expose a YouTube URL through
-                # the new public trailer contract.
-                candidate = value.get("trailer_url") or value.get("trailer_key")
-                if candidate and is_blocked_url(str(candidate)):
-                    candidate = None
-                return {**value, "trailer_key": candidate, "trailer_url": candidate, "enabled": False, "resolved": False, "youtube": False}
-            return value
+            return {
+                "trailer_key": None,
+                "trailer_url": None,
+                "manifest_url": None,
+                "source": None,
+                "selected": None,
+                "enabled": False,
+                "resolved": True,
+                "available": False,
+                "candidate": None,
+                "italian_preferred": True,
+                "italian_only": True,
+                "language_verified": False,
+                "fallback_original": False,
+                "youtube": False,
+                "reason": "italian_trailer_resolver_disabled",
+                "source_policy": SOURCE_POLICY,
+            }
 
         selected = result.get("selected") or {}
         selected_url = selected.get("trailer_url") or selected.get("manifest_url")
         if selected_url and is_blocked_url(str(selected_url)):
             selected_url = None
+
         selected_language = selected.get("audio_language") or selected.get("language")
         italian = _is_italian_language(selected_language)
-        fallback_original = bool(result.get("fallback_original"))
+        language_verified = bool(result.get("language_verified"))
 
-        if selected_url and (italian or fallback_original or result.get("language_verified")):
+        if selected_url and italian and language_verified:
             return {
                 "trailer_key": selected_url,
                 "trailer_url": selected_url,
@@ -145,12 +150,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
                 "minimum_resolution": 1080,
                 "fallback_resolution": 720,
                 "language": selected_language,
-                "language_priority": ["it-IT", "ita", "it", "original"],
+                "language_priority": ["it-IT", "ita", "it"],
                 "italian_preferred": True,
-                "italian_only": False,
-                "language_verified": bool(result.get("language_verified")),
-                "fallback_original": fallback_original,
-                "refresh_pending": result.get("refresh_pending", False),
+                "italian_only": True,
+                "language_verified": True,
+                "fallback_original": False,
+                "refresh_pending": False,
                 "automatic": True,
                 "youtube": False,
                 "source_policy": SOURCE_POLICY,
@@ -172,12 +177,12 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "preferred_resolution": 2160,
             "minimum_resolution": 1080,
             "fallback_resolution": 720,
-            "language_priority": ["it-IT", "ita", "it", "original"],
+            "language_priority": ["it-IT", "ita", "it"],
             "italian_preferred": True,
-            "italian_only": False,
+            "italian_only": True,
             "language_verified": False,
             "fallback_original": False,
-            "reason": result.get("reason") or "direct_trailer_unavailable",
+            "reason": result.get("reason") or "verified_italian_trailer_unavailable",
             "refresh_pending": result.get("refresh_pending", False),
             "automatic": True,
             "youtube": False,
@@ -226,7 +231,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         return {**result, **resolver.queue_status()}
 
     @router.get("/api/admin/trailers/jobs/status")
-    async def admin_trailer_jobs(admin=Depends(get_current_admin)):
+    async def admin_get_trailer_jobs(admin=Depends(get_current_admin)):
         return resolver.queue_status()
 
     @router.get("/api/admin/trailers/{media_type}/{tmdb_id}")
@@ -258,7 +263,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
     @router.delete("/api/admin/trailers/{media_type}/{tmdb_id}/manual")
     async def admin_reset_manual_trailer(media_type: str, tmdb_id: int, admin=Depends(get_current_admin)):
         doc = resolver.reset_manual(media_type, tmdb_id)
-        resolver.enqueue(media_type, tmdb_id, priority=1, reason="manual_reset")
+        resolver.enqueue(media_type, tmdb_id, priority=0, reason="manual_reset_seek_italian")
         log_admin_action("RESET_MANUAL_TRAILER", str(tmdb_id), {"media_type": media_type})
         return doc
 
@@ -268,7 +273,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             doc = resolver.set_provider_page(media_type, tmdb_id, body.provider, body.url)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        resolver.enqueue(media_type, tmdb_id, priority=1, reason="provider_page_changed")
+        resolver.enqueue(media_type, tmdb_id, priority=0, reason="provider_page_changed_seek_italian")
         return doc
 
     app.include_router(router)
