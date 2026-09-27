@@ -46,9 +46,6 @@ export function Component() {
     window.scrollTo(0, 0);
   }, [mediaId, typeSlug]);
 
-  // Direct URLs obey the same strict Italian policy as Home/catalogue rows.
-  // Recheck periodically and on focus so a newly dubbed title becomes visible
-  // automatically once the backend Italian catalogue contains it.
   useEffect(() => {
     if (!validType || !mediaId) {
       setItalianAvailability("unavailable");
@@ -99,9 +96,9 @@ export function Component() {
     enabled: !!data.detail && italianAvailability === "available",
   });
 
-  // Start warming seasons + current-season episodes as soon as TV detail data
-  // exists, even while the availability check / Panoramica is still on screen.
-  // This makes the Episodi tab open from cache instead of starting a request on click.
+  // Prefetch the seasons and the current season immediately while the user is
+  // still looking at the Hero/Panoramica. DetailEpisodes stays mounted below,
+  // so clicking the tab only changes visibility and never starts a fresh mount.
   const episodesState = useEpisodes(
     validType && data.isTV ? mediaId : 0,
     !!data.detail && italianAvailability !== "unavailable",
@@ -181,19 +178,64 @@ export function Component() {
       <DetailTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
       <div className="dp-content">
         <section
-          key={activeTab}
           className="dp-panel"
           role="tabpanel"
-          id={`dp-panel-${activeTab}`}
-          aria-labelledby={`dp-tab-${activeTab}`}
-          data-testid={`detail-panel-${activeTab}`}
+          id="dp-panel-overview"
+          aria-labelledby="dp-tab-overview"
+          data-testid="detail-panel-overview"
+          hidden={activeTab !== "overview"}
         >
-          {activeTab === "overview" ? <DetailOverview data={data} onPlay={goPlay} onWarm={warm} /> : null}
-          {activeTab === "episodes" && data.isTV ? <DetailEpisodes mediaId={mediaId} data={data} episodesState={episodesState} /> : null}
-          {activeTab === "trailers" ? <DetailTrailers data={data} /> : null}
-          {activeTab === "download" ? <DetailDownload /> : null}
-          {activeTab === "similar" ? <DetailSimilar items={similar.items} loading={similar.loading} isTV={data.isTV} /> : null}
+          <DetailOverview data={data} onPlay={goPlay} onWarm={warm} />
         </section>
+
+        {data.isTV ? (
+          <section
+            className="dp-panel"
+            role="tabpanel"
+            id="dp-panel-episodes"
+            aria-labelledby="dp-tab-episodes"
+            data-testid="detail-panel-episodes"
+            hidden={activeTab !== "episodes"}
+          >
+            <DetailEpisodes mediaId={mediaId} data={data} episodesState={episodesState} />
+          </section>
+        ) : null}
+
+        {activeTab === "trailers" ? (
+          <section
+            className="dp-panel"
+            role="tabpanel"
+            id="dp-panel-trailers"
+            aria-labelledby="dp-tab-trailers"
+            data-testid="detail-panel-trailers"
+          >
+            <DetailTrailers data={data} />
+          </section>
+        ) : null}
+
+        {activeTab === "download" ? (
+          <section
+            className="dp-panel"
+            role="tabpanel"
+            id="dp-panel-download"
+            aria-labelledby="dp-tab-download"
+            data-testid="detail-panel-download"
+          >
+            <DetailDownload />
+          </section>
+        ) : null}
+
+        {activeTab === "similar" ? (
+          <section
+            className="dp-panel"
+            role="tabpanel"
+            id="dp-panel-similar"
+            aria-labelledby="dp-tab-similar"
+            data-testid="detail-panel-similar"
+          >
+            <DetailSimilar items={similar.items} loading={similar.loading} isTV={data.isTV} />
+          </section>
+        ) : null}
       </div>
     </Box>
   );
