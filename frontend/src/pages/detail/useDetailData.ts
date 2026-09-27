@@ -1,7 +1,7 @@
 // @ts-nocheck
 /**
  * FlixIT Detail Page v2 - data layer.
- * Priority: Italian detail -> official artwork/logo -> media assets ->
+ * Priority: Italian detail -> SC title logo -> artwork/media assets ->
  * direct image fallback -> progress -> verified Italian non-YouTube trailer.
  */
 import { useMemo } from "react";
@@ -48,35 +48,9 @@ function uniqueUrls(values: any[]) {
   return result;
 }
 
-function firstDetailLogo(...values: any[]) {
-  const direct = artUrl(...values);
-  if (direct) return direct;
-  for (const value of values) {
-    const tmdb = tmdbOriginalArtUrl(value);
-    if (tmdb) return tmdb;
-  }
-  return null;
-}
-
-function pickTmdbLogoPath(payload: any) {
-  const logos = Array.isArray(payload?.logos) ? payload.logos.filter((row) => row?.file_path) : [];
-  if (!logos.length) return null;
-  const languageRank = (lang: any) => {
-    const value = String(lang || "").toLowerCase();
-    if (value === "it") return 0;
-    if (value === "en") return 1;
-    if (!value || value === "null") return 2;
-    return 3;
-  };
-  logos.sort((a, b) => {
-    const lang = languageRank(a?.iso_639_1) - languageRank(b?.iso_639_1);
-    if (lang) return lang;
-    const aPng = String(a?.file_path || "").toLowerCase().endsWith(".png") ? 0 : 1;
-    const bPng = String(b?.file_path || "").toLowerCase().endsWith(".png") ? 0 : 1;
-    if (aPng !== bPng) return aPng - bPng;
-    return Number(b?.vote_average || 0) - Number(a?.vote_average || 0);
-  });
-  return logos[0]?.file_path || null;
+function isStreamingCommunityLogo(source: any) {
+  const value = String(source || "").trim().toLowerCase();
+  return value === "streamingcommunity" || value.startsWith("streamingcommunity_");
 }
 
 export default function useDetailData(typeSlug: string, mediaId: number) {
@@ -109,12 +83,11 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   );
   const assets = useAutomaticMediaAssets(assetItem, type, !!mediaId);
 
-  // This endpoint aggregates the project's strongest genuine artwork sources
-  // (Netflix when available, StreamingCommunity title treatment, Apple/Prime,
-  // etc.). Detail previously never asked it for the logo, so titles with a real
-  // logo there still fell back to plain text.
+  // Logos are intentionally SC-only. The backend resolver may still use other
+  // providers for covers/backdrops, but its logo policy returns a logo only when
+  // StreamingCommunity supplied a strict identity match.
   const officialArtwork = useQuery({
-    queryKey: ["dp-official-artwork-logo-v2", typeSlug, mediaId],
+    queryKey: ["dp-sc-logo-only-v3", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
       const response = await fetch(`${API_URL}/api/public/official-artwork/${typeSlug}/${mediaId}`, {
         signal,
@@ -148,42 +121,13 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     retry: 1,
   });
 
-  const existingLogoUrl = firstDetailLogo(
-    officialArtwork.data?.logo_url,
-    officialArtwork.data?.title_logo_url,
-    assets?.logo_path,
-    assets?.netflix_logo_url,
-    mediaAssets.data?.logo_url,
-    mediaAssets.data?.logo_path,
-    mediaAssets.data?.fallback_logo_path,
-    detail?.netflix_logo_url,
-    detail?.logo_path
-  );
-
-  // Last-resort genuine title treatment. If none of the provider artwork
-  // sources has a logo, query TMDB images directly rather than trusting an old
-  // media_assets cache row with logo_path=null.
-  const tmdbLogoImages = useQuery({
-    queryKey: ["dp-tmdb-logo-images-v2", typeSlug, mediaId],
-    queryFn: async ({ signal }) => {
-      const params = new URLSearchParams({
-        api_key: TMDB_V3_API_KEY,
-        include_image_language: "it,en,null",
-      });
-      const response = await fetch(
-        `${API_ENDPOINT_URL}/${typeSlug}/${mediaId}/images?${params.toString()}`,
-        { signal, cache: "no-store", headers: { Accept: "application/json" } }
-      );
-      if (!response.ok) return null;
-      return pickTmdbLogoPath(await response.json());
-    },
-    enabled: !!mediaId && officialArtwork.isFetched && mediaAssets.isFetched && !existingLogoUrl,
-    staleTime: 24 * 60 * 60 * 1000,
-    gcTime: 7 * 24 * 60 * 60 * 1000,
-    refetchOnMount: true,
-    refetchOnWindowFocus: false,
-    retry: 1,
-  });
+  const officialScLogo = isStreamingCommunityLogo(officialArtwork.data?.logo_source)
+    ? artUrl(officialArtwork.data?.logo_url)
+    : null;
+  const automaticScLogo = isStreamingCommunityLogo(assets?.logo_source)
+    ? artUrl(assets?.logo_path)
+    : null;
+  const existingLogoUrl = officialScLogo || automaticScLogo || null;
 
   const backdropUrls = useMemo(
     () => uniqueUrls([
@@ -233,8 +177,11 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     && Number(progressItem?.progress || 0) > 0
     && Number(progressItem?.duration || 0) > 0;
 
-  const season = isTV && hasRealProgress ? Math.max(1, Number(progressItem?.season || 1)) : 1;
-  const episode = isTV && hasRealProgress ? Math.max(1, Number(progressItem?.episode || 1)) : 1;
+  // Keep the TV cursor even when the selected episode starts at 0/10 seconds.
+  // This lets a deliberate jump to E05 immediately mark E01-E04 as previous
+  // episodes without forcing WatchPage to resume at an artificial position.
+  const season = isTV && progressItem ? Math.max(1, Number(progressItem?.season || 1)) : 1;
+  const episode = isTV && progressItem ? Math.max(1, Number(progressItem?.episode || 1)) : 1;
 
   const seasonDetails = useGetTVSeasonDetailsQuery(
     { seriesId: mediaId, seasonNumber: season },
@@ -274,15 +221,13 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   );
 
   const overview = String(detail?.overview || englishFallback.data?.overview || "").trim();
-  const episodeStillUrl = isTV && hasRealProgress
+  const episodeStillUrl = isTV && progressItem
     ? tmdbEpisodeStillUrl(
         progressItem?.episode_still_path ||
         progressItem?.still_path ||
         episodeInfo?.still_path
       )
     : null;
-
-  const tmdbLogoUrl = tmdbOriginalArtUrl(tmdbLogoImages.data);
 
   return {
     isTV,
@@ -298,7 +243,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     certification,
     seasonsCount,
     runtimeMinutes,
-    logoUrl: existingLogoUrl || tmdbLogoUrl || null,
+    logoUrl: existingLogoUrl,
     backdropUrl: backdropUrls[0] || null,
     backdropUrls,
     trailerUrl: trailer.url || null,
