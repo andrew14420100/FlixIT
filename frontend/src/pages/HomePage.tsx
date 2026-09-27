@@ -13,8 +13,9 @@ import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_FAST_URL = "/api/public/home-bootstrap-fast";
 const HOME_BOOTSTRAP_FULL_URL = "/api/public/home-bootstrap";
-const HOME_QUERY_KEY = ["home-bootstrap-v7-progressive"];
-const HOME_CACHE_KEY = "flix-home-bootstrap-v7-progressive";
+// v8 flushes browser snapshots created before the SC-only logo/home fixes.
+const HOME_QUERY_KEY = ["home-bootstrap-v8-sc-logo-home-fixes"];
+const HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
 const FIRST_PAINT_ROWS = 6;
@@ -67,13 +68,21 @@ function warmImage(url: any, priority: "high" | "auto" = "auto") {
   image.src = src;
 }
 
+function isScSource(value: any) {
+  const source = String(value || "").trim().toLowerCase();
+  return source === "streamingcommunity" || source.startsWith("streamingcommunity_");
+}
+
 function warmCriticalHero(hero: any) {
   if (!hero) return;
-  warmImage(hero?.assets?.logo_path || hero?.assets?.fallback_logo_path, "high");
+  const assets = hero?.assets || {};
+  if (isScSource(assets?.logo_source)) {
+    warmImage(assets?.logo_path || assets?.logo_url, "high");
+  }
   warmImage(
     hero?.customBackdrop ||
-      hero?.assets?.hero_backdrop_path ||
-      hero?.assets?.backdrop_path,
+      assets?.hero_backdrop_path ||
+      assets?.backdrop_path,
     "high"
   );
 }
@@ -119,6 +128,7 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
 async function fetchBootstrapUrl(url: string, signal?: AbortSignal) {
   const response = await fetch(url, {
     signal,
+    cache: "no-store",
     headers: { Accept: "application/json" },
   });
   if (!response.ok) throw new Error(`Home bootstrap ${response.status}`);
@@ -156,9 +166,13 @@ function fetchFastHomeBootstrap(signal?: AbortSignal) {
       return { ...full, compact: false };
     })
     .finally(() => {
-      window.setTimeout(() => {
-        if (sharedFastPromise === shared) sharedFastPromise = null;
-      }, 1500);
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          if (sharedFastPromise === shared) sharedFastPromise = null;
+        }, 1500);
+      } else if (sharedFastPromise === shared) {
+        sharedFastPromise = null;
+      }
     });
   sharedFastPromise = shared;
   return shared;
@@ -171,9 +185,13 @@ function fetchFullHomeBootstrap(signal?: AbortSignal) {
   shared = fetchBootstrapUrl(HOME_BOOTSTRAP_FULL_URL, signal)
     .then((data) => ({ ...data, compact: false }))
     .finally(() => {
-      window.setTimeout(() => {
-        if (sharedFullPromise === shared) sharedFullPromise = null;
-      }, 5000);
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          if (sharedFullPromise === shared) sharedFullPromise = null;
+        }, 5000);
+      } else if (sharedFullPromise === shared) {
+        sharedFullPromise = null;
+      }
     });
   sharedFullPromise = shared;
   return shared;
@@ -269,10 +287,13 @@ export function Component() {
     let cancelled = false;
     let timer = 0;
     let idleId: any = null;
+    let hydrationStarted = false;
     const controller = new AbortController();
 
     const hydrate = () => {
-      if (cancelled || document.visibilityState === "hidden") return;
+      if (cancelled || hydrationStarted) return;
+      if (document.visibilityState === "hidden") return;
+      hydrationStarted = true;
       fetchFullHomeBootstrap(controller.signal)
         .then((full) => {
           if (!cancelled && full?.rows?.length) {
@@ -280,8 +301,15 @@ export function Component() {
             writeHomeCache(full);
           }
         })
-        .catch(() => {});
+        .catch(() => {
+          hydrationStarted = false;
+        });
     };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") hydrate();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     if ("requestIdleCallback" in window) {
       idleId = (window as any).requestIdleCallback(hydrate, { timeout: 7000 });
@@ -292,6 +320,7 @@ export function Component() {
     return () => {
       cancelled = true;
       controller.abort();
+      document.removeEventListener("visibilitychange", onVisibility);
       if (timer) window.clearTimeout(timer);
       if (idleId != null && "cancelIdleCallback" in window) {
         (window as any).cancelIdleCallback(idleId);
@@ -299,7 +328,9 @@ export function Component() {
     };
   }, [bootstrap?.compact, bootstrap?.generated_at, queryClient]);
 
-  const heroLogoUrl = bootstrap?.hero?.assets?.logo_path || bootstrap?.hero?.assets?.fallback_logo_path || null;
+  const heroLogoUrl = isScSource(bootstrap?.hero?.assets?.logo_source)
+    ? (bootstrap?.hero?.assets?.logo_path || bootstrap?.hero?.assets?.logo_url || null)
+    : null;
   const heroBackdropUrl = bootstrap?.hero?.customBackdrop || bootstrap?.hero?.assets?.hero_backdrop_path || bootstrap?.hero?.assets?.backdrop_path || null;
 
   useEffect(() => {
@@ -333,8 +364,6 @@ export function Component() {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         setVisibleRowCount((current) => Math.min(rows.length, current + ROW_REVEAL_CHUNK));
       },
-      // Mount the next rails before they enter view, without keeping a very large
-      // off-screen DOM/network buffer alive on slower devices.
       { rootMargin: "900px 0px 900px 0px" }
     );
     observer.observe(sentinel);
