@@ -41,7 +41,11 @@ function heroArtworkUrl(...values: any[]) {
     const raw = rawArtwork(value);
     if (!raw) continue;
 
-    if (raw.startsWith('/api/') || raw.startsWith('/assets/') || raw.startsWith('/static/')) {
+    if (
+      raw.startsWith('/api/') ||
+      raw.startsWith('/assets/') ||
+      raw.startsWith('/static/')
+    ) {
       return raw;
     }
 
@@ -56,27 +60,71 @@ function heroArtworkUrl(...values: any[]) {
   return null;
 }
 
-function normalizeHero(value: any) {
+function normalizeHero(value: any, extraArtwork: any = null, mediaAssets: any = null) {
   if (!value?.contentId) return value || null;
+
   const assets = value?.assets || {};
   const detail = value?.detail || {};
+  const official = extraArtwork || {};
+  const media = mediaAssets || {};
+
   return {
     ...value,
     mediaType: value.mediaType || 'tv',
-    // HeroSection treats customBackdrop as already browser-ready. Supplying the
-    // best saved artwork here prevents an external/proxied artwork URL from
-    // being incorrectly reinterpreted as a TMDB-only path later in the Hero.
+    assets: {
+      ...media,
+      ...assets,
+    },
     customBackdrop: heroArtworkUrl(
       value?.customBackdrop,
+      official?.hero_backdrop_url,
+      official?.detail_backdrop_url,
+      official?.backdrop_url,
       assets?.hero_backdrop_path,
       assets?.detail_backdrop_path,
       assets?.backdrop_path,
       assets?.titled_backdrop_path,
+      media?.hero_backdrop_path,
+      media?.detail_backdrop_path,
+      media?.backdrop_path,
+      media?.titled_backdrop_path,
       detail?.backdrop_path,
+      official?.poster_url,
       assets?.poster_path,
+      media?.poster_path,
       detail?.poster_path
     ),
   };
+}
+
+async function enrichHero(value: any, signal?: AbortSignal) {
+  const normalized = normalizeHero(value);
+  if (!normalized?.contentId || normalized?.customBackdrop) return normalized;
+
+  const mediaType = normalized.mediaType === 'movie' ? 'movie' : 'tv';
+  const id = Number(normalized.contentId);
+  if (!id) return normalized;
+
+  try {
+    const [officialResponse, mediaResponse] = await Promise.all([
+      fetch(`/api/public/official-artwork/${mediaType}/${id}`, {
+        signal,
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      }).catch(() => null),
+      fetch(`/api/public/media-assets/${mediaType}/${id}`, {
+        signal,
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      }).catch(() => null),
+    ]);
+
+    const official = officialResponse?.ok ? await officialResponse.json() : {};
+    const media = mediaResponse?.ok ? await mediaResponse.json() : {};
+    return normalizeHero(normalized, official, media);
+  } catch {
+    return normalized;
+  }
 }
 
 function bootstrappedHero() {
@@ -85,16 +133,19 @@ function bootstrappedHero() {
   return value?.contentId ? normalizeHero(value) : null;
 }
 
-/** Shared Home Hero query. Hero artwork is normalized before it reaches the
- * billboard so saved StreamingCommunity/GitHub/custom artwork and TMDB fallback
- * paths all remain visible instead of producing an empty Hero background. */
+/**
+ * Shared Home Hero query. The public Hero payload is enriched with the same
+ * official-artwork/media-assets sources used elsewhere in the app, so a missing
+ * admin backdrop can never leave the billboard without a cover when TMDB or the
+ * saved artwork pipeline has a usable backdrop/poster.
+ */
 export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
   const hydrated = initialHero?.contentId ? normalizeHero(initialHero) : bootstrappedHero();
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v6-artwork-recovery', profile, viewport],
+    queryKey: ['hero-settings-v7-guaranteed-backdrop', profile, viewport],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
@@ -102,14 +153,18 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
           cache: 'no-store',
           headers: { Accept: 'application/json' },
         });
-        if (!response.ok) return hydrated || null;
+        if (!response.ok) return enrichHero(hydrated, signal);
+
         const data = await response.json();
-        if (!data?.contentId) return hydrated || null;
-        const normalized = normalizeHero(data);
-        if (typeof window !== 'undefined') (window as any).__flixitHomeHero = normalized;
+        if (!data?.contentId) return enrichHero(hydrated, signal);
+
+        const normalized = await enrichHero(data, signal);
+        if (typeof window !== 'undefined') {
+          (window as any).__flixitHomeHero = normalized;
+        }
         return normalized;
       } catch {
-        return hydrated || null;
+        return enrichHero(hydrated, signal);
       }
     },
     initialData: hydrated?.contentId ? normalizeHero(hydrated) : undefined,
@@ -118,7 +173,9 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
-    refetchOnMount: hydrated?.contentId ? false : 'always',
+    // Always revalidate on mount: bootstrap snapshots can legitimately contain
+    // the Hero identity before the artwork enrichment has completed.
+    refetchOnMount: 'always',
     retry: 1,
   });
 }
