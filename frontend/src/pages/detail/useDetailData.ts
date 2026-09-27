@@ -1,8 +1,8 @@
 // @ts-nocheck
 /**
  * FlixIT Detail Page v2 - data layer.
- * Priority: Italian detail -> English metadata fallback -> artwork/logo ->
- * progress -> direct non-YouTube trailer. Everything is cached so navigation stays fast.
+ * Priority: Italian detail -> official artwork/logo -> media assets ->
+ * direct image fallback -> progress -> verified Italian non-YouTube trailer.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -49,8 +49,6 @@ function uniqueUrls(values: any[]) {
 }
 
 function firstDetailLogo(...values: any[]) {
-  // Netflix/official artwork remains first. Relative TMDB logo paths are a final
-  // identity fallback and are intentionally handled here rather than by card art.
   const direct = artUrl(...values);
   if (direct) return direct;
   for (const value of values) {
@@ -111,8 +109,30 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   );
   const assets = useAutomaticMediaAssets(assetItem, type, !!mediaId);
 
+  // This endpoint aggregates the project's strongest genuine artwork sources
+  // (Netflix when available, StreamingCommunity title treatment, Apple/Prime,
+  // etc.). Detail previously never asked it for the logo, so titles with a real
+  // logo there still fell back to plain text.
+  const officialArtwork = useQuery({
+    queryKey: ["dp-official-artwork-logo-v2", typeSlug, mediaId],
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`${API_URL}/api/public/official-artwork/${typeSlug}/${mediaId}`, {
+        signal,
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      return response.ok ? response.json() : {};
+    },
+    enabled: !!mediaId,
+    staleTime: 60 * 60 * 1000,
+    gcTime: 24 * 60 * 60 * 1000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+
   const mediaAssets = useQuery({
-    queryKey: ["dp-media-assets-v2-logo", typeSlug, mediaId],
+    queryKey: ["dp-media-assets-v3-logo", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
       const response = await fetch(`${API_URL}/api/public/media-assets/${typeSlug}/${mediaId}`, {
         signal,
@@ -129,6 +149,8 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   });
 
   const existingLogoUrl = firstDetailLogo(
+    officialArtwork.data?.logo_url,
+    officialArtwork.data?.title_logo_url,
     assets?.logo_path,
     assets?.netflix_logo_url,
     mediaAssets.data?.logo_url,
@@ -138,12 +160,11 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     detail?.logo_path
   );
 
-  // media_assets is cached server-side for two weeks. A historical cache row can
-  // therefore legitimately have logo_path=null even though TMDB now exposes a
-  // title treatment. Query only /images as a last-resort recovery path so the
-  // Detail Hero does not fall back to giant plain text for days.
+  // Last-resort genuine title treatment. If none of the provider artwork
+  // sources has a logo, query TMDB images directly rather than trusting an old
+  // media_assets cache row with logo_path=null.
   const tmdbLogoImages = useQuery({
-    queryKey: ["dp-tmdb-logo-images-v1", typeSlug, mediaId],
+    queryKey: ["dp-tmdb-logo-images-v2", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({
         api_key: TMDB_V3_API_KEY,
@@ -151,21 +172,24 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       });
       const response = await fetch(
         `${API_ENDPOINT_URL}/${typeSlug}/${mediaId}/images?${params.toString()}`,
-        { signal, headers: { Accept: "application/json" } }
+        { signal, cache: "no-store", headers: { Accept: "application/json" } }
       );
       if (!response.ok) return null;
       return pickTmdbLogoPath(await response.json());
     },
-    enabled: !!mediaId && mediaAssets.isFetched && !existingLogoUrl,
+    enabled: !!mediaId && officialArtwork.isFetched && mediaAssets.isFetched && !existingLogoUrl,
     staleTime: 24 * 60 * 60 * 1000,
     gcTime: 7 * 24 * 60 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     retry: 1,
   });
 
   const backdropUrls = useMemo(
     () => uniqueUrls([
+      artUrl(officialArtwork.data?.detail_backdrop_url),
+      artUrl(officialArtwork.data?.hero_backdrop_url),
+      artUrl(officialArtwork.data?.backdrop_url),
       artUrl(assets?.detail_backdrop_path),
       artUrl(assets?.hero_backdrop_path),
       artUrl(assets?.backdrop_path),
@@ -178,6 +202,9 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       tmdbOriginalArtUrl(englishFallback.data?.poster_path),
     ]),
     [
+      officialArtwork.data?.detail_backdrop_url,
+      officialArtwork.data?.hero_backdrop_url,
+      officialArtwork.data?.backdrop_url,
       assets?.detail_backdrop_path,
       assets?.hero_backdrop_path,
       assets?.backdrop_path,
