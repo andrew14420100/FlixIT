@@ -85,9 +85,8 @@ def _install_trailer_registration_hook():
 
         # `media_assets` is a TMDB-oriented metadata cache and historically
         # leaked TMDB/legacy logos back into Hero/hover components when SC had no
-        # title treatment. Keep all non-SC visual metadata intact, but never
-        # publish a logo from this path. Genuine SC logos come from the dedicated
-        # SC/official artwork resolver instead.
+        # title treatment. Keep all non-logo metadata, but publish logos only via
+        # the dedicated SC/official artwork resolver below.
         try:
             import server_core as core
             current_media_assets = getattr(core, "get_media_assets", None)
@@ -151,28 +150,98 @@ def _install_trailer_registration_hook():
 def _install_full_sc_artwork_catalog_hook():
     """Use StreamingCommunity as the only source of transparent title logos.
 
-    Covers/backdrops may keep their existing source policy, but a title logo is
-    published only when it is present in the committed SC catalogue or recovered
-    by a strict live SC identity match. If SC has no logo, the UI must show text
-    instead of silently falling back to Netflix, TMDB, Apple, Prime or MetaHub.
+    Search/archive rows are the fast path. When their logo is absent, load the
+    exact matched SC title page and inspect its public Inertia title metadata;
+    that detail payload often contains artwork roles not returned by search.
+    Other providers are never used as a logo fallback.
     """
     try:
         import services.artwork_card_policy as policy_module
         import services.official_artwork as artwork_module
         from services.sc_artwork_catalog import install_sc_catalog
         from services.official_artwork import OfficialArtworkResolver
+        from services.trailers.providers.streamingcommunity import (
+            _base_urls as sc_base_urls,
+            _detail_path as sc_detail_path,
+            _inertia_page as sc_inertia_page,
+            _title_payload as sc_title_payload,
+        )
 
         install_sc_catalog(policy_module)
 
-        version = "official-artwork-v13-sc-logo-only"
+        version = "official-artwork-v14-sc-detail-logo-only"
         policy_module.POLICY_VERSION = version
         artwork_module.SOURCE_VERSION = version
 
+        def logo_from_row(row):
+            if not isinstance(row, dict):
+                return None
+            logo = policy_module._image_url(
+                row,
+                "logo",
+                "title_logo",
+                "title-treatment",
+                "title_treatment",
+                "titlelogo",
+                "logo_title",
+            )
+            if logo:
+                return logo
+            for key in (
+                "logo_url",
+                "logo",
+                "title_logo_url",
+                "title_logo",
+                "title_treatment_url",
+                "title_treatment",
+                "titleTreatment",
+            ):
+                logo = policy_module._asset_url(row.get(key))
+                if logo:
+                    return logo
+            return None
+
+        async def detail_logo(self, identity, row):
+            path = sc_detail_path(row or {})
+            if not path:
+                return None, None
+            expected_tmdb = int(identity.get("tmdbId") or 0)
+            for base in sc_base_urls():
+                try:
+                    response = await self._http().get(
+                        f"{base}{path}",
+                        headers={
+                            "Accept": "text/html,application/xhtml+xml",
+                            "Accept-Language": "it-IT,it;q=0.9,en;q=0.6",
+                            "Referer": f"{base}/",
+                        },
+                    )
+                    if response.status_code != 200:
+                        continue
+                    title = sc_title_payload(sc_inertia_page(response.text) or {})
+                    if not title:
+                        continue
+                    raw_tmdb = title.get("tmdb_id") or title.get("tmdbId")
+                    if raw_tmdb is not None:
+                        try:
+                            if int(raw_tmdb) != expected_tmdb:
+                                continue
+                        except Exception:
+                            continue
+                    elif float(policy_module._match_score(title, identity)) < 0.80:
+                        continue
+                    logo = logo_from_row(title)
+                    if logo:
+                        return logo, title
+                except Exception:
+                    continue
+            return None, None
+
         current_sc = policy_module._streamingcommunity
-        if not getattr(current_sc, "_flixit_live_sc_logo_v13", False):
+        if not getattr(current_sc, "_flixit_live_sc_logo_v14", False):
             async def streamingcommunity_with_live_logo(self, identity: dict) -> dict:
-                base = await current_sc(self, identity)
-                result = dict(base) if isinstance(base, dict) else {}
+                base_result = await current_sc(self, identity)
+                result = dict(base_result) if isinstance(base_result, dict) else {}
                 if result.get("logo_url"):
                     result["logo_source"] = "streamingcommunity"
                     result["logo_locale"] = result.get("logo_locale") or "it"
@@ -206,53 +275,37 @@ def _install_full_sc_artwork_catalog_hook():
                             score = 0.0
                         if score < 0.62 or score < best_score:
                             continue
-
-                        logo = policy_module._image_url(
-                            row,
-                            "logo",
-                            "title_logo",
-                            "title-treatment",
-                            "title_treatment",
-                            "titlelogo",
-                            "logo_title",
-                        )
-                        if not logo:
-                            for key in (
-                                "logo_url",
-                                "logo",
-                                "title_logo_url",
-                                "title_logo",
-                                "title_treatment_url",
-                                "title_treatment",
-                                "titleTreatment",
-                            ):
-                                logo = policy_module._asset_url(row.get(key))
-                                if logo:
-                                    break
-
+                        best_score = score
+                        best_row = row
+                        logo = logo_from_row(row)
                         if logo:
-                            best_score = score
                             best_logo = logo
-                            best_row = row
+
+                # Search responses frequently contain the right SC title but only
+                # its cover. Recover the logo from that exact SC detail page.
+                detail_row = None
+                if best_row is not None and not best_logo:
+                    best_logo, detail_row = await detail_logo(self, identity, best_row)
 
                 if best_logo:
+                    provider_row = detail_row or best_row or {}
                     result.update({
                         "source": "streamingcommunity",
-                        "provider_id": result.get("provider_id") or (best_row or {}).get("id") or (best_row or {}).get("uuid") or (best_row or {}).get("slug"),
-                        "provider_name": result.get("provider_name") or (best_row or {}).get("name") or (best_row or {}).get("title"),
-                        "confidence": round(float(min(best_score, 1.0)), 4),
+                        "provider_id": result.get("provider_id") or provider_row.get("id") or provider_row.get("uuid") or provider_row.get("slug"),
+                        "provider_name": result.get("provider_name") or provider_row.get("name") or provider_row.get("title"),
+                        "confidence": round(float(min(best_score or 1.0, 1.0)), 4),
                         "logo_url": best_logo,
                         "logo_locale": "it",
                         "logo_source": "streamingcommunity",
                     })
                 return result
 
-            streamingcommunity_with_live_logo._flixit_live_sc_logo_v13 = True
+            streamingcommunity_with_live_logo._flixit_live_sc_logo_v14 = True
             streamingcommunity_with_live_logo._original = current_sc
             policy_module._streamingcommunity = streamingcommunity_with_live_logo
 
         current_choose_logo = OfficialArtworkResolver._choose_logo
-        if not getattr(current_choose_logo, "_flixit_sc_logo_only_v13", False):
+        if not getattr(current_choose_logo, "_flixit_sc_logo_only_v14", False):
             def choose_sc_logo_only(providers):
                 for provider in providers or []:
                     if str(provider.get("source") or "") != "streamingcommunity":
@@ -262,7 +315,7 @@ def _install_full_sc_artwork_catalog_hook():
                         return logo, "streamingcommunity", "it"
                 return None, None, None
 
-            choose_sc_logo_only._flixit_sc_logo_only_v13 = True
+            choose_sc_logo_only._flixit_sc_logo_only_v14 = True
             choose_sc_logo_only._original = current_choose_logo
             OfficialArtworkResolver._choose_logo = staticmethod(choose_sc_logo_only)
     except Exception:
@@ -276,13 +329,10 @@ def _install_sc_home_hero_policy():
     except Exception:
         return
 
-    # Force the persistent backend snapshot to rebuild on the first full Home
-    # request after this deployment. Otherwise a valid three-day stale snapshot
-    # could keep old mixed-source logos alive even though React's cache was reset.
-    home_module.SNAPSHOT_VERSION = "instant-home-v6-sc-logo-only-home-fixes"
+    home_module.SNAPSHOT_VERSION = "instant-home-v7-sc-detail-logo-home-fixes"
 
     current = getattr(home_module, "_hydrate_hero_artwork", None)
-    if not callable(current) or getattr(current, "_flixit_sc_home_hero_v13", False):
+    if not callable(current) or getattr(current, "_flixit_sc_home_hero_v14", False):
         return
 
     async def sc_home_hero(hero):
@@ -310,7 +360,7 @@ def _install_sc_home_hero_policy():
         out["assets"] = assets
         return out
 
-    sc_home_hero._flixit_sc_home_hero_v13 = True
+    sc_home_hero._flixit_sc_home_hero_v14 = True
     sc_home_hero._original = current
     home_module._hydrate_hero_artwork = sc_home_hero
 
