@@ -133,7 +133,6 @@ def _install_full_sc_artwork_catalog_hook():
 
         install_sc_catalog(policy_module)
 
-        # Invalidate all previous mixed-source/logo-less artwork cache rows.
         version = "official-artwork-v13-sc-logo-only"
         policy_module.POLICY_VERSION = version
         artwork_module.SOURCE_VERSION = version
@@ -239,5 +238,54 @@ def _install_full_sc_artwork_catalog_hook():
         return
 
 
+def _install_sc_home_hero_policy():
+    """Keep Home hero title treatment SC-only and make SC backdrops renderable.
+
+    The React Hero historically fed every non-custom background through a TMDB-
+    only URL helper. A real SC absolute backdrop could therefore become null.
+    Publishing the resolved SC hero artwork as the hydrated customBackdrop avoids
+    that broken conversion without changing an administrator's explicit custom
+    backdrop. Mixed-source fallback logos are removed at the snapshot boundary.
+    """
+    try:
+        from services import home_bootstrap as home_module
+    except Exception:
+        return
+
+    current = getattr(home_module, "_hydrate_hero_artwork", None)
+    if not callable(current) or getattr(current, "_flixit_sc_home_hero_v13", False):
+        return
+
+    async def sc_home_hero(hero):
+        result = await current(hero)
+        if not isinstance(result, dict):
+            return result
+        out = dict(result)
+        assets = dict(out.get("assets") or {})
+        logo_source = str(assets.get("logo_source") or "").strip().lower()
+        if logo_source != "streamingcommunity":
+            assets["logo_path"] = None
+            assets["logo_url"] = None
+            assets["fallback_logo_path"] = None
+            assets["logo_source"] = None
+
+        if not out.get("customBackdrop"):
+            sc_backdrop = (
+                assets.get("hero_backdrop_path")
+                or assets.get("detail_backdrop_path")
+                or assets.get("backdrop_path")
+            )
+            if sc_backdrop and str(assets.get("hero_backdrop_source") or "").lower() == "streamingcommunity":
+                out["customBackdrop"] = sc_backdrop
+
+        out["assets"] = assets
+        return out
+
+    sc_home_hero._flixit_sc_home_hero_v13 = True
+    sc_home_hero._original = current
+    home_module._hydrate_hero_artwork = sc_home_hero
+
+
 _install_trailer_registration_hook()
 _install_full_sc_artwork_catalog_hook()
+_install_sc_home_hero_policy()
