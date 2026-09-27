@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "direct-nonyoutube-trailers-v27";
+const TRAILER_QUERY_VERSION = "direct-nonyoutube-italian-only-v28";
 
 function isYouTubeHost(value: string) {
   try {
@@ -64,9 +64,7 @@ export function browserSupportsHdr() {
 
 /**
  * Shared direct-media trailer resolver for Hero, Detail and hover cards.
- * YouTube/youtu.be/youtube-nocookie URLs and the historical SC YouTube sentinel
- * are always rejected. HLS, MP4 and provider embeds such as Vixcloud remain
- * available when the backend has verified them for the requested title.
+ * Automatic playback is Italian-only and YouTube is always rejected.
  */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
@@ -92,7 +90,14 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       const data = query?.state?.data || {};
       const candidate = directTrailerUrl(data);
       if (!enabled || data?.enabled === false) return false;
-      if (candidate && data?.available !== false && data?.refresh_pending !== true) return false;
+      if (
+        candidate &&
+        data?.available !== false &&
+        data?.language_verified === true &&
+        data?.refresh_pending !== true
+      ) {
+        return false;
+      }
       if (data?.refresh_pending !== true) return false;
       const updates = Number(query?.state?.dataUpdateCount || 0);
       return updates < 4 ? 8000 : false;
@@ -106,7 +111,8 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
   const resolverAvailable = data?.available !== false;
   const selected = data?.selected || data?.candidate || {};
   const source = String(selected?.source || data?.source || "").trim().toLowerCase() || null;
-  const url = resolverEnabled && resolverAvailable ? candidateUrl : null;
+  const italianVerified = data?.language_verified === true && data?.italian_only === true;
+  const url = resolverEnabled && resolverAvailable && italianVerified ? candidateUrl : null;
 
   return {
     ...query,
