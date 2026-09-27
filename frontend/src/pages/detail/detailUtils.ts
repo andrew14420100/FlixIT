@@ -2,7 +2,7 @@
 /**
  * FlixIT Detail Page v2 - pure helpers (no React, no DOM layout logic).
  */
-import { nonTmdbImageUrl } from "src/hooks/useAutomaticMediaAssets";
+import { nonTmdbImageUrl, tmdbImageUrl } from "src/hooks/useAutomaticMediaAssets";
 
 export const API_URL = process.env.REACT_APP_BACKEND_URL || "";
 const STREAM_CACHE_PREFIX = "watch_stream_cache:";
@@ -76,10 +76,19 @@ export function genreNameFromIds(ids: any, typeSlug: string) {
   return "";
 }
 
-/** First usable non-TMDB artwork URL (project policy: only CDN/official artwork). */
+/**
+ * First usable artwork URL. Project/native artwork remains the priority; TMDB
+ * is accepted only as the final identity-art fallback. This is especially
+ * important for Detail Hero title logos, which otherwise disappear when the
+ * API returns a normal relative TMDB logo path such as /abc123.png.
+ */
 export function artUrl(...values: any[]) {
   for (const value of values) {
     const resolved = nonTmdbImageUrl(value);
+    if (resolved) return resolved;
+  }
+  for (const value of values) {
+    const resolved = tmdbImageUrl(value, "original");
     if (resolved) return resolved;
   }
   return null;
@@ -149,7 +158,7 @@ export function directTrailerUrl(value: any) {
   const text = String(raw || "").trim();
   if (!text) return null;
   if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) return null;
-  if (isYouTubeUrl(text)) return null;
+  if (isYouTubeUrl(text) || /^\/__sc-youtube\//i.test(text)) return null;
   return text;
 }
 
