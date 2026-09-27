@@ -60,8 +60,9 @@ function firstNonTmdbArtwork(...values: any[]) {
   return null;
 }
 
-function firstLogo(...values: any[]) {
-  return firstUsableArtwork(...values);
+function isScSource(value: any) {
+  const source = String(value || "").trim().toLowerCase();
+  return source === "streamingcommunity" || source.startsWith("streamingcommunity_");
 }
 
 function unique(values: Array<string | null | undefined>) {
@@ -85,9 +86,6 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
   const id = video?.id || video?.tmdbId || video?.tmdb_id;
   const assetInput = useMemo(() => ({ ...video, id }), [video, id]);
 
-  // Home/bootstrap artwork is already complete and immediately usable. Cards
-  // carrying it do not need their own IntersectionObserver merely to enable an
-  // individual artwork request that useAutomaticMediaAssets will skip anyway.
   const embeddedStaticReady = useMemo(() => {
     const embedded = video?.__artwork;
     if (!embedded || embedded?.active === false) return false;
@@ -124,9 +122,6 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     onOverlayLeave,
   } = useHoverExpand(ref);
 
-  // Static artwork can warm shortly before a card reaches the viewport. Trailer,
-  // metadata and preview endpoints are intentionally delayed until actual user
-  // intent so an idle Home does not launch hundreds of requests/pollers.
   const automaticAssets = useAutomaticMediaAssets(
     assetInput,
     mType,
@@ -256,17 +251,17 @@ export default function VideoItemWithHover({ video, mediaType, watch, suppressHo
     return () => controller.abort();
   }, [intent, open, trailerUrl]);
 
-  const scHoverLogo = firstNonTmdbArtwork(
-    video?.__artwork?.logo_url,
-    automaticAssets?.logo_path,
-    video?.netflix_logo_url,
-    video?.logo_path,
-    video?.logo
-  );
-  const hoverLogoUrl = scHoverLogo || firstLogo(
-    deferredAssets?.logo_path,
-    deferredAssets?.fallback_logo_path
-  );
+  // Title logos are SC-only everywhere on the Home. Never let legacy Netflix,
+  // TMDB/media-assets or generic logo fields silently replace a missing SC logo.
+  const embeddedScLogo = firstNonTmdbArtwork(video?.__artwork?.logo_url);
+  const automaticScLogo = isScSource(automaticAssets?.logo_source)
+    ? firstNonTmdbArtwork(automaticAssets?.logo_path)
+    : null;
+  const deferredScLogo = isScSource(deferredAssets?.logo_source)
+    ? firstNonTmdbArtwork(deferredAssets?.logo_path)
+    : null;
+  const hoverLogoUrl = embeddedScLogo || automaticScLogo || deferredScLogo || null;
+
   const hoverArtwork = heroLandscape || embeddedScLandscape || automaticLandscape || mappedBackdrop || legacyLandscape;
   const hoverCoverUrl = embeddedScLandscape || automaticLandscape || mappedBackdrop || legacyLandscape || hoverArtwork;
   const hoverPoster = embeddedScPoster || automaticPoster || mappedPoster || hoverArtwork;
