@@ -14,11 +14,11 @@ from pydantic import BaseModel
 
 from .resolver import TrailerResolver
 from .queue_policy import install_queue_policy
-from .providers import TherystonTrailerProvider
+from .providers import ItalianWebTrailerProvider, TherystonTrailerProvider
 from .base import is_blocked_url
 
 logger = logging.getLogger(__name__)
-SOURCE_POLICY = "direct-multiprovider-no-youtube-italian-only"
+SOURCE_POLICY = "direct-multiprovider-web-no-youtube-italian-only"
 
 
 class ManualTrailerBody(BaseModel):
@@ -40,9 +40,10 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
         return getattr(app.state, "trailer_resolver", None)
 
     resolver = install_queue_policy(TrailerResolver(db, fetch_tmdb_data, logger=logger))
-    # Theryston is a direct-media bridge for supported official provider pages;
-    # YouTube URLs are still rejected by the shared candidate filter.
+    # Extra direct-media discovery layers. Both remain subject to the shared
+    # YouTube blocklist and the strict Italian-audio public policy.
     resolver.providers.insert(1, TherystonTrailerProvider())
+    resolver.providers.insert(2, ItalianWebTrailerProvider())
     app.state.trailer_resolver = resolver
     app.state.flixit_trailer_resolver_registered = True
 
@@ -96,6 +97,7 @@ def register_trailer_service(app, db, get_current_admin, log_admin_action, fetch
             "youtube_enabled": False,
             "fallback_language": None,
             "theryston_enabled": True,
+            "italian_web_enabled": True,
             "theryston_api_url": os.environ.get("THERYSTON_TRAILERS_API_URL", "http://127.0.0.1:3011"),
             "language_priority": ["it-IT", "ita", "it"],
         }
