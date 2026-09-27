@@ -61,10 +61,8 @@ def _install_trailer_registration_hook():
             fetch_tmdb_data,
         )
 
-        # The Italian web provider was previously exported but never inserted in
-        # TrailerResolver.providers, so its ComingSoon/iTunes discovery code could
-        # never run. Keep it immediately after Apple Italy and before the generic
-        # providers. It only returns verified direct non-YouTube candidates.
+        # ComingSoon/iTunes Italian discovery was exported but was not actually
+        # present in TrailerResolver.providers. Activate it before generic sources.
         try:
             from services.trailers.providers import ItalianWebTrailerProvider
             if trailer_resolver is not None and not any(
@@ -72,6 +70,15 @@ def _install_trailer_registration_hook():
                 for provider in getattr(trailer_resolver, "providers", [])
             ):
                 trailer_resolver.providers.insert(1, ItalianWebTrailerProvider())
+
+            # The queue policy wrappers read this module global at execution time.
+            # Bumping it here invalidates old negative/English-only rows that were
+            # generated before italian_web was truly active, without re-invalidating
+            # them on every restart once they have been resolved with v5.
+            from services.trailers import queue_policy as trailer_queue_policy
+            trailer_queue_policy.TRAILER_POLICY_VERSION = (
+                "direct-multiprovider-web-v5-italian-provider-active"
+            )
         except Exception:
             pass
 
