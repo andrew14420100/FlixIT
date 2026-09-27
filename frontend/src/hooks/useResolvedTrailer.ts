@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "direct-nonyoutube-web-italian-only-v29";
+const TRAILER_QUERY_VERSION = "direct-nonyoutube-web-italian-only-v30-provider-active";
 
 function isYouTubeHost(value: string) {
   try {
@@ -100,7 +100,7 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       }
       if (data?.refresh_pending !== true) return false;
       const updates = Number(query?.state?.dataUpdateCount || 0);
-      return updates < 6 ? 6000 : false;
+      return updates < 10 ? 5000 : false;
     },
     refetchIntervalInBackground: false,
   });
