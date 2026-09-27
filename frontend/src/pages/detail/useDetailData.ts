@@ -49,10 +49,8 @@ function uniqueUrls(values: any[]) {
 }
 
 function firstDetailLogo(...values: any[]) {
-  // Official/Netflix/non-TMDB artwork stays first. The media-assets endpoint
-  // stores TMDB logos as relative /file_path values, so Detail must explicitly
-  // convert those paths instead of sending them through artUrl(), which correctly
-  // rejects TMDB imagery for the normal card-artwork policy.
+  // Netflix/official artwork remains first. Relative TMDB logo paths are a final
+  // identity fallback and are intentionally handled here rather than by card art.
   const direct = artUrl(...values);
   if (direct) return direct;
   for (const value of values) {
@@ -60,6 +58,27 @@ function firstDetailLogo(...values: any[]) {
     if (tmdb) return tmdb;
   }
   return null;
+}
+
+function pickTmdbLogoPath(payload: any) {
+  const logos = Array.isArray(payload?.logos) ? payload.logos.filter((row) => row?.file_path) : [];
+  if (!logos.length) return null;
+  const languageRank = (lang: any) => {
+    const value = String(lang || "").toLowerCase();
+    if (value === "it") return 0;
+    if (value === "en") return 1;
+    if (!value || value === "null") return 2;
+    return 3;
+  };
+  logos.sort((a, b) => {
+    const lang = languageRank(a?.iso_639_1) - languageRank(b?.iso_639_1);
+    if (lang) return lang;
+    const aPng = String(a?.file_path || "").toLowerCase().endsWith(".png") ? 0 : 1;
+    const bPng = String(b?.file_path || "").toLowerCase().endsWith(".png") ? 0 : 1;
+    if (aPng !== bPng) return aPng - bPng;
+    return Number(b?.vote_average || 0) - Number(a?.vote_average || 0);
+  });
+  return logos[0]?.file_path || null;
 }
 
 export default function useDetailData(typeSlug: string, mediaId: number) {
@@ -93,10 +112,11 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   const assets = useAutomaticMediaAssets(assetItem, type, !!mediaId);
 
   const mediaAssets = useQuery({
-    queryKey: ["dp-media-assets", typeSlug, mediaId],
+    queryKey: ["dp-media-assets-v2-logo", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
       const response = await fetch(`${API_URL}/api/public/media-assets/${typeSlug}/${mediaId}`, {
         signal,
+        cache: "no-store",
         headers: { Accept: "application/json" },
       });
       return response.ok ? response.json() : {};
@@ -104,6 +124,42 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     enabled: !!mediaId,
     staleTime: 6 * 60 * 60 * 1000,
     gcTime: 24 * 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+
+  const existingLogoUrl = firstDetailLogo(
+    assets?.logo_path,
+    assets?.netflix_logo_url,
+    mediaAssets.data?.logo_url,
+    mediaAssets.data?.logo_path,
+    mediaAssets.data?.fallback_logo_path,
+    detail?.netflix_logo_url,
+    detail?.logo_path
+  );
+
+  // media_assets is cached server-side for two weeks. A historical cache row can
+  // therefore legitimately have logo_path=null even though TMDB now exposes a
+  // title treatment. Query only /images as a last-resort recovery path so the
+  // Detail Hero does not fall back to giant plain text for days.
+  const tmdbLogoImages = useQuery({
+    queryKey: ["dp-tmdb-logo-images-v1", typeSlug, mediaId],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({
+        api_key: TMDB_V3_API_KEY,
+        include_image_language: "it,en,null",
+      });
+      const response = await fetch(
+        `${API_ENDPOINT_URL}/${typeSlug}/${mediaId}/images?${params.toString()}`,
+        { signal, headers: { Accept: "application/json" } }
+      );
+      if (!response.ok) return null;
+      return pickTmdbLogoPath(await response.json());
+    },
+    enabled: !!mediaId && mediaAssets.isFetched && !existingLogoUrl,
+    staleTime: 24 * 60 * 60 * 1000,
+    gcTime: 7 * 24 * 60 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -179,7 +235,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       trailer.source ||
       "direct"
     ).toLowerCase();
-    return [{ url, label: "Trailer ufficiale", source }];
+    return [{ url, label: "Trailer ufficiale in italiano", source }];
   }, [trailer.data, trailer.url, trailer.source]);
 
   const genres = useMemo(() => (detail?.genres || EMPTY).map((genre) => genre?.name).filter(Boolean), [detail?.genres]);
@@ -199,6 +255,8 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       )
     : null;
 
+  const tmdbLogoUrl = tmdbOriginalArtUrl(tmdbLogoImages.data);
+
   return {
     isTV,
     type,
@@ -213,16 +271,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     certification,
     seasonsCount,
     runtimeMinutes,
-    logoUrl: firstDetailLogo(
-      assets?.logo_path,
-      assets?.netflix_logo_url,
-      mediaAssets.data?.logo_url,
-      mediaAssets.data?.logo_path,
-      mediaAssets.data?.fallback_logo_path,
-      detail?.netflix_logo_url,
-      detail?.logo_path,
-      englishFallback.data?.logo_path
-    ),
+    logoUrl: existingLogoUrl || tmdbLogoUrl || null,
     backdropUrl: backdropUrls[0] || null,
     backdropUrls,
     trailerUrl: trailer.url || null,
