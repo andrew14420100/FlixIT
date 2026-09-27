@@ -3,9 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mediaTypeSlug } from "./useAutomaticMediaAssets";
 
-const TRAILER_QUERY_VERSION = "streamingcommunity-trailers-v26-low-poll";
-const SC_SOURCE = "streamingcommunity";
-const SC_YOUTUBE_PREFIX = "/__sc-youtube/";
+const TRAILER_QUERY_VERSION = "direct-nonyoutube-trailers-v27";
 
 function isYouTubeHost(value: string) {
   try {
@@ -26,59 +24,32 @@ function isYouTubeHost(value: string) {
   }
 }
 
-function youtubeId(value: string) {
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-    let id = "";
-    if (host === "youtu.be" || host.endsWith(".youtu.be")) {
-      id = url.pathname.split("/").filter(Boolean)[0] || "";
-    } else {
-      id = url.searchParams.get("v") || "";
-      if (!id) {
-        const parts = url.pathname.split("/").filter(Boolean);
-        if (["embed", "shorts", "live"].includes(String(parts[0] || "").toLowerCase())) {
-          id = parts[1] || "";
-        }
-      }
-    }
-    return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-  } catch {
-    return null;
-  }
-}
-
 function directTrailerUrl(data: any) {
-  const selected = data?.selected && typeof data.selected === "object" ? data.selected : data;
-  const source = String(selected?.source || data?.source || "").trim().toLowerCase();
-
-  if (source !== SC_SOURCE) return null;
-
-  const scYoutubeMetadata = selected?.metadata?.sc_youtube_metadata === true;
+  const selected = data?.selected && typeof data.selected === "object"
+    ? data.selected
+    : data?.candidate && typeof data.candidate === "object"
+    ? data.candidate
+    : data;
 
   for (const value of [
     selected?.trailer_url,
     selected?.manifest_url,
+    selected?.stream_url,
+    selected?.url,
     selected?.trailer_key,
     data?.trailer_url,
     data?.manifest_url,
+    data?.stream_url,
     data?.trailer_key,
   ]) {
     const text = String(value || "").trim();
     if (!text) continue;
     if (!(/^https?:\/\//i.test(text) || text.startsWith("/"))) continue;
-
-    if (isYouTubeHost(text)) {
-      if (!scYoutubeMetadata) continue;
-      const id = youtubeId(text);
-      if (!id) continue;
-      // Never expose a generic YouTube URL to the rest of the UI. The sentinel
-      // is created only after the backend proves it came from SC youtube_id
-      // metadata, and TrailerPlayer turns it into a privacy-enhanced embed.
-      return `${SC_YOUTUBE_PREFIX}${id}.m3u8`;
-    }
+    if (/^\/__sc-youtube\//i.test(text)) continue;
+    if (isYouTubeHost(text)) continue;
     return text;
   }
+
   return null;
 }
 
@@ -91,13 +62,11 @@ export function browserSupportsHdr() {
   }
 }
 
-/** Shared public trailer cache for Hero, hover cards and Detail.
- * Automatic trailer policy: SC Vixcloud/direct media, plus YouTube only when SC
- * explicitly publishes youtube_id for the exact matched title.
- *
- * Performance policy: absence of a trailer is a stable result unless the backend
- * explicitly reports refresh_pending. This prevents the Home Hero from polling
- * an expensive resolver every few seconds for almost a minute.
+/**
+ * Shared direct-media trailer resolver for Hero, Detail and hover cards.
+ * YouTube/youtu.be/youtube-nocookie URLs and the historical SC YouTube sentinel
+ * are always rejected. HLS, MP4 and provider embeds such as Vixcloud remain
+ * available when the backend has verified them for the requested title.
  */
 export default function useResolvedTrailer(mediaType: any, id: any, enabled = true) {
   const typeSlug = mediaTypeSlug(mediaType);
@@ -124,9 +93,6 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
       const candidate = directTrailerUrl(data);
       if (!enabled || data?.enabled === false) return false;
       if (candidate && data?.available !== false && data?.refresh_pending !== true) return false;
-
-      // Only poll when the backend explicitly says that useful work is still in
-      // progress. A plain miss must not keep hammering the resolver in the Home.
       if (data?.refresh_pending !== true) return false;
       const updates = Number(query?.state?.dataUpdateCount || 0);
       return updates < 4 ? 8000 : false;
@@ -138,13 +104,15 @@ export default function useResolvedTrailer(mediaType: any, id: any, enabled = tr
   const candidateUrl = directTrailerUrl(data);
   const resolverEnabled = data?.enabled !== false;
   const resolverAvailable = data?.available !== false;
-  const sourceIsSc = String(data?.selected?.source || data?.source || "").toLowerCase() === SC_SOURCE;
-  const url = resolverEnabled && resolverAvailable && sourceIsSc ? candidateUrl : null;
+  const selected = data?.selected || data?.candidate || {};
+  const source = String(selected?.source || data?.source || "").trim().toLowerCase() || null;
+  const url = resolverEnabled && resolverAvailable ? candidateUrl : null;
 
   return {
     ...query,
     data,
     url,
+    source,
     available: !!url,
     enabled: !!enabled && resolverEnabled,
     hdr,
