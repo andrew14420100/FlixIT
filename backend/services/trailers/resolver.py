@@ -1,9 +1,10 @@
-"""Central StreamingCommunity-only trailer resolver for FLIX-IT."""
+"""Central multi-provider trailer resolver for FLIX-IT."""
 from __future__ import annotations
 
 import asyncio
 import os
 import re
+import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,10 +13,15 @@ from urllib.parse import urlparse
 
 from pymongo import ASCENDING, ReturnDocument
 
-from .base import TrailerCandidate, candidate_is_usable, is_blocked_url, now_iso, pick_best
-from .providers import StreamingCommunityTrailerProvider
-
-SC_SOURCE = "streamingcommunity"
+from .base import (
+    TrailerCandidate,
+    candidate_is_usable,
+    is_blocked_url,
+    now_iso,
+    perfect_candidate,
+    pick_best,
+)
+from .providers import AppleTVTrailerProvider, IMDbTrailerProvider, NetflixTrailerProvider, PrimeVideoTrailerProvider
 
 
 def _now() -> datetime:
@@ -54,7 +60,12 @@ class TrailerResolver:
         self.results.create_index([("metadataExpiresAt", ASCENDING)])
         self.jobs.create_index([("type", 1), ("tmdbId", 1)], unique=True)
         self.jobs.create_index([("status", 1), ("priority", 1), ("nextRunAt", 1)])
-        self.providers = [StreamingCommunityTrailerProvider()]
+        self.providers = [
+            AppleTVTrailerProvider(),
+            IMDbTrailerProvider(),
+            PrimeVideoTrailerProvider(),
+            NetflixTrailerProvider(db),
+        ]
         self._resolve_locks: dict[str, asyncio.Lock] = {}
         self._worker_tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
@@ -72,7 +83,7 @@ class TrailerResolver:
         return _bool(self._setting("MULTI_PROVIDER_TRAILERS_ENABLED", True), True)
 
     def youtube_enabled(self) -> bool:
-        return self.enabled()
+        return _bool(self._setting("YOUTUBE_TRAILERS_ENABLED", False), False)
 
     def metadata_ttl(self) -> timedelta:
         try:
@@ -97,13 +108,14 @@ class TrailerResolver:
     def config(self) -> dict:
         return {
             "enabled": self.enabled(),
-            "source": SC_SOURCE,
-            "source_policy": "streamingcommunity-only",
-            "youtube_enabled": self.youtube_enabled(),
+            "youtube_enabled": False if self.enabled() else self.youtube_enabled(),
             "metadata_ttl_days": int(self.metadata_ttl().total_seconds() // 86400),
             "playback_ttl_hours": int(self.playback_ttl().total_seconds() // 3600),
             "concurrency": self.concurrency(),
-            "minimum_resolution": None,
+            "google_discovery_configured": bool(os.environ.get("GOOGLE_SEARCH_API_KEY") and os.environ.get("GOOGLE_SEARCH_ENGINE_ID")),
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "ffprobe": bool(shutil.which("ffprobe")),
+            "minimum_resolution": 1080,
         }
 
     async def identity(self, media_type: str, tmdb_id: int) -> Optional[dict]:
@@ -114,10 +126,7 @@ class TrailerResolver:
         )
         if not data:
             return None
-        existing = self.results.find_one(
-            {"type": media_type, "tmdbId": int(tmdb_id)},
-            {"_id": 0, "providerPages": 1},
-        ) or {}
+        existing = self.results.find_one({"type": media_type, "tmdbId": int(tmdb_id)}, {"_id": 0, "providerPages": 1}) or {}
         date = data.get("first_air_date") if media_type == "tv" else data.get("release_date")
         year = None
         match = re.search(r"(?:19|20)\d{2}", str(date or ""))
@@ -153,9 +162,6 @@ class TrailerResolver:
             return True
         return expires > _now() + timedelta(minutes=5)
 
-    def _is_sc_candidate(self, candidate: Optional[dict]) -> bool:
-        return bool(candidate and candidate.get("source") == SC_SOURCE)
-
     def _manual_candidate(self, doc: dict) -> Optional[dict]:
         manual = doc.get("manual") or {}
         if not manual.get("enabled"):
@@ -184,24 +190,11 @@ class TrailerResolver:
         media_type = "tv" if media_type == "tv" else "movie"
         if not self.enabled():
             return {"enabled": False, "available": False, "source": "legacy"}
-
         doc = self.results.find_one({"type": media_type, "tmdbId": int(tmdb_id)}, {"_id": 0}) or {}
         manual = self._manual_candidate(doc)
         if manual:
-            return {
-                "enabled": True,
-                "available": True,
-                "selected": manual,
-                "source": "manual",
-                "cached": True,
-            }
-
-        # Old Apple/IMDb/Prime/Netflix cache entries are intentionally ignored.
-        alternatives = [
-            TrailerCandidate.from_dict(row)
-            for row in (doc.get("alternatives") or [])
-            if self._is_sc_candidate(row)
-        ]
+            return {"enabled": True, "available": True, "selected": manual, "source": "manual", "cached": True}
+        alternatives = [TrailerCandidate.from_dict(x) for x in (doc.get("alternatives") or [])]
         selected = pick_best(alternatives, hdr_supported=hdr_supported)
         selected_dict = selected.to_dict() if selected else None
         if selected_dict and self._playback_fresh(selected_dict):
@@ -209,83 +202,142 @@ class TrailerResolver:
                 "enabled": True,
                 "available": True,
                 "selected": selected_dict,
-                "source": SC_SOURCE,
+                "source": selected_dict.get("source"),
                 "cached": True,
                 "resolvedAt": doc.get("resolvedAt"),
             }
-
-        self.enqueue(media_type, tmdb_id, priority=1, reason="sc_trailer_missing_or_stale")
+        self.enqueue(media_type, tmdb_id, priority=1, reason="playback_missing_or_expired")
         return {
             "enabled": True,
             "available": False,
             "selected": None,
-            "source": SC_SOURCE,
+            "source": None,
             "cached": bool(doc),
             "stale": bool(doc),
-            "refresh_pending": True,
         }
+
+    async def _materialize_remux(self, candidate: TrailerCandidate) -> Optional[TrailerCandidate]:
+        if not candidate.requires_remux:
+            return candidate
+        ffmpeg = shutil.which("ffmpeg")
+        video_url = (candidate.metadata or {}).get("video_representation_url")
+        audio_url = (candidate.metadata or {}).get("audio_representation_url")
+        if not ffmpeg or not video_url or not audio_url:
+            return None
+        key = candidate.candidate_id
+        output = self.cache_dir / f"{key}.mp4"
+        temp = self.cache_dir / f".{key}.tmp.mp4"
+        if output.exists() and output.stat().st_size > 1024:
+            candidate.trailer_url = f"/api/public/trailer-file/{key}"
+            candidate.local_cache_key = key
+            candidate.browser_compatible = True
+            candidate.compatibility = "mp4-remux"
+            candidate.requires_remux = False
+            return candidate
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg,
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            video_url,
+            "-i",
+            audio_url,
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(temp),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            temp.unlink(missing_ok=True)
+            return None
+        if proc.returncode != 0 or not temp.exists() or temp.stat().st_size < 1024:
+            temp.unlink(missing_ok=True)
+            if self.logger:
+                self.logger.warning("Trailer remux failed for %s: %s", key, stderr.decode("utf-8", "replace")[:250])
+            return None
+        temp.replace(output)
+        candidate.trailer_url = f"/api/public/trailer-file/{key}"
+        candidate.local_cache_key = key
+        candidate.browser_compatible = True
+        candidate.compatibility = "mp4-remux"
+        candidate.requires_remux = False
+        return candidate
 
     def _expires(self, candidate: TrailerCandidate) -> str:
         explicit = _dt(candidate.expires_at)
-        if explicit:
-            return explicit.isoformat()
-        if candidate.source == SC_SOURCE:
-            return (_now() + self.metadata_ttl()).isoformat()
-        return (_now() + self.playback_ttl()).isoformat()
+        return (explicit or (_now() + self.playback_ttl())).isoformat()
 
     async def resolve(self, media_type: str, tmdb_id: int, *, force: bool = False) -> dict:
         media_type = "tv" if media_type == "tv" else "movie"
         tmdb_id = int(tmdb_id)
-
         async with self._lock(media_type, tmdb_id):
             cached = self.results.find_one({"type": media_type, "tmdbId": tmdb_id}, {"_id": 0}) or {}
             if self._manual_candidate(cached):
                 return cached
-
-            cached_sc = [
-                row for row in (cached.get("alternatives") or [])
-                if self._is_sc_candidate(row)
-            ]
-            if (
-                not force
-                and cached
-                and self._fresh(cached)
-                and any(self._playback_fresh(row) for row in cached_sc)
-            ):
+            if not force and cached and self._fresh(cached) and any(self._playback_fresh(x) for x in (cached.get("alternatives") or [])):
                 return cached
-
             identity = await self.identity(media_type, tmdb_id)
             if not identity:
                 raise RuntimeError("Contenuto TMDB non trovato")
 
             errors: dict[str, str] = {}
             candidates: list[TrailerCandidate] = []
-            provider = self.providers[0]
-            try:
-                candidates = await provider.discover(identity)
-            except Exception as exc:
-                errors[provider.name] = str(exc)
-                if self.logger:
-                    self.logger.warning("SC trailer resolution failed for %s:%s: %s", media_type, tmdb_id, exc)
 
+            apple = self.providers[0]
+            try:
+                apple_rows = await apple.discover(identity)
+                candidates.extend(apple_rows)
+                if any(perfect_candidate(x) for x in apple_rows):
+                    remaining = []
+                else:
+                    remaining = self.providers[1:]
+            except Exception as exc:
+                errors[apple.name] = str(exc)
+                remaining = self.providers[1:]
+
+            async def run(provider):
+                try:
+                    return provider.name, await provider.discover(identity), None
+                except Exception as exc:
+                    return provider.name, [], str(exc)
+
+            if remaining:
+                rows = await asyncio.gather(*(run(p) for p in remaining))
+                for name, found, error in rows:
+                    candidates.extend(found)
+                    if error:
+                        errors[name] = error
+
+            filtered = [c for c in candidates if candidate_is_usable(c)]
             ready: list[TrailerCandidate] = []
-            for candidate in candidates:
-                if candidate.source != SC_SOURCE or not candidate_is_usable(candidate):
-                    continue
+            for candidate in filtered:
+                if candidate.requires_remux:
+                    candidate = await self._materialize_remux(candidate)
+                    if candidate is None:
+                        continue
                 candidate.expires_at = self._expires(candidate)
                 ready.append(candidate)
 
             deduped: dict[str, TrailerCandidate] = {}
             for candidate in ready:
-                deduped[candidate.candidate_id] = candidate
+                previous = deduped.get(candidate.candidate_id)
+                if previous is None or int(candidate.bitrate or 0) > int(previous.bitrate or 0):
+                    deduped[candidate.candidate_id] = candidate
             ready = list(deduped.values())
             best = pick_best(ready, hdr_supported=False)
             now = _now()
-
-            provider_pages = {}
-            if best and best.provider_page:
-                provider_pages[SC_SOURCE] = best.provider_page
-
             doc = {
                 "type": media_type,
                 "tmdbId": tmdb_id,
@@ -293,39 +345,28 @@ class TrailerResolver:
                 "originalTitle": identity.get("original_title"),
                 "year": identity.get("year"),
                 "externalIds": identity.get("external_ids") or {},
-                "providerPages": provider_pages,
+                "providerPages": identity.get("provider_pages") or {},
                 "selected": best.to_dict() if best else None,
-                "alternatives": [row.to_dict() for row in ready],
+                "alternatives": [x.to_dict() for x in sorted(ready, key=lambda c: (int(c.height or 0), int(c.bitrate or 0)), reverse=True)],
                 "resolvedAt": now.isoformat(),
                 "metadataExpiresAt": (now + self.metadata_ttl()).isoformat(),
                 "lastError": errors or None,
-                "sourcePolicy": "streamingcommunity-only",
-                "minimumResolution": None,
-                "youtubeRejected": False,
+                "minimumResolution": 1080,
+                "youtubeRejected": True,
             }
-            if cached.get("manual"):
-                doc["manual"] = cached["manual"]
-
-            self.results.update_one(
-                {"type": media_type, "tmdbId": tmdb_id},
-                {"$set": doc},
-                upsert=True,
-            )
-            return self.results.find_one(
-                {"type": media_type, "tmdbId": tmdb_id},
-                {"_id": 0},
-            ) or doc
+            for key in ("manual", "providerPages"):
+                if cached.get(key):
+                    doc[key] = cached[key]
+            self.results.update_one({"type": media_type, "tmdbId": tmdb_id}, {"$set": doc}, upsert=True)
+            return self.results.find_one({"type": media_type, "tmdbId": tmdb_id}, {"_id": 0}) or doc
 
     def get_admin(self, media_type: str, tmdb_id: int) -> dict:
-        doc = self.results.find_one(
-            {"type": "tv" if media_type == "tv" else "movie", "tmdbId": int(tmdb_id)},
-            {"_id": 0},
-        ) or {}
+        doc = self.results.find_one({"type": "tv" if media_type == "tv" else "movie", "tmdbId": int(tmdb_id)}, {"_id": 0}) or {}
         return {**doc, "config": self.config()}
 
     def set_manual_url(self, media_type: str, tmdb_id: int, url: str) -> dict:
         if not url or is_blocked_url(url):
-            raise ValueError("URL trailer manuale non valido")
+            raise ValueError("URL trailer non valido o YouTube non consentito")
         if urlparse(url).scheme not in ("http", "https"):
             raise ValueError("Il trailer manuale deve usare http/https")
         self.results.update_one(
@@ -337,13 +378,15 @@ class TrailerResolver:
 
     async def set_manual_candidate(self, media_type: str, tmdb_id: int, candidate_id: str) -> dict:
         doc = self.get_admin(media_type, tmdb_id)
-        candidate_data = next(
-            (row for row in (doc.get("alternatives") or []) if row.get("candidate_id") == candidate_id),
-            None,
-        )
+        candidate_data = next((x for x in (doc.get("alternatives") or []) if x.get("candidate_id") == candidate_id), None)
         if not candidate_data:
             raise ValueError("Alternativa trailer non trovata")
-        data = TrailerCandidate.from_dict(candidate_data).to_dict()
+        candidate = TrailerCandidate.from_dict(candidate_data)
+        if candidate.requires_remux:
+            candidate = await self._materialize_remux(candidate)
+            if not candidate:
+                raise ValueError("Impossibile preparare questa alternativa")
+        data = candidate.to_dict()
         data["manual"] = True
         self.results.update_one(
             {"type": "tv" if media_type == "tv" else "movie", "tmdbId": int(tmdb_id)},
@@ -360,7 +403,7 @@ class TrailerResolver:
         return self.get_admin(media_type, tmdb_id)
 
     def set_provider_page(self, media_type: str, tmdb_id: int, provider: str, url: Optional[str]) -> dict:
-        if provider not in {SC_SOURCE, "apple_tv", "prime_video"}:
+        if provider not in {"apple_tv", "prime_video"}:
             raise ValueError("Provider page non supportata")
         key = f"providerPages.{provider}"
         update = {"$set": {key: (url or "").strip()}} if url else {"$unset": {key: ""}}
@@ -390,41 +433,26 @@ class TrailerResolver:
 
     def enqueue_catalog(self, limit: int = 250) -> dict:
         queued = 0
-        cursor = self.contents.find(
-            {"available": {"$ne": False}},
-            {"_id": 0, "type": 1, "tmdbId": 1},
-        ).limit(max(1, min(limit, 1000)))
-
-        for content in cursor:
-            if not content.get("tmdbId"):
-                continue
+        for content in self.contents.find({"available": {"$ne": False}}, {"_id": 0, "type": 1, "tmdbId": 1}).limit(max(1, min(limit, 1000))):
             media_type = "tv" if content.get("type") == "tv" else "movie"
             tmdb_id = int(content.get("tmdbId"))
-            resolved = self.results.find_one(
-                {"type": media_type, "tmdbId": tmdb_id},
-                {"_id": 0, "selected": 1, "metadataExpiresAt": 1},
-            ) or {}
-            selected = resolved.get("selected") or {}
-            if selected.get("source") != SC_SOURCE:
-                priority, reason = 1, "migrate_to_sc"
+            resolved = self.results.find_one({"type": media_type, "tmdbId": tmdb_id}, {"_id": 0, "selected": 1, "metadataExpiresAt": 1})
+            legacy = self.assets.find_one({"type": media_type, "tmdbId": tmdb_id}, {"_id": 0, "trailer_key": 1}) or {}
+            if not resolved or not resolved.get("selected"):
+                priority, reason = (1, "missing")
+            elif legacy.get("trailer_key"):
+                priority, reason = (2, "legacy_youtube")
             elif not self._fresh(resolved):
-                priority, reason = 3, "sc_metadata_expired"
+                priority, reason = (4, "expired")
             else:
-                priority, reason = 5, "sc_catalog_refresh"
+                priority, reason = (5, "catalog_refresh")
             self.enqueue(media_type, tmdb_id, priority=priority, reason=reason)
             queued += 1
         return {"queued": queued}
 
     def queue_status(self) -> dict:
-        counts = {
-            row["_id"]: row["count"]
-            for row in self.jobs.aggregate([{"$group": {"_id": "$status", "count": {"$sum": 1}}}])
-        }
-        return {
-            "counts": counts,
-            "workers": len([task for task in self._worker_tasks if not task.done()]),
-            "source": SC_SOURCE,
-        }
+        counts = {row["_id"]: row["count"] for row in self.jobs.aggregate([{"$group": {"_id": "$status", "count": {"$sum": 1}}}])}
+        return {"counts": counts, "workers": len([x for x in self._worker_tasks if not x.done()])}
 
     async def _worker(self, worker_id: int) -> None:
         while not self._stop.is_set():
@@ -440,10 +468,7 @@ class TrailerResolver:
                 continue
             try:
                 await self.resolve(job.get("type"), int(job.get("tmdbId")), force=True)
-                self.jobs.update_one(
-                    {"_id": job["_id"]},
-                    {"$set": {"status": "done", "updatedAt": now_iso(), "lastError": None}},
-                )
+                self.jobs.update_one({"_id": job["_id"]}, {"$set": {"status": "done", "updatedAt": now_iso(), "lastError": None}})
                 await asyncio.sleep(0.8)
             except Exception as exc:
                 attempts = int(job.get("attempts") or 0) + 1
@@ -466,7 +491,7 @@ class TrailerResolver:
                 self.enqueue_catalog(limit=200)
             except Exception as exc:
                 if self.logger:
-                    self.logger.warning("SC trailer catalog queue scan failed: %s", exc)
+                    self.logger.warning("Trailer catalog queue scan failed: %s", exc)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=15 * 60)
             except asyncio.TimeoutError:
@@ -485,14 +510,8 @@ class TrailerResolver:
         if self._worker_tasks:
             return
         self._stop.clear()
-        self.jobs.update_many(
-            {"status": "running"},
-            {"$set": {"status": "retry", "nextRunAt": now_iso()}},
-        )
-        self._worker_tasks = [
-            asyncio.create_task(self._worker(index + 1))
-            for index in range(self.concurrency())
-        ]
+        self.jobs.update_many({"status": "running"}, {"$set": {"status": "retry", "nextRunAt": now_iso()}})
+        self._worker_tasks = [asyncio.create_task(self._worker(i + 1)) for i in range(self.concurrency())]
         self._worker_tasks.append(asyncio.create_task(self._catalog_loop()))
 
     async def stop(self) -> None:
