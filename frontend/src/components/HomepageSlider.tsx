@@ -108,10 +108,6 @@ export default function HomepageSlider({
     [visibleItems, artworkBatch.data, isMobile]
   );
 
-  // Mount only a few pages of cards at first. A 20-row Home previously mounted
-  // hundreds of hover hooks, IntersectionObservers and media resolvers during a
-  // refresh even though most cards were far off-screen. Grow the rail before the
-  // user reaches its mounted tail, so navigation remains visually unchanged.
   const initialRenderCount = useMemo(
     () => Math.min(TARGET_ROW_ITEMS, Math.max(isMobile ? 12 : 18, Math.ceil(visibleTiles * 3))),
     [isMobile, visibleTiles]
@@ -129,17 +125,29 @@ export default function HomepageSlider({
     }
   }, [readyItems.length, initialRenderCount, renderLimit]);
 
+  // Artwork can resolve asynchronously and can also disappear after a failed
+  // image candidate. Never leave react-slick pointing past the new row end.
+  useEffect(() => {
+    const lastStart = Math.max(0, readyItems.length - Math.ceil(visibleTiles));
+    if (activeSlideIndex <= lastStart) return;
+    setActiveSlideIndex(lastStart);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => sliderRef.current?.slickGoTo(lastStart, true));
+    }
+  }, [readyItems.length, visibleTiles, activeSlideIndex]);
+
   const renderedItems = useMemo(
     () => readyItems.slice(0, Math.min(renderLimit, readyItems.length)),
     [readyItems, renderLimit]
   );
 
   const growRailIfNeeded = useCallback((index: number) => {
-    if (renderLimit >= readyItems.length) return;
+    if (renderLimit >= readyItems.length) return false;
     const buffer = Math.max(4, Math.ceil(visibleTiles * 2));
-    if (index < renderLimit - buffer) return;
+    if (index < renderLimit - buffer) return false;
     const chunk = Math.max(8, Math.ceil(visibleTiles * 3));
     setRenderLimit((current) => Math.min(readyItems.length, current + chunk));
+    return true;
   }, [renderLimit, readyItems.length, visibleTiles]);
 
   const syncRowAxis = useCallback(() => {
@@ -221,7 +229,15 @@ export default function HomepageSlider({
   };
 
   const handleNext = useCallback(() => {
-    growRailIfNeeded(activeSlideIndex + scrollTiles);
+    const target = activeSlideIndex + scrollTiles;
+    const grew = growRailIfNeeded(target);
+    // setRenderLimit is asynchronous. When the user reaches the mounted tail,
+    // slickNext used to run before the next cards existed and the arrow looked
+    // broken. Give React one frame to mount the additional chunk first.
+    if (grew && typeof window !== "undefined") {
+      window.requestAnimationFrame(() => sliderRef.current?.slickNext());
+      return;
+    }
     sliderRef.current?.slickNext();
   }, [growRailIfNeeded, activeSlideIndex, scrollTiles]);
   const handlePrevious = useCallback(() => sliderRef.current?.slickPrev(), []);
@@ -229,6 +245,31 @@ export default function HomepageSlider({
   if (!visibleItems.length) return null;
 
   const waitingForFirstCards = readyItems.length === 0 && artworkBatch.isFetching;
+  if (!waitingForFirstCards && readyItems.length === 0 && artworkBatch.error) return null;
+
+  const headerContent = (
+    <Box className="header-wrap" sx={{ display: "inline-flex", alignItems: "baseline", whiteSpace: "nowrap" }}>
+      <Box className="label">{title}</Box>
+      {linkTo ? (
+        <Box
+          className="browse"
+          sx={{
+            ml: "8px",
+            overflow: "hidden",
+            opacity: showExplore ? 1 : 0,
+            maxWidth: showExplore ? "150px" : "0px",
+            transform: showExplore ? "translateX(0)" : "translateX(-6px)",
+            transition: "opacity .2s ease, max-width .25s ease, transform .25s ease",
+            color: "#54b9c5",
+            fontSize: "13px",
+            fontWeight: 700,
+          }}
+        >
+          Sfoglia tutti ›
+        </Box>
+      ) : null}
+    </Box>
+  );
 
   return (
     <Box
@@ -257,39 +298,25 @@ export default function HomepageSlider({
           alignItems: "center",
         }}
       >
-        <NetflixNavigationLink
-          to={linkTo || "#"}
-          sx={{
-            color: "#fff",
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-          }}
-          onMouseEnter={() => setShowExplore(true)}
-          onMouseLeave={() => setShowExplore(false)}
-        >
-          <Box className="header-wrap" sx={{ display: "inline-flex", alignItems: "baseline", whiteSpace: "nowrap" }}>
-            <Box className="label">{title}</Box>
-            {linkTo ? (
-              <Box
-                className="browse"
-                sx={{
-                  ml: "8px",
-                  overflow: "hidden",
-                  opacity: showExplore ? 1 : 0,
-                  maxWidth: showExplore ? "150px" : "0px",
-                  transform: showExplore ? "translateX(0)" : "translateX(-6px)",
-                  transition: "opacity .2s ease, max-width .25s ease, transform .25s ease",
-                  color: "#54b9c5",
-                  fontSize: "13px",
-                  fontWeight: 700,
-                }}
-              >
-                Sfoglia tutti ›
-              </Box>
-            ) : null}
+        {linkTo ? (
+          <NetflixNavigationLink
+            to={linkTo}
+            sx={{
+              color: "#fff",
+              textDecoration: "none",
+              display: "inline-flex",
+              alignItems: "center",
+            }}
+            onMouseEnter={() => setShowExplore(true)}
+            onMouseLeave={() => setShowExplore(false)}
+          >
+            {headerContent}
+          </NetflixNavigationLink>
+        ) : (
+          <Box sx={{ color: "#fff", display: "inline-flex", alignItems: "center" }}>
+            {headerContent}
           </Box>
-        </NetflixNavigationLink>
+        )}
 
         {pageCount > 1 ? (
           <Box
