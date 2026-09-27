@@ -104,13 +104,13 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
-    // The first season response can arrive before the backend has finished the
-    // strict language checks. Continue that verification in the background even
-    // while Panoramica is visible, so opening Episodi does not start the wait.
     refetchInterval: (query) => {
       const data = query?.state?.data || {};
-      if (Number(data?.pending_recheck_seconds || 0) > 0) return 4000;
-      if (active && query?.state?.isFetching) return 6000;
+      const pending = Number(data?.pending_recheck_seconds || 0);
+      // The backend returns 4s only while language checks are actually pending.
+      // A 90s value is merely the normal future-refresh hint and must not cause
+      // the tab to reload continuously.
+      if (pending > 0 && pending <= 10) return 4000;
       return false;
     },
     refetchIntervalInBackground: true,
@@ -143,6 +143,8 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     });
   }, [episodes]);
 
+  const pendingItalianCheck = Number(episodesQuery.data?.pending_recheck_seconds || 0);
+
   return {
     seasons,
     selected,
@@ -150,7 +152,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     episodes,
     loadingSeasons: seasonsQuery.isLoading && !seasonsQuery.data,
     loadingEpisodes: episodesQuery.isLoading && !episodesQuery.data,
-    checkingItalian: Number(episodesQuery.data?.pending_recheck_seconds || 0) > 0,
+    checkingItalian: pendingItalianCheck > 0 && pendingItalianCheck <= 10,
     seasonsError: seasonsQuery.isError,
   };
 }
