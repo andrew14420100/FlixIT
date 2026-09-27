@@ -29,14 +29,13 @@ jobs:
           python-version: "3.12"
 
       - name: Apply SC logo and fast episode hotfixes
-        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
           import textwrap
 
-          def regex_replace(path, pattern, replacement, marker=None):
+          def sub(path, pattern, replacement, marker=None):
               p = Path(path)
               text = p.read_text(encoding="utf-8")
               if marker and marker in text:
@@ -44,28 +43,28 @@ jobs:
                   return
               updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
               if count != 1:
-                  raise SystemExit(f"Pattern not found: {path} / {pattern[:100]}")
+                  raise SystemExit(f"Pattern not found: {path}")
               p.write_text(updated, encoding="utf-8")
               print(f"[patched] {path}")
 
-          def exact_replace(path, old, new):
+          def swap(path, old, new):
               p = Path(path)
               text = p.read_text(encoding="utf-8")
-              if new and new in text:
+              if new in text:
                   print(f"[ok] {path}")
                   return
               if old not in text:
-                  if not new:
-                      print(f"[ok] {path}")
-                      return
-                  raise SystemExit(f"Exact text not found: {path}")
+                  raise SystemExit(f"Text not found: {path}")
               p.write_text(text.replace(old, new, 1), encoding="utf-8")
               print(f"[patched] {path}")
 
-          # ---- Hero: SC proxy URLs must remain same-origin, never become TMDB URLs. ----
+          # Hero bug: /api/public/artwork-proxy was incorrectly prefixed with the TMDB image host.
           hero = "frontend/src/components/HeroSection.tsx"
-          exact_replace(hero, 'const TMDB_HERO_LOGO_BASE = "https://image.tmdb.org/t/p/original";\n', '')
-          regex_replace(
+          hp = Path(hero)
+          htext = hp.read_text(encoding="utf-8")
+          htext = htext.replace('const TMDB_HERO_LOGO_BASE = "https://image.tmdb.org/t/p/original";\n', '')
+          hp.write_text(htext, encoding="utf-8")
+          sub(
               hero,
               r'function heroLogoUrl\(value: any\) \{.*?\n\}\n\nfunction firstHeroLogo',
               textwrap.dedent('''
@@ -94,63 +93,7 @@ jobs:
               marker='text.startsWith("/api/")',
           )
 
-          text = Path(hero).read_text(encoding="utf-8")
-          if 'function isScSource(value: any)' not in text:
-              needle = textwrap.dedent('''
-              function firstHeroLogo(...values: any[]) {
-                for (const value of values) {
-                  const resolved = heroLogoUrl(value);
-                  if (resolved) return resolved;
-                }
-                return null;
-              }
-              ''').lstrip()
-              replacement = needle + textwrap.dedent('''
-
-              function isScSource(value: any) {
-                const source = String(value || "").trim().toLowerCase();
-                return source === "streamingcommunity" || source.startsWith("streamingcommunity_");
-              }
-              ''')
-              exact_replace(hero, needle, replacement)
-
-          regex_replace(
-              hero,
-              r'function initialHeroLogo\(hero: any\) \{.*?\n\}\n\nfunction normalizeGenreNames',
-              textwrap.dedent('''
-              function initialHeroLogo(hero: any) {
-                if (!isScSource(hero?.assets?.logo_source)) return null;
-                return firstHeroLogo(
-                  hero?.assets?.logo_path,
-                  hero?.assets?.logo_url,
-                  hero?.logo_path,
-                  hero?.logoUrl
-                );
-              }
-
-              function normalizeGenreNames
-              ''').lstrip(),
-              marker='if (!isScSource(hero?.assets?.logo_source)) return null;',
-          )
-
-          regex_replace(
-              hero,
-              r'  const logoPath = firstHeroLogo\(.*?\n  \);\n  const fallbackLogoPath = firstHeroLogo\(.*?\n  \);',
-              textwrap.dedent('''
-                const logoPath = isScSource(assets?.logo_source)
-                  ? firstHeroLogo(
-                      assets?.logo_path,
-                      assets?.logo_url,
-                      heroSettings?.logo_path,
-                      heroSettings?.logoUrl
-                    )
-                  : null;
-                const fallbackLogoPath = null;
-              ''').rstrip(),
-              marker='const fallbackLogoPath = null;',
-          )
-
-          # ---- Live SC assets: use the CDN encoded in the committed SC catalogue. ----
+          # SC relative filenames must use the CDN shipped by the current SC catalogue.
           artwork = "backend/services/artwork_card_policy.py"
           asset_fn = textwrap.dedent('''
           def _asset_url(value: Any) -> Optional[str]:
@@ -169,7 +112,6 @@ jobs:
                   return None
               if re.match(r"^https?://", raw, re.I):
                   return _safe_url(raw)
-
               try:
                   from services.sc_artwork_catalog import _url_for
                   resolved = _url_for(raw)
@@ -177,30 +119,29 @@ jobs:
                       return _safe_url(resolved)
               except Exception:
                   pass
-
               filename = raw.lstrip("/")
               if not re.search(r"\\.[a-z0-9]{2,5}$", filename, re.I):
                   filename += ".webp"
               return _safe_url(f"{SC_CDN_BASE}{filename}")
           ''').strip() + "\n\n\n"
-          regex_replace(
+          sub(
               artwork,
               r'def _asset_url\(value: Any\) -> Optional\[str\]:.*?\n\n\ndef _images',
               asset_fn + 'def _images',
               marker='from services.sc_artwork_catalog import _url_for',
           )
 
-          # ---- Episodes: short first-response warmup + deduplicated season refresh. ----
+          # Episode availability: avoid an empty response followed by a 4-second wait.
           policy = "backend/services/italian_episode_policy.py"
-          exact_replace(
+          swap(
               policy,
-              'POLICY_VERSION = "strict-explicit-it-v5-auto-refresh-en-fallback"\n',
-              'POLICY_VERSION = "strict-explicit-it-v6-fast-first-response"\nFIRST_RESPONSE_WARM_SECONDS = max(0.2, min(1.5, float(os.environ.get("ITALIAN_FIRST_RESPONSE_WARM_SECONDS", "0.9"))))\n',
+              'POLICY_VERSION = "strict-explicit-it-v5-auto-refresh-en-fallback"',
+              'POLICY_VERSION = "strict-explicit-it-v6-fast-first-response"\nFIRST_RESPONSE_WARM_SECONDS = max(0.2, min(1.5, float(os.environ.get("ITALIAN_FIRST_RESPONSE_WARM_SECONDS", "0.9"))))',
           )
-          exact_replace(
+          swap(
               policy,
-              '_background_tasks: set[asyncio.Task] = set()\n',
-              '_background_tasks: set[asyncio.Task] = set()\n_season_refresh_tasks: dict[tuple[int, int], asyncio.Task] = {}\n',
+              '_background_tasks: set[asyncio.Task] = set()',
+              '_background_tasks: set[asyncio.Task] = set()\n_season_refresh_tasks: dict[tuple[int, int], asyncio.Task] = {}',
           )
 
           spawn_fn = textwrap.dedent('''
@@ -209,7 +150,6 @@ jobs:
               current = _season_refresh_tasks.get(key)
               if current is not None and not current.done():
                   return current
-
               task = asyncio.create_task(_refresh_uncached(tmdb_id, season_number, episodes))
               _season_refresh_tasks[key] = task
               _background_tasks.add(task)
@@ -222,7 +162,7 @@ jobs:
               task.add_done_callback(cleanup)
               return task
           ''').strip() + "\n\n\n"
-          regex_replace(
+          sub(
               policy,
               r'def _spawn_refresh\(tmdb_id: int, season_number: int, episodes: list\[dict\]\) -> None:.*?\n\n\ndef _annotate_cached',
               spawn_fn + 'def _annotate_cached',
@@ -258,15 +198,11 @@ jobs:
               if needs_refresh:
                   refresh_task = _spawn_refresh(int(tmdb_id), int(season_number), episodes)
                   try:
-                      await asyncio.wait_for(
-                          asyncio.shield(refresh_task),
-                          timeout=FIRST_RESPONSE_WARM_SECONDS,
-                      )
+                      await asyncio.wait_for(asyncio.shield(refresh_task), timeout=FIRST_RESPONSE_WARM_SECONDS)
                   except asyncio.TimeoutError:
                       pass
                   except Exception:
                       pass
-
                   annotated = []
                   needs_refresh = False
                   for index, episode in enumerate(episodes):
@@ -305,32 +241,26 @@ jobs:
               }
           ''').strip()
           season_fn = textwrap.indent(season_inner, "    ")
-          regex_replace(
+          sub(
               policy,
               r'    @router\.get\(ROUTE_PATH\)\n    async def italian_aware_season.*?\n    app\.include_router\(router\)',
               season_fn + '\n\n    app.include_router(router)',
               marker='"pending_recheck_seconds": 1 if needs_refresh else 90,',
           )
 
-          episodes_hook = "frontend/src/pages/detail/useEpisodes.ts"
-          exact_replace(
-              episodes_hook,
-              '      if (pending > 0 && pending <= 10) return 4000;\n',
-              '      if (pending > 0 && pending <= 10) return 750;\n',
+          episodes = "frontend/src/pages/detail/useEpisodes.ts"
+          swap(
+              episodes,
+              '      if (pending > 0 && pending <= 10) return 4000;',
+              '      if (pending > 0 && pending <= 10) return 750;',
           )
-          exact_replace(
-              episodes_hook,
-              '      // The backend returns 4s only while language checks are actually pending.\n',
-              '      // The backend returns a short retry hint only while language checks are pending.\n',
-          )
-          print("SC logo + fast episode hotfixes applied")
+          print("hotfix applied")
           PY
 
       - name: Validate hotfix
         run: |
           python -m py_compile backend/services/artwork_card_policy.py backend/services/italian_episode_policy.py
           grep -q 'text.startsWith("/api/")' frontend/src/components/HeroSection.tsx
-          grep -q 'const fallbackLogoPath = null' frontend/src/components/HeroSection.tsx
           grep -q 'from services.sc_artwork_catalog import _url_for' backend/services/artwork_card_policy.py
           grep -q 'FIRST_RESPONSE_WARM_SECONDS' backend/services/italian_episode_policy.py
           grep -q 'return 750' frontend/src/pages/detail/useEpisodes.ts
@@ -344,7 +274,7 @@ jobs:
             backend/services/italian_episode_policy.py
           )
           if git diff --quiet -- "${FILES[@]}"; then
-            echo "Hotfixes already applied"
+            echo "Hotfix already applied"
             exit 0
           fi
           git config user.name "github-actions[bot]"
