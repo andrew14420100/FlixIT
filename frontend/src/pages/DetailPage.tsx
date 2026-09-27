@@ -96,12 +96,13 @@ export function Component() {
     enabled: !!data.detail && italianAvailability === "available",
   });
 
-  // Prefetch the seasons and the current season immediately while the user is
-  // still looking at the Hero/Panoramica. DetailEpisodes stays mounted below,
-  // so clicking the tab only changes visibility and never starts a fresh mount.
+  // Start the Italian episode request immediately from the URL identity, in
+  // parallel with Detail metadata and catalogue availability. The Episodes
+  // panel remains mounted while hidden, so clicking the tab performs no mount
+  // and no first network request.
   const episodesState = useEpisodes(
     validType && data.isTV ? mediaId : 0,
-    !!data.detail && italianAvailability !== "unavailable",
+    validType && data.isTV && italianAvailability !== "unavailable",
     data.season,
     activeTab === "episodes"
   );
