@@ -33,13 +33,15 @@ USER_AGENT = (
     "Chrome/122.0.0.0 Safari/537.36"
 )
 ROUTE_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
-POLICY_VERSION = "strict-explicit-it-v5-auto-refresh-en-fallback"
+POLICY_VERSION = "strict-explicit-it-v6-fast-first-response"
+FIRST_RESPONSE_WARM_SECONDS = max(0.2, min(1.5, float(os.environ.get("ITALIAN_FIRST_RESPONSE_WARM_SECONDS", "0.9"))))
 
 _client: Optional[httpx.AsyncClient] = None
 _tmdb_client: Optional[httpx.AsyncClient] = None
 _cache: dict[tuple[int, int, int], tuple[float, dict]] = {}
 _locks: dict[tuple[int, int, int], asyncio.Lock] = {}
 _background_tasks: set[asyncio.Task] = set()
+_season_refresh_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
 
 def _http() -> httpx.AsyncClient:
@@ -270,10 +272,22 @@ async def _refresh_uncached(tmdb_id: int, season_number: int, episodes: list[dic
     await asyncio.gather(*(one(episode, index) for index, episode in enumerate(episodes)), return_exceptions=True)
 
 
-def _spawn_refresh(tmdb_id: int, season_number: int, episodes: list[dict]) -> None:
+def _spawn_refresh(tmdb_id: int, season_number: int, episodes: list[dict]) -> asyncio.Task:
+    key = (int(tmdb_id), int(season_number))
+    current = _season_refresh_tasks.get(key)
+    if current is not None and not current.done():
+        return current
     task = asyncio.create_task(_refresh_uncached(tmdb_id, season_number, episodes))
+    _season_refresh_tasks[key] = task
     _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+
+    def cleanup(done: asyncio.Task) -> None:
+        _background_tasks.discard(done)
+        if _season_refresh_tasks.get(key) is done:
+            _season_refresh_tasks.pop(key, None)
+
+    task.add_done_callback(cleanup)
+    return task
 
 
 def _annotate_cached(tmdb_id: int, season_number: int, episode: dict, index: int) -> tuple[dict, bool]:
@@ -394,12 +408,34 @@ def install_italian_episode_policy(app) -> bool:
             needs_refresh = needs_refresh or missing
 
         if needs_refresh:
-            _spawn_refresh(int(tmdb_id), int(season_number), episodes)
+            refresh_task = _spawn_refresh(int(tmdb_id), int(season_number), episodes)
+            try:
+                await asyncio.wait_for(asyncio.shield(refresh_task), timeout=FIRST_RESPONSE_WARM_SECONDS)
+            except asyncio.TimeoutError:
+                pass
+            except Exception:
+                pass
+            annotated = []
+            needs_refresh = False
+            for index, episode in enumerate(episodes):
+                row, missing = _annotate_cached(int(tmdb_id), int(season_number), episode, index)
+                annotated.append(row)
+                needs_refresh = needs_refresh or missing
 
         visible = [row for row in annotated if row.get("italian_available") is True]
 
-        if visible and any(not str(row.get("name") or "").strip() or not str(row.get("overview") or "").strip() for row in visible):
-            english = await _english_episode_map(int(tmdb_id), int(season_number))
+        if visible and any(
+            not str(row.get("name") or "").strip()
+            or not str(row.get("overview") or "").strip()
+            for row in visible
+        ):
+            try:
+                english = await asyncio.wait_for(
+                    _english_episode_map(int(tmdb_id), int(season_number)),
+                    timeout=0.45,
+                )
+            except Exception:
+                english = {}
             for row in visible:
                 number = int(row.get("episode_number") or 0)
                 fallback = english.get(number) or {}
@@ -413,7 +449,7 @@ def install_italian_episode_policy(app) -> bool:
             "episodes": visible,
             "italian_audio_policy": "strict_confirmed_italian_only",
             "italian_audio_policy_version": POLICY_VERSION,
-            "pending_recheck_seconds": 4 if needs_refresh else 90,
+            "pending_recheck_seconds": 1 if needs_refresh else 90,
         }
 
     app.include_router(router)

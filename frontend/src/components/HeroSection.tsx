@@ -22,7 +22,6 @@ const DEFAULT_FEATURED_ID = 202208;
 const DEFAULT_FEATURED_TYPE = MEDIA_TYPE.Tv;
 const TRAILER_DELAY_MS = 2000;
 const STREAM_CACHE_PREFIX = "watch_stream_cache:";
-const TMDB_HERO_LOGO_BASE = "https://image.tmdb.org/t/p/original";
 
 function firstValue(...values: any[]) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
@@ -37,18 +36,19 @@ function heroLogoUrl(value: any) {
       : "";
   const text = String(raw || "").trim();
   if (!text) return null;
-  if (/^https?:\/\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) {
+  if (text.startsWith("/api/") || text.startsWith("/assets/") || text.startsWith("/static/")) {
     return text;
   }
-  // The public Hero endpoint already returns the official TMDB title-logo path
-  // when one exists. Card artwork intentionally rejects TMDB imagery, but the
-  // Hero title treatment is a separate identity asset and must not disappear
-  // just because its path is relative.
-  if (text.startsWith("/")) return `${TMDB_HERO_LOGO_BASE}${text}`;
+  if (text.startsWith("data:") || text.startsWith("blob:")) return text;
+  if (/^https?:\/\//i.test(text)) {
+    if (/image\.tmdb\.org/i.test(text)) return null;
+    return text;
+  }
   return null;
 }
 
-function firstHeroLogo(...values: any[]) {
+function firstHeroLogo
+(...values: any[]) {
   for (const value of values) {
     const resolved = heroLogoUrl(value);
     if (resolved) return resolved;

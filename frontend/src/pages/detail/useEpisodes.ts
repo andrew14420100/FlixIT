@@ -110,7 +110,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
       // The backend returns 4s only while language checks are actually pending.
       // A 90s value is merely the normal future-refresh hint and must not cause
       // the tab to reload continuously.
-      if (pending > 0 && pending <= 10) return 4000;
+      if (pending > 0 && pending <= 10) return 750;
       return false;
     },
     refetchIntervalInBackground: true,

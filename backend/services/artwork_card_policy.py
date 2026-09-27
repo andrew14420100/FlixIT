@@ -191,6 +191,13 @@ def _asset_url(value: Any) -> Optional[str]:
         return None
     if re.match(r"^https?://", raw, re.I):
         return _safe_url(raw)
+    try:
+        from services.sc_artwork_catalog import _url_for
+        resolved = _url_for(raw)
+        if resolved:
+            return _safe_url(resolved)
+    except Exception:
+        pass
     filename = raw.lstrip("/")
     if not re.search(r"\.[a-z0-9]{2,5}$", filename, re.I):
         filename += ".webp"
