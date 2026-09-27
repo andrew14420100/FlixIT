@@ -1,12 +1,65 @@
 // @ts-nocheck
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import { MAIN_PATH } from "src/constant";
+import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { episodeStillUrl } from "./useEpisodes";
 import { warmPlayback } from "./detailUtils";
 import "./detail-episodes.css";
+
+function localUserId() {
+  let id = localStorage.getItem("netflix_user_id");
+  if (!id) {
+    id = `user_${Math.random().toString(36).slice(2, 11)}`;
+    localStorage.setItem("netflix_user_id", id);
+  }
+  return id;
+}
+
+function completionStorageKey(mediaId) {
+  return `flixit-completed-episodes:${localUserId()}:${mediaId}`;
+}
+
+function readCompleted(mediaId) {
+  if (typeof window === "undefined" || !mediaId) return new Set();
+  try {
+    const parsed = JSON.parse(localStorage.getItem(completionStorageKey(mediaId)) || "[]");
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCompleted(mediaId, completed, source = "episode-selection") {
+  try {
+    localStorage.setItem(completionStorageKey(mediaId), JSON.stringify(Array.from(completed)));
+    window.dispatchEvent(new CustomEvent("flixit-episode-completion-changed", {
+      detail: { mediaId, source },
+    }));
+  } catch {}
+}
+
+function completeBefore(mediaId, seasons, targetSeason, targetEpisode) {
+  const completed = readCompleted(mediaId);
+  for (const season of seasons || []) {
+    const seasonNumber = Number(season?.season_number || 0);
+    if (!seasonNumber || seasonNumber > targetSeason) continue;
+    const count = Math.max(0, Number(season?.episode_count || 0));
+    if (seasonNumber < targetSeason) {
+      for (let episode = 1; episode <= count; episode += 1) {
+        completed.add(`${seasonNumber}:${episode}`);
+      }
+    } else {
+      for (let episode = 1; episode < targetEpisode; episode += 1) {
+        completed.add(`${seasonNumber}:${episode}`);
+      }
+    }
+  }
+  writeCompleted(mediaId, completed);
+  return completed;
+}
 
 function SeasonSelect({ seasons, value, onChange }) {
   const [open, setOpen] = useState(false);
@@ -82,12 +135,12 @@ function SeasonSelect({ seasons, value, onChange }) {
   );
 }
 
-function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, currentEpisode) {
-  if (!progressItem) return { kind: "none" };
-  if (seasonNumber < currentSeason || (seasonNumber === currentSeason && episodeNumber < currentEpisode)) {
+function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, currentEpisode, completed) {
+  if (completed?.has(`${seasonNumber}:${episodeNumber}`)) return { kind: "done" };
+  if (progressItem && (seasonNumber < currentSeason || (seasonNumber === currentSeason && episodeNumber < currentEpisode))) {
     return { kind: "done" };
   }
-  if (seasonNumber === currentSeason && episodeNumber === currentEpisode) {
+  if (progressItem && seasonNumber === currentSeason && episodeNumber === currentEpisode) {
     const duration = Number(progressItem.duration || 0);
     const progress = Number(progressItem.progress || 0);
     if (duration > 0 && progress > 0) {
@@ -103,11 +156,49 @@ function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, 
 
 export default function DetailEpisodes({ mediaId, data, episodesState }) {
   const navigate = useNavigate();
-  const { progressItem, hasRealProgress, season: currentSeason, episode: currentEpisode, backdropUrl } = data;
+  const { saveProgress } = useContinueWatching();
+  const { progressItem, season: currentSeason, episode: currentEpisode, backdropUrl, title } = data;
   const { seasons, selected, setSelected, episodes, loadingSeasons, loadingEpisodes } = episodesState;
-  const realProgressItem = hasRealProgress ? progressItem : null;
+  const [completedVersion, setCompletedVersion] = useState(0);
 
-  const play = (episodeNumber) => {
+  useEffect(() => {
+    const refresh = (event) => {
+      if (event?.detail?.mediaId && Number(event.detail.mediaId) !== Number(mediaId)) return;
+      setCompletedVersion((value) => value + 1);
+    };
+    window.addEventListener("flixit-episode-completion-changed", refresh);
+    return () => window.removeEventListener("flixit-episode-completion-changed", refresh);
+  }, [mediaId]);
+
+  const completed = useMemo(() => readCompleted(mediaId), [mediaId, completedVersion]);
+
+  const play = (episode) => {
+    const episodeNumber = Number(episode?.episode_number || episode || 1);
+    const nextCompleted = completeBefore(mediaId, seasons, Number(selected), episodeNumber);
+    setCompletedVersion((value) => value + 1);
+
+    const runtimeSeconds = Number(episode?.runtime || 0) > 0
+      ? Number(episode.runtime) * 60
+      : Math.max(60, Number(progressItem?.duration || 2700));
+
+    // Record the selected episode immediately. Ten seconds is deliberately below
+    // WatchPage's 30-second resume threshold, so playback still starts at 0 while
+    // the series cursor advances and all earlier episodes render as completed.
+    saveProgress({
+      tmdb_id: Number(mediaId),
+      media_type: "tv",
+      progress: 10,
+      duration: runtimeSeconds,
+      title: title || progressItem?.title || `Serie TV ${mediaId}`,
+      backdrop_path: progressItem?.backdrop_path || backdropUrl || "",
+      poster_path: progressItem?.poster_path || "",
+      season: Number(selected),
+      episode: episodeNumber,
+    });
+
+    // Keep the write referenced so aggressive minifiers cannot drop the local
+    // completion update before navigation.
+    void nextCompleted;
     warmPlayback("tv", mediaId, selected, episodeNumber);
     window.scrollTo(0, 0);
     navigate(`/${MAIN_PATH.watch}/tv/${mediaId}?s=${selected}&e=${episodeNumber}`);
@@ -128,14 +219,14 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
         <div className="dp-episodes__list" data-testid="detail-episodes-list">
           {episodes.map((episode) => {
             const number = Number(episode.episode_number);
-            const state = episodeState(number, selected, realProgressItem, currentSeason, currentEpisode);
+            const state = episodeState(number, selected, progressItem, currentSeason, currentEpisode, completed);
             const still = episodeStillUrl(episode.still_path) || backdropUrl;
             const runtime = Number(episode.runtime || 0);
             const runtimeLabel = runtime ? `${runtime} min` : "";
             const onKey = (event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                play(number);
+                play(episode);
               }
             };
             return (
@@ -145,7 +236,7 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
                 role="button"
                 tabIndex={0}
                 aria-label={`Riproduci episodio ${number}${episode.name ? `: ${episode.name}` : ""}`}
-                onClick={() => play(number)}
+                onClick={() => play(episode)}
                 onMouseEnter={() => warmPlayback("tv", mediaId, selected, number)}
                 onKeyDown={onKey}
                 data-testid={`detail-episode-${selected}-${number}`}
