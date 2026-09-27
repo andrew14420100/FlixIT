@@ -48,6 +48,20 @@ function uniqueUrls(values: any[]) {
   return result;
 }
 
+function firstDetailLogo(...values: any[]) {
+  // Official/Netflix/non-TMDB artwork stays first. The media-assets endpoint
+  // stores TMDB logos as relative /file_path values, so Detail must explicitly
+  // convert those paths instead of sending them through artUrl(), which correctly
+  // rejects TMDB imagery for the normal card-artwork policy.
+  const direct = artUrl(...values);
+  if (direct) return direct;
+  for (const value of values) {
+    const tmdb = tmdbOriginalArtUrl(value);
+    if (tmdb) return tmdb;
+  }
+  return null;
+}
+
 export default function useDetailData(typeSlug: string, mediaId: number) {
   const isTV = typeSlug === "tv";
   const type = isTV ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
@@ -199,7 +213,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     certification,
     seasonsCount,
     runtimeMinutes,
-    logoUrl: artUrl(
+    logoUrl: firstDetailLogo(
       assets?.logo_path,
       assets?.netflix_logo_url,
       mediaAssets.data?.logo_url,
