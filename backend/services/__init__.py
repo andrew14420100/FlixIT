@@ -83,6 +83,37 @@ def _install_trailer_registration_hook():
         except Exception:
             pass
 
+        # `media_assets` is a TMDB-oriented metadata cache and historically
+        # leaked TMDB/legacy logos back into Hero/hover components when SC had no
+        # title treatment. Keep all non-SC visual metadata intact, but never
+        # publish a logo from this path. Genuine SC logos come from the dedicated
+        # SC/official artwork resolver instead.
+        try:
+            import server_core as core
+            current_media_assets = getattr(core, "get_media_assets", None)
+            if callable(current_media_assets) and not getattr(current_media_assets, "_flixit_sc_logo_only_v13", False):
+                async def media_assets_without_logo(media_type: str, tmdb_id: int, force: bool = False):
+                    value = await current_media_assets(media_type, tmdb_id, force=force)
+                    if not isinstance(value, dict):
+                        return value
+                    cleaned = dict(value)
+                    for key in (
+                        "logo_path",
+                        "logo_url",
+                        "fallback_logo_path",
+                        "netflix_logo_url",
+                        "title_logo_path",
+                    ):
+                        cleaned[key] = None
+                    cleaned["logo_source"] = None
+                    return cleaned
+
+                media_assets_without_logo._flixit_sc_logo_only_v13 = True
+                media_assets_without_logo._original = current_media_assets
+                core.get_media_assets = media_assets_without_logo
+        except Exception:
+            pass
+
         try:
             from services.performance_api import install_performance_api
             install_performance_api(app)
@@ -239,18 +270,16 @@ def _install_full_sc_artwork_catalog_hook():
 
 
 def _install_sc_home_hero_policy():
-    """Keep Home hero title treatment SC-only and make SC backdrops renderable.
-
-    The React Hero historically fed every non-custom background through a TMDB-
-    only URL helper. A real SC absolute backdrop could therefore become null.
-    Publishing the resolved SC hero artwork as the hydrated customBackdrop avoids
-    that broken conversion without changing an administrator's explicit custom
-    backdrop. Mixed-source fallback logos are removed at the snapshot boundary.
-    """
+    """Keep Home hero title treatment SC-only and make SC backdrops renderable."""
     try:
         from services import home_bootstrap as home_module
     except Exception:
         return
+
+    # Force the persistent backend snapshot to rebuild on the first full Home
+    # request after this deployment. Otherwise a valid three-day stale snapshot
+    # could keep old mixed-source logos alive even though React's cache was reset.
+    home_module.SNAPSHOT_VERSION = "instant-home-v6-sc-logo-only-home-fixes"
 
     current = getattr(home_module, "_hydrate_hero_artwork", None)
     if not callable(current) or getattr(current, "_flixit_sc_home_hero_v13", False):
