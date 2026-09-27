@@ -33,26 +33,40 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
-          def replace_once(path, old, new):
+          def exact(path, old, new):
               p = Path(path)
               text = p.read_text(encoding="utf-8")
-              if new in text:
+              if new and new in text:
                   print(f"[ok] {path}")
                   return
               if old not in text:
-                  raise SystemExit(f"Expected block not found: {path}")
+                  if not new and old not in text:
+                      print(f"[ok] {path}")
+                      return
+                  raise SystemExit(f"Expected exact block not found: {path}")
               p.write_text(text.replace(old, new, 1), encoding="utf-8")
               print(f"[patched] {path}")
 
+          def regex_once(path, pattern, replacement, marker=None):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              if marker and marker in text:
+                  print(f"[ok] {path}: {marker}")
+                  return
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f"Expected regex block not found: {path} / {pattern[:80]}")
+              p.write_text(updated, encoding="utf-8")
+              print(f"[patched] {path}")
+
           hero = "frontend/src/components/HeroSection.tsx"
-          replace_once(
+          exact(hero, 'const TMDB_HERO_LOGO_BASE = "https://image.tmdb.org/t/p/original";\n', '')
+
+          regex_once(
               hero,
-              'const TMDB_HERO_LOGO_BASE = "https://image.tmdb.org/t/p/original";\n',
-              '',
-          )
-          replace_once(
-              hero,
+              r'function heroLogoUrl\(value: any\) \{.*?\n\}\n\nfunction firstHeroLogo',
               '''function heroLogoUrl(value: any) {
             const raw =
               typeof value === "string"
@@ -62,28 +76,6 @@ jobs:
                 : "";
             const text = String(raw || "").trim();
             if (!text) return null;
-            if (/^https?:\\/\\//i.test(text) || text.startsWith("data:") || text.startsWith("blob:")) {
-              return text;
-            }
-            // The public Hero endpoint already returns the official TMDB title-logo path
-            // when one exists. Card artwork intentionally rejects TMDB imagery, but the
-            // Hero title treatment is a separate identity asset and must not disappear
-            // just because its path is relative.
-            if (text.startsWith("/")) return `${TMDB_HERO_LOGO_BASE}${text}`;
-            return null;
-          }
-          ''',
-              '''function heroLogoUrl(value: any) {
-            const raw =
-              typeof value === "string"
-                ? value
-                : typeof value?.url === "string"
-                ? value.url
-                : "";
-            const text = String(raw || "").trim();
-            if (!text) return null;
-            // SC images are intentionally routed through our same-origin proxy. Do not
-            // mistake /api/public/artwork-proxy for a relative TMDB image path.
             if (text.startsWith("/api/") || text.startsWith("/assets/") || text.startsWith("/static/")) {
               return text;
             }
@@ -92,15 +84,17 @@ jobs:
               if (/image\\.tmdb\\.org/i.test(text)) return null;
               return text;
             }
-            // Relative /abc.png paths are TMDB-style identity assets and are forbidden
-            // by the SC-only logo policy.
             return null;
           }
-          ''',
+
+          function firstHeroLogo''',
+              marker='text.startsWith("/api/")',
           )
-          replace_once(
-              hero,
-              '''function firstHeroLogo(...values: any[]) {
+
+          if 'function isScSource(value: any)' not in Path(hero).read_text(encoding="utf-8"):
+              exact(
+                  hero,
+                  '''function firstHeroLogo(...values: any[]) {
             for (const value of values) {
               const resolved = heroLogoUrl(value);
               if (resolved) return resolved;
@@ -108,7 +102,7 @@ jobs:
             return null;
           }
           ''',
-              '''function firstHeroLogo(...values: any[]) {
+                  '''function firstHeroLogo(...values: any[]) {
             for (const value of values) {
               const resolved = heroLogoUrl(value);
               if (resolved) return resolved;
@@ -121,21 +115,11 @@ jobs:
             return source === "streamingcommunity" || source.startsWith("streamingcommunity_");
           }
           ''',
-          )
-          replace_once(
+              )
+
+          regex_once(
               hero,
-              '''function initialHeroLogo(hero: any) {
-            return firstHeroLogo(
-              hero?.assets?.logo_path,
-              hero?.assets?.logo_url,
-              hero?.assets?.fallback_logo_path,
-              hero?.logo_path,
-              hero?.logoUrl,
-              hero?.detail?.netflix_logo_url,
-              hero?.detail?.logo_path
-            );
-          }
-          ''',
+              r'function initialHeroLogo\(hero: any\) \{.*?\n\}\n\nfunction normalizeGenreNames',
               '''function initialHeroLogo(hero: any) {
             if (!isScSource(hero?.assets?.logo_source)) return null;
             return firstHeroLogo(
@@ -145,31 +129,14 @@ jobs:
               hero?.logoUrl
             );
           }
-          ''',
+
+          function normalizeGenreNames''',
+              marker='if (!isScSource(hero?.assets?.logo_source)) return null;',
           )
-          replace_once(
+
+          regex_once(
               hero,
-              '''  const logoPath = firstHeroLogo(
-            automaticAssets?.logo_path,
-            automaticAssets?.fallback_logo_path,
-            inlineAssets?.logo_path,
-            inlineAssets?.logo_url,
-            inlineAssets?.fallback_logo_path,
-            heroSettings?.logo_path,
-            heroSettings?.logoUrl,
-            detailData?.netflix_logo_url,
-            detailData?.logo_path,
-            assets?.logo_path
-          );
-            const fallbackLogoPath = firstHeroLogo(
-            inlineAssets?.logo_path,
-            inlineAssets?.logo_url,
-            inlineAssets?.fallback_logo_path,
-            automaticAssets?.fallback_logo_path,
-            detailData?.logo_path,
-            detailData?.netflix_logo_url
-          );
-          ''',
+              r'  const logoPath = firstHeroLogo\(.*?\n  \);\n  const fallbackLogoPath = firstHeroLogo\(.*?\n  \);',
               '''  const logoPath = isScSource(assets?.logo_source)
             ? firstHeroLogo(
                 assets?.logo_path,
@@ -178,34 +145,14 @@ jobs:
                 heroSettings?.logoUrl
               )
             : null;
-            const fallbackLogoPath = null;
-          ''',
+            const fallbackLogoPath = null;''',
+              marker='const fallbackLogoPath = null;',
           )
 
           artwork = "backend/services/artwork_card_policy.py"
-          replace_once(
+          regex_once(
               artwork,
-              '''def _asset_url(value: Any) -> Optional[str]:
-            if isinstance(value, dict):
-              value = (
-                value.get("url")
-                or value.get("src")
-                or value.get("filename")
-                or value.get("file")
-                or value.get("path")
-                or value.get("uuid")
-                or value.get("id")
-              )
-            raw = str(value or "").strip()
-            if not raw:
-              return None
-            if re.match(r"^https?://", raw, re.I):
-              return _safe_url(raw)
-            filename = raw.lstrip("/")
-            if not re.search(r"\\.[a-z0-9]{2,5}$", filename, re.I):
-              filename += ".webp"
-            return _safe_url(f"{SC_CDN_BASE}{filename}")
-          ''',
+              r'def _asset_url\(value: Any\) -> Optional\[str\]:.*?\n\n\ndef _images',
               '''def _asset_url(value: Any) -> Optional[str]:
             if isinstance(value, dict):
               value = (
@@ -223,8 +170,8 @@ jobs:
             if re.match(r"^https?://", raw, re.I):
               return _safe_url(raw)
 
-            # Use the CDN embedded in the committed SC catalogue. The old hard-coded
-            # streamingcommunityz.ninja CDN no longer matches the current catalogue.
+            # Resolve relative SC filenames against the CDN shipped in the current
+            # committed catalogue instead of the obsolete hard-coded SC CDN.
             try:
               from services.sc_artwork_catalog import _url_for
               resolved = _url_for(raw)
@@ -237,27 +184,27 @@ jobs:
             if not re.search(r"\\.[a-z0-9]{2,5}$", filename, re.I):
               filename += ".webp"
             return _safe_url(f"{SC_CDN_BASE}{filename}")
-          ''',
+
+
+          def _images''',
+              marker='from services.sc_artwork_catalog import _url_for',
           )
 
           policy = "backend/services/italian_episode_policy.py"
-          replace_once(
+          exact(
               policy,
               'POLICY_VERSION = "strict-explicit-it-v5-auto-refresh-en-fallback"\n',
               'POLICY_VERSION = "strict-explicit-it-v6-fast-first-response"\nFIRST_RESPONSE_WARM_SECONDS = max(0.2, min(1.5, float(os.environ.get("ITALIAN_FIRST_RESPONSE_WARM_SECONDS", "0.9"))))\n',
           )
-          replace_once(
+          exact(
               policy,
               '_background_tasks: set[asyncio.Task] = set()\n',
               '_background_tasks: set[asyncio.Task] = set()\n_season_refresh_tasks: dict[tuple[int, int], asyncio.Task] = {}\n',
           )
-          replace_once(
+
+          regex_once(
               policy,
-              '''def _spawn_refresh(tmdb_id: int, season_number: int, episodes: list[dict]) -> None:
-            task = asyncio.create_task(_refresh_uncached(tmdb_id, season_number, episodes))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-          ''',
+              r'def _spawn_refresh\(tmdb_id: int, season_number: int, episodes: list\[dict\]\) -> None:.*?\n\n\ndef _annotate_cached',
               '''def _spawn_refresh(tmdb_id: int, season_number: int, episodes: list[dict]) -> asyncio.Task:
             key = (int(tmdb_id), int(season_number))
             current = _season_refresh_tasks.get(key)
@@ -275,19 +222,16 @@ jobs:
 
             task.add_done_callback(cleanup)
             return task
-          ''',
-          )
-          replace_once(
-              policy,
-              '''        if needs_refresh:
-            _spawn_refresh(int(tmdb_id), int(season_number), episodes)
 
-          visible = [row for row in annotated if row.get("italian_available") is True]
-          ''',
+
+          def _annotate_cached''',
+              marker='_season_refresh_tasks.get(key)',
+          )
+
+          regex_once(
+              policy,
+              r'        if needs_refresh:\n            _spawn_refresh\(int\(tmdb_id\), int\(season_number\), episodes\)\n\n        visible = \[row for row in annotated if row.get\("italian_available"\) is True\]',
               '''        if needs_refresh:
-            # Give the first request a short bounded chance to finish the parallel
-            # availability probes. Previously the API returned an empty list at once
-            # and the browser did not ask again for four seconds.
             refresh_task = _spawn_refresh(int(tmdb_id), int(season_number), episodes)
             try:
               await asyncio.wait_for(asyncio.shield(refresh_task), timeout=FIRST_RESPONSE_WARM_SECONDS)
@@ -296,6 +240,8 @@ jobs:
             except Exception:
               pass
 
+            # Read the just-filled cache again before responding. Most seasons now
+            # appear on the very first request instead of after the old 4s poll.
             annotated = []
             needs_refresh = False
             for index, episode in enumerate(episodes):
@@ -303,10 +249,11 @@ jobs:
               annotated.append(row)
               needs_refresh = needs_refresh or missing
 
-          visible = [row for row in annotated if row.get("italian_available") is True]
-          ''',
+          visible = [row for row in annotated if row.get("italian_available") is True]''',
+              marker='refresh_task = _spawn_refresh',
           )
-          replace_once(
+
+          exact(
               policy,
               '            english = await _english_episode_map(int(tmdb_id), int(season_number))\n',
               '''            try:
@@ -318,19 +265,19 @@ jobs:
               english = {}
           ''',
           )
-          replace_once(
+          exact(
               policy,
               '            "pending_recheck_seconds": 4 if needs_refresh else 90,\n',
               '            "pending_recheck_seconds": 1 if needs_refresh else 90,\n',
           )
 
           episodes = "frontend/src/pages/detail/useEpisodes.ts"
-          replace_once(
+          exact(
               episodes,
               '      if (pending > 0 && pending <= 10) return 4000;\n',
               '      if (pending > 0 && pending <= 10) return 750;\n',
           )
-          replace_once(
+          exact(
               episodes,
               '      // The backend returns 4s only while language checks are actually pending.\n',
               '      // The backend returns a short retry hint only while language checks are pending.\n',
