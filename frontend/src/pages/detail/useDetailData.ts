@@ -2,7 +2,7 @@
 /**
  * FlixIT Detail Page v2 - data layer.
  * Priority: Italian detail -> English metadata fallback -> artwork/logo ->
- * progress -> StreamingCommunity trailer. Everything is cached so navigation stays fast.
+ * progress -> direct non-YouTube trailer. Everything is cached so navigation stays fast.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -52,13 +52,10 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   const isTV = typeSlug === "tv";
   const type = isTV ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
 
-  // 1. Detail is requested in Italian by the existing RTK query.
   const detailQuery = useGetAppendedVideosQuery({ mediaType: type, id: mediaId }, { skip: !mediaId });
   const detail = detailQuery.data || null;
   const detailError = !!detailQuery.isError;
 
-  // If TMDB has no Italian overview, fetch only the English metadata as a real
-  // fallback. Italian always wins when present.
   const englishFallback = useQuery({
     queryKey: ["dp-detail-en-fallback", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
@@ -75,14 +72,12 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     retry: 1,
   });
 
-  // 2. Artwork + logo (official artwork pipeline first)
   const assetItem = useMemo(
     () => ({ id: mediaId, type: typeSlug, title: detail?.title || detail?.name || "" }),
     [mediaId, typeSlug, detail?.title, detail?.name]
   );
   const assets = useAutomaticMediaAssets(assetItem, type, !!mediaId);
 
-  // Certification / seasons / runtime enrichment (cached 14 days server-side)
   const mediaAssets = useQuery({
     queryKey: ["dp-media-assets", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
@@ -99,18 +94,14 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     retry: 1,
   });
 
-  // Detail Hero must never turn into a black rectangle just because the
-  // preferred provider artwork is missing or temporarily unreachable.
-  // Preserve the project artwork pipeline first, then use TMDB's native
-  // original backdrop only as a detail-page fallback. Poster is the last resort.
   const backdropUrls = useMemo(
     () => uniqueUrls([
       artUrl(assets?.detail_backdrop_path),
       artUrl(assets?.hero_backdrop_path),
       artUrl(assets?.backdrop_path),
-      artUrl(mediaAssets.data?.detail_backdrop_url),
-      artUrl(mediaAssets.data?.hero_backdrop_url),
-      artUrl(mediaAssets.data?.backdrop_url),
+      artUrl(mediaAssets.data?.detail_backdrop_url, mediaAssets.data?.detail_backdrop_path),
+      artUrl(mediaAssets.data?.hero_backdrop_url, mediaAssets.data?.hero_backdrop_path),
+      artUrl(mediaAssets.data?.backdrop_url, mediaAssets.data?.backdrop_path),
       tmdbOriginalArtUrl(detail?.backdrop_path),
       tmdbOriginalArtUrl(englishFallback.data?.backdrop_path),
       tmdbOriginalArtUrl(detail?.poster_path),
@@ -121,8 +112,11 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       assets?.hero_backdrop_path,
       assets?.backdrop_path,
       mediaAssets.data?.detail_backdrop_url,
+      mediaAssets.data?.detail_backdrop_path,
       mediaAssets.data?.hero_backdrop_url,
+      mediaAssets.data?.hero_backdrop_path,
       mediaAssets.data?.backdrop_url,
+      mediaAssets.data?.backdrop_path,
       detail?.backdrop_path,
       detail?.poster_path,
       englishFallback.data?.backdrop_path,
@@ -130,8 +124,6 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     ]
   );
 
-  // 3. Progress (local + backend, shared hook). A zero-progress row does NOT
-  // count as started: Continue Watching appears only after real playback.
   const { items: continueWatchingItems } = useContinueWatching();
   const progressItem = useMemo(
     () =>
@@ -161,16 +153,20 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (progressSeconds / duration) * 100)) : 0;
   const remainingSeconds = duration > 0 ? Math.max(0, duration - progressSeconds) : 0;
 
-  // 4. Trailer: ONLY the exact StreamingCommunity resolver result. Do not add
-  // TMDB detail.trailers, trailer_alternatives or any historical provider rows.
   const trailer = useResolvedTrailer(type, mediaId, !!mediaId);
 
   const trailerItems = useMemo(() => {
     const url = directTrailerUrl(trailer.url);
-    const source = String(trailer.data?.selected?.source || trailer.data?.source || "").toLowerCase();
-    if (!url || source !== "streamingcommunity") return [];
-    return [{ url, label: "Trailer ufficiale", source: "streamingcommunity" }];
-  }, [trailer.data, trailer.url]);
+    if (!url) return [];
+    const source = String(
+      trailer.data?.selected?.source ||
+      trailer.data?.candidate?.source ||
+      trailer.data?.source ||
+      trailer.source ||
+      "direct"
+    ).toLowerCase();
+    return [{ url, label: "Trailer ufficiale", source }];
+  }, [trailer.data, trailer.url, trailer.source]);
 
   const genres = useMemo(() => (detail?.genres || EMPTY).map((genre) => genre?.name).filter(Boolean), [detail?.genres]);
   const primaryGenreId = Number(detail?.genres?.[0]?.id || 0);
@@ -203,7 +199,16 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     certification,
     seasonsCount,
     runtimeMinutes,
-    logoUrl: artUrl(assets?.logo_path, assets?.netflix_logo_url),
+    logoUrl: artUrl(
+      assets?.logo_path,
+      assets?.netflix_logo_url,
+      mediaAssets.data?.logo_url,
+      mediaAssets.data?.logo_path,
+      mediaAssets.data?.fallback_logo_path,
+      detail?.netflix_logo_url,
+      detail?.logo_path,
+      englishFallback.data?.logo_path
+    ),
     backdropUrl: backdropUrls[0] || null,
     backdropUrls,
     trailerUrl: trailer.url || null,
