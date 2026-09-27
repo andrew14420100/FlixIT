@@ -60,6 +60,11 @@ function heroArtworkUrl(...values: any[]) {
   return null;
 }
 
+function isScSource(value: any) {
+  const source = String(value || '').trim().toLowerCase();
+  return source === 'streamingcommunity' || source.startsWith('streamingcommunity_');
+}
+
 function normalizeHero(value: any, extraArtwork: any = null, mediaAssets: any = null) {
   if (!value?.contentId) return value || null;
 
@@ -68,30 +73,49 @@ function normalizeHero(value: any, extraArtwork: any = null, mediaAssets: any = 
   const official = extraArtwork || {};
   const media = mediaAssets || {};
 
+  const officialScLogo = isScSource(official?.logo_source)
+    ? heroArtworkUrl(official?.logo_url)
+    : null;
+  const embeddedScLogo = isScSource(assets?.logo_source)
+    ? heroArtworkUrl(assets?.logo_path, assets?.logo_url)
+    : null;
+  const scLogo = officialScLogo || embeddedScLogo || null;
+
+  // Keep media/backdrop metadata, but make every Hero logo-bearing field SC-only
+  // so the later HeroSection cannot resurrect TMDB/Netflix/legacy title logos.
+  const normalizedAssets = {
+    ...media,
+    ...assets,
+    logo_path: scLogo,
+    logo_url: scLogo,
+    fallback_logo_path: null,
+    logo_source: scLogo ? 'streamingcommunity' : null,
+  };
+  const normalizedDetail = {
+    ...detail,
+    logo_path: null,
+    netflix_logo_url: null,
+  };
+
   return {
     ...value,
+    logo_path: scLogo,
+    logoUrl: scLogo,
+    detail: normalizedDetail,
     mediaType: value.mediaType || 'tv',
-    assets: {
-      ...media,
-      ...assets,
-    },
+    assets: normalizedAssets,
     customBackdrop: heroArtworkUrl(
       value?.customBackdrop,
       official?.hero_backdrop_url,
       official?.detail_backdrop_url,
       official?.backdrop_url,
-      assets?.hero_backdrop_path,
-      assets?.detail_backdrop_path,
-      assets?.backdrop_path,
-      assets?.titled_backdrop_path,
-      media?.hero_backdrop_path,
-      media?.detail_backdrop_path,
-      media?.backdrop_path,
-      media?.titled_backdrop_path,
+      normalizedAssets?.hero_backdrop_path,
+      normalizedAssets?.detail_backdrop_path,
+      normalizedAssets?.backdrop_path,
+      normalizedAssets?.titled_backdrop_path,
       detail?.backdrop_path,
       official?.poster_url,
-      assets?.poster_path,
-      media?.poster_path,
+      normalizedAssets?.poster_path,
       detail?.poster_path
     ),
   };
@@ -99,12 +123,15 @@ function normalizeHero(value: any, extraArtwork: any = null, mediaAssets: any = 
 
 async function enrichHero(value: any, signal?: AbortSignal) {
   const normalized = normalizeHero(value);
-  if (!normalized?.contentId || normalized?.customBackdrop) return normalized;
+  if (!normalized?.contentId) return normalized;
 
   const mediaType = normalized.mediaType === 'movie' ? 'movie' : 'tv';
   const id = Number(normalized.contentId);
   if (!id) return normalized;
 
+  // Even when the bootstrap already supplied a usable backdrop, resolve the
+  // official artwork once so an SC title logo can be recovered. Previously the
+  // early return on customBackdrop meant the logo lookup was skipped entirely.
   try {
     const [officialResponse, mediaResponse] = await Promise.all([
       fetch(`/api/public/official-artwork/${mediaType}/${id}`, {
@@ -133,19 +160,14 @@ function bootstrappedHero() {
   return value?.contentId ? normalizeHero(value) : null;
 }
 
-/**
- * Shared Home Hero query. The public Hero payload is enriched with the same
- * official-artwork/media-assets sources used elsewhere in the app, so a missing
- * admin backdrop can never leave the billboard without a cover when TMDB or the
- * saved artwork pipeline has a usable backdrop/poster.
- */
+/** Shared Home Hero query with SC-only title-logo policy. */
 export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
   const hydrated = initialHero?.contentId ? normalizeHero(initialHero) : bootstrappedHero();
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v7-guaranteed-backdrop', profile, viewport],
+    queryKey: ['hero-settings-v8-sc-logo-only', profile, viewport],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
@@ -173,8 +195,6 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
     gcTime: 30 * 60 * 1000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
-    // Always revalidate on mount: bootstrap snapshots can legitimately contain
-    // the Hero identity before the artwork enrichment has completed.
     refetchOnMount: 'always',
     retry: 1,
   });
