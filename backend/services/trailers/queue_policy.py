@@ -8,8 +8,9 @@ from types import MethodType
 
 
 ITALIAN_RETRY_SECONDS = 60 * 60
-PUBLIC_RETRY_THROTTLE_SECONDS = 10 * 60
-TRAILER_POLICY_VERSION = "direct-multiprovider-nonyoutube-v3-italian-only"
+PUBLIC_RETRY_THROTTLE_SECONDS = 5 * 60
+TRAILER_POLICY_VERSION = "direct-multiprovider-web-v4-italian-only"
+SOURCE_POLICY = "direct-multiprovider-web-no-youtube-italian-only"
 
 
 def _dt(value):
@@ -58,16 +59,18 @@ def _candidate_has_verified_italian_audio(candidate: dict) -> bool:
             return any(_is_italian(value) for value in langs)
         return metadata.get("audio_language_inferred") is False or _is_italian(language)
 
+    # comingsoon_it is accepted only after the source page explicitly labels the
+    # item as an Italian trailer. apple_itunes_search_it is accepted only after
+    # ffprobe reports Italian audio. Other direct providers already populate the
+    # candidate language from their manifest/file inspection.
     return True
 
 
 def install_queue_policy(resolver):
-    """Strict Italian-only policy for direct non-YouTube trailers.
+    """Strict Italian-only policy for direct, non-YouTube trailer discovery.
 
-    The UI receives a trailer only when its audio is verified as Italian. English
-    or unknown-language candidates remain internal alternatives and are never
-    returned for playback. Missing Italian results are re-queued periodically.
-    YouTube is never used by the resolver/provider candidate filter.
+    The policy version intentionally changes whenever discovery sources change so
+    older negative/English-only cache rows are resolved again immediately.
     """
 
     base_enqueue = resolver.enqueue
@@ -80,22 +83,23 @@ def install_queue_policy(resolver):
         tmdb_id = int(tmdb_id)
         job = self.jobs.find_one(
             {"type": media_type, "tmdbId": tmdb_id},
-            {"_id": 0, "status": 1, "priority": 1, "nextRunAt": 1, "updatedAt": 1},
+            {"_id": 0, "status": 1, "priority": 1},
         ) or {}
         status = job.get("status")
-
         if status in {"running", "retry"}:
             return
-
         if status == "pending":
             current_priority = int(job.get("priority") or 999)
             if int(priority) < current_priority:
                 self.jobs.update_one(
                     {"type": media_type, "tmdbId": tmdb_id, "status": "pending"},
-                    {"$set": {"priority": int(priority), "reason": reason, "updatedAt": datetime.now(timezone.utc).isoformat()}},
+                    {"$set": {
+                        "priority": int(priority),
+                        "reason": reason,
+                        "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    }},
                 )
             return
-
         base_enqueue(media_type, tmdb_id, priority=priority, reason=reason)
 
     async def policy_resolve(self, media_type: str, tmdb_id: int, *, force: bool = False):
@@ -107,18 +111,15 @@ def install_queue_policy(resolver):
         ) or {}
         if cached.get("policyVersion") != TRAILER_POLICY_VERSION:
             force = True
+
         doc = await base_resolve(normalized_type, normalized_id, force=force)
         self.results.update_one(
             {"type": normalized_type, "tmdbId": normalized_id},
-            {"$set": {"policyVersion": TRAILER_POLICY_VERSION, "sourcePolicy": "direct-multiprovider-no-youtube-italian-only"}},
+            {"$set": {"policyVersion": TRAILER_POLICY_VERSION, "sourcePolicy": SOURCE_POLICY}},
             upsert=True,
         )
         if isinstance(doc, dict):
-            return {
-                **doc,
-                "policyVersion": TRAILER_POLICY_VERSION,
-                "sourcePolicy": "direct-multiprovider-no-youtube-italian-only",
-            }
+            return {**doc, "policyVersion": TRAILER_POLICY_VERSION, "sourcePolicy": SOURCE_POLICY}
         return doc
 
     def italian_only_public_result(self, media_type: str, tmdb_id: int, *, hdr_supported: bool = False):
@@ -136,7 +137,7 @@ def install_queue_policy(resolver):
                 "language_verified": True,
                 "fallback_original": False,
                 "refresh_pending": False,
-                "source_policy": "direct-multiprovider-no-youtube-italian-only",
+                "source_policy": SOURCE_POLICY,
                 "youtube": False,
             }
 
@@ -146,7 +147,7 @@ def install_queue_policy(resolver):
         refresh_pending = bool(result.get("refresh_pending"))
         if now_mono - last_retry >= PUBLIC_RETRY_THROTTLE_SECONDS:
             self._italian_public_retry_at[key] = now_mono
-            self.enqueue(media_type, tmdb_id, priority=0, reason="seek_verified_italian_only")
+            self.enqueue(media_type, tmdb_id, priority=0, reason="seek_verified_italian_web")
             refresh_pending = True
 
         return {
@@ -160,8 +161,8 @@ def install_queue_policy(resolver):
             "language_verified": False,
             "fallback_original": False,
             "refresh_pending": refresh_pending,
-            "reason": "verified_italian_trailer_search_pending",
-            "source_policy": "direct-multiprovider-no-youtube-italian-only",
+            "reason": "verified_italian_web_trailer_search_pending",
+            "source_policy": SOURCE_POLICY,
             "youtube": False,
         }
 
@@ -180,13 +181,8 @@ def install_queue_policy(resolver):
             scanned += 1
             if queued >= wanted:
                 break
-
-            tmdb_raw = content.get("tmdbId")
-            if tmdb_raw is None:
-                skipped += 1
-                continue
             try:
-                tmdb_id = int(tmdb_raw)
+                tmdb_id = int(content.get("tmdbId"))
             except Exception:
                 skipped += 1
                 continue
@@ -205,8 +201,8 @@ def install_queue_policy(resolver):
                 {"_id": 0},
             ) or {}
 
-            if resolved and resolved.get("policyVersion") != TRAILER_POLICY_VERSION:
-                self.enqueue(media_type, tmdb_id, priority=0, reason="italian_only_policy_upgrade")
+            if resolved.get("policyVersion") != TRAILER_POLICY_VERSION:
+                self.enqueue(media_type, tmdb_id, priority=0, reason="italian_web_policy_upgrade")
                 queued += 1
                 continue
 
@@ -226,10 +222,10 @@ def install_queue_policy(resolver):
                     if metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
                         skipped += 1
                         continue
-                    priority, reason = 0, "seek_verified_italian_only"
+                    priority, reason = 0, "seek_verified_italian_web"
                 elif not playback_fresh:
                     priority, reason = 1, "playback_expired"
-                elif height < 1080:
+                elif height and height < 1080:
                     priority, reason = 2, "below_1080_it"
                 elif height >= 2160 and metadata_fresh:
                     skipped += 1
@@ -243,7 +239,7 @@ def install_queue_policy(resolver):
                 if resolved_at and metadata_fresh and age.total_seconds() < ITALIAN_RETRY_SECONDS:
                     skipped += 1
                     continue
-                priority, reason = 0, "missing_verified_italian_trailer"
+                priority, reason = 0, "missing_verified_italian_web_trailer"
 
             self.enqueue(media_type, tmdb_id, priority=priority, reason=reason)
             queued += 1
@@ -256,7 +252,7 @@ def install_queue_policy(resolver):
             "italian_preferred": True,
             "italian_only": True,
             "policy_version": TRAILER_POLICY_VERSION,
-            "source_policy": "direct-multiprovider-no-youtube-italian-only",
+            "source_policy": SOURCE_POLICY,
         }
 
     async def catalog_loop(self):
