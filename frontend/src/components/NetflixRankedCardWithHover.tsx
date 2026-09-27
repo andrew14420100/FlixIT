@@ -61,8 +61,9 @@ function firstNonTmdbArtwork(...values: any[]) {
   return null;
 }
 
-function firstLogo(...values: any[]) {
-  return firstUsableArtwork(...values);
+function isScSource(value: any) {
+  const source = String(value || "").trim().toLowerCase();
+  return source === "streamingcommunity" || source.startsWith("streamingcommunity_");
 }
 
 export default function NetflixRankedCardWithHover({
@@ -119,9 +120,6 @@ export default function NetflixRankedCardWithHover({
     mType,
     nearViewport || intent || open
   );
-  // Metadata and trailer resolution are hover-only. Top 10 already receives its
-  // poster in the Home bootstrap; resolving ten trailers on every refresh wasted
-  // bandwidth and could create polling work the user never asked for.
   const deferredAssets = useDeferredMediaAssets(
     { ...item, id: normalizedId },
     mType,
@@ -177,14 +175,15 @@ export default function NetflixRankedCardWithHover({
     legacyBackdrop
   );
   const hoverCoverUrl = item?.__artwork?.backdrop_url || automaticBackdrop || mappedBackdrop || legacyBackdrop || hoverBackdrop;
-  const scLogoUrl = firstNonTmdbArtwork(
-    item?.__artwork?.logo_url,
-    automaticAssets?.logo_path,
-    item?.netflix_logo_url,
-    item?.logo_path,
-    item?.logo
-  );
-  const logoUrl = scLogoUrl || firstLogo(deferredAssets?.logo_path, deferredAssets?.fallback_logo_path);
+
+  const embeddedScLogo = firstNonTmdbArtwork(item?.__artwork?.logo_url);
+  const automaticScLogo = isScSource(automaticAssets?.logo_source)
+    ? firstNonTmdbArtwork(automaticAssets?.logo_path)
+    : null;
+  const deferredScLogo = isScSource(deferredAssets?.logo_source)
+    ? firstNonTmdbArtwork(deferredAssets?.logo_path)
+    : null;
+  const logoUrl = embeddedScLogo || automaticScLogo || deferredScLogo || null;
 
   useEffect(() => {
     if ((!intent && !open) || !logoUrl || typeof Image === "undefined") return;
