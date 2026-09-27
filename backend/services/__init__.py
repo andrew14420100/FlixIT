@@ -61,8 +61,6 @@ def _install_trailer_registration_hook():
             fetch_tmdb_data,
         )
 
-        # ComingSoon/iTunes Italian discovery was exported but was not actually
-        # present in TrailerResolver.providers. Activate it before generic sources.
         try:
             from services.trailers.providers import ItalianWebTrailerProvider
             if trailer_resolver is not None and not any(
@@ -71,10 +69,6 @@ def _install_trailer_registration_hook():
             ):
                 trailer_resolver.providers.insert(1, ItalianWebTrailerProvider())
 
-            # The queue policy wrappers read this module global at execution time.
-            # Bumping it here invalidates old negative/English-only rows that were
-            # generated before italian_web was truly active, without re-invalidating
-            # them on every restart once they have been resolved with v5.
             from services.trailers import queue_policy as trailer_queue_policy
             trailer_queue_policy.TRAILER_POLICY_VERSION = (
                 "direct-multiprovider-web-v5-italian-provider-active"
@@ -140,7 +134,9 @@ def _install_full_sc_artwork_catalog_hook():
 
         install_sc_catalog(policy_module)
 
-        version = "official-artwork-v11-sc-logo-always-live"
+        # v12 deliberately invalidates previous logo-less cache rows so titles
+        # can retry the live SC/official title-treatment lookup immediately.
+        version = "official-artwork-v12-sc-logo-live-retry"
         policy_module.POLICY_VERSION = version
         artwork_module.SOURCE_VERSION = version
 
