@@ -6,15 +6,11 @@ from .prime_video import PrimeVideoTrailerProvider as _PrimeVideoTrailerProvider
 from .netflix import NetflixTrailerProvider as _NetflixTrailerProvider
 from .streamingcommunity import StreamingCommunityTrailerProvider
 from .theryston import TherystonTrailerProvider
+from .italian_web import ItalianWebTrailerProvider
 
 
 class _TherystonAugmentedProvider:
-    """Keep legacy native provider classes import-compatible.
-
-    The automatic resolver now uses StreamingCommunity only. These wrappers are
-    retained for admin/tests and older imports, but are no longer part of the
-    automatic trailer provider list.
-    """
+    """Keep native provider classes import-compatible and augment supported pages."""
 
     name = "provider"
     page_key = ""
@@ -79,4 +75,5 @@ __all__ = [
     "PrimeVideoTrailerProvider",
     "NetflixTrailerProvider",
     "TherystonTrailerProvider",
+    "ItalianWebTrailerProvider",
 ]
