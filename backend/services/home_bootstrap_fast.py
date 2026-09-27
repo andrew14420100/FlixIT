@@ -54,12 +54,27 @@ def install_home_bootstrap_fast(app) -> bool:
 
     @router.get("/api/public/home-bootstrap-fast", tags=["catalog"])
     async def public_home_bootstrap_fast():
-        # PyMongo is synchronous. Even a tiny find_one can momentarily stall all
-        # async requests if Mongo has a network hiccup, so keep the most critical
-        # Home lookup in a worker thread.
         payload, generated = await asyncio.to_thread(home._read_snapshot, core)
 
         if payload:
+            version_stale = payload.get("version") != home.SNAPSHOT_VERSION
+
+            # A version-stale snapshot may still be useful for first-paint rows,
+            # but never send its old Hero/logo back to React. Rehydrate the Hero
+            # through the current SC-only policy immediately while the full row
+            # snapshot rebuild runs in the background.
+            if version_stale:
+                try:
+                    home._schedule_refresh(app, core)
+                except Exception:
+                    pass
+                try:
+                    fresh_hero = await home._load_current_hero(app)
+                except Exception:
+                    fresh_hero = None
+                if fresh_hero:
+                    payload = {**payload, "hero": fresh_hero}
+
             try:
                 current_settings = await asyncio.to_thread(home._current_hero_settings, core)
                 cached_hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
@@ -67,20 +82,21 @@ def install_home_bootstrap_fast(app) -> bool:
                     fresh_hero = await home._load_current_hero(app)
                     if fresh_hero:
                         updated = dict(payload)
-                        updated["version"] = home.SNAPSHOT_VERSION
+                        # Only mark the persisted payload as current when the old
+                        # snapshot version was already current. A version-stale
+                        # row set must remain stale so /home-bootstrap rebuilds it.
+                        if not version_stale:
+                            updated["version"] = home.SNAPSHOT_VERSION
                         updated["hero"] = fresh_hero
-                        await asyncio.to_thread(home._persist_snapshot_payload, core, updated, generated)
+                        if not version_stale:
+                            await asyncio.to_thread(home._persist_snapshot_payload, core, updated, generated)
                         payload = updated
             except Exception:
                 pass
 
             try:
                 age = home._now() - generated if generated else None
-                if (
-                    payload.get("version") != home.SNAPSHOT_VERSION
-                    or age is None
-                    or age >= home.FRESH_FOR
-                ):
+                if version_stale or age is None or age >= home.FRESH_FOR:
                     home._schedule_refresh(app, core)
             except Exception:
                 pass
