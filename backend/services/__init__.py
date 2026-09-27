@@ -39,17 +39,12 @@ def _install_trailer_registration_hook():
             notify,
         )
 
-        # YouTube is allowed only when an exact SC title publishes youtube_id.
-        # The policy does not search YouTube or accept arbitrary YouTube URLs.
         try:
             from services.trailers.sc_youtube_metadata_policy import install_sc_youtube_metadata_policy
             install_sc_youtube_metadata_policy()
         except Exception:
             pass
 
-        # Install quality/language enrichment before the resolver instance is
-        # created. This affects trailer worker discovery only and never blocks
-        # homepage/card rendering.
         try:
             from services.trailers.italian_4k_policy import install_italian_4k_trailer_policy
             install_italian_4k_trailer_policy()
@@ -65,6 +60,20 @@ def _install_trailer_registration_hook():
             log_admin_action,
             fetch_tmdb_data,
         )
+
+        # The Italian web provider was previously exported but never inserted in
+        # TrailerResolver.providers, so its ComingSoon/iTunes discovery code could
+        # never run. Keep it immediately after Apple Italy and before the generic
+        # providers. It only returns verified direct non-YouTube candidates.
+        try:
+            from services.trailers.providers import ItalianWebTrailerProvider
+            if trailer_resolver is not None and not any(
+                getattr(provider, "name", "") == "italian_web"
+                for provider in getattr(trailer_resolver, "providers", [])
+            ):
+                trailer_resolver.providers.insert(1, ItalianWebTrailerProvider())
+        except Exception:
+            pass
 
         try:
             from services.trailers.italian_4k_policy import install_italian_4k_result_policy
