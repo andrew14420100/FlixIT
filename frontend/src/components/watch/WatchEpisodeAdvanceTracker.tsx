@@ -44,18 +44,16 @@ function parseWatchLocation(pathname: string, search: string) {
 
 function isForwardEpisode(previous: any, current: any) {
   if (!previous || !current || previous.mediaId !== current.mediaId) return false;
-  if (current.season === previous.season && current.episode === previous.episode + 1) return true;
-  if (current.season === previous.season + 1 && current.episode === 1) return true;
+  if (current.season === previous.season && current.episode > previous.episode) return true;
+  if (current.season > previous.season) return true;
   return false;
 }
 
 /**
- * Completion and Continue Watching intentionally use two different signals:
- * - a real HTMLMediaElement `ended` event marks the current episode completed;
- * - navigating with the player's forward arrow only moves Continue Watching to
- *   the target episode and NEVER completes the episode being skipped.
- *
- * `ended` does not bubble, therefore it is observed during the capture phase.
+ * A completed media event always completes the current episode. In addition,
+ * deliberately moving forward to a later episode completes the outgoing one and
+ * advances Continue Watching to the selected target. This mirrors the episode
+ * list rule: everything before the chosen episode is considered completed.
  */
 export default function WatchEpisodeAdvanceTracker() {
   const location = useLocation();
@@ -92,17 +90,18 @@ export default function WatchEpisodeAdvanceTracker() {
 
     if (!isForwardEpisode(previous, current)) return;
 
-    // WatchPage persists the outgoing episode while route state changes. Apply
-    // the target shortly afterwards so Continue Watching resumes the episode the
-    // user actually moved to. Importantly, no completion is written here.
+    markEpisodeCompleted(
+      previous.mediaId,
+      previous.season,
+      previous.episode,
+      "forward-episode-navigation"
+    );
+
     const timer = window.setTimeout(() => {
       const existing = (itemsRef.current || []).find((item: any) => Number(item?.tmdb_id || 0) === current.mediaId);
       saveProgress({
         tmdb_id: current.mediaId,
         media_type: "tv",
-        // The backend ignores values below 10 seconds. Ten records the target
-        // episode while WatchPage still starts from 0 because resume rewind is
-        // only used after 30 seconds.
         progress: 10,
         duration: Math.max(60, Number(existing?.duration || 2700)),
         title: existing?.title || `Serie TV ${current.mediaId}`,
