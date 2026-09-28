@@ -23,14 +23,14 @@ import { useNotifications } from "src/hooks/useNotifications";
 import { avatarSrc } from "src/config/avatars";
 
 const API_URL = "";
-const MENU_CACHE_KEY = "flixit_public_menu_v2_film";
+const MENU_CACHE_KEY = "flixit_public_menu_v3_film_series";
 const MENU_CACHE_MS = 30 * 60 * 1000;
 const ME_MEMO_MS = 60 * 1000;
 
 const NAV_ITEMS = [
   { id: "home", name: "Home", path: "/browse" },
   { id: "film", name: "Film", path: "/film" },
-  { id: "serie", name: "Serie TV", path: "/serie" },
+  { id: "serie", name: "Serie TV", path: "/serie-tv" },
   { id: "prime-visioni", name: "Prime Visioni", path: "/p/prime-visioni" },
   { id: "cinema-d-autore", name: "Cinema d'Autore", path: "/p/cinema-d-autore" },
   { id: "catalogo", name: "Catalogo", path: "/archivio" },
@@ -44,6 +44,13 @@ function normalizeMenuItems(items) {
     const path = String(item?.path || item?.link || "").trim().toLowerCase();
     if (id === "cinema" || name === "cinema" || path === "/cinema") {
       return { ...item, id: "film", name: "Film", label: "Film", path: "/film", link: "/film" };
+    }
+    if (
+      id === "serie" || id === "serie-tv" ||
+      name === "serie" || name === "serie tv" ||
+      path === "/serie" || path === "/serie-tv"
+    ) {
+      return { ...item, id: "serie", name: "Serie TV", label: "Serie TV", path: "/serie-tv", link: "/serie-tv" };
     }
     return item;
   });
@@ -150,6 +157,7 @@ const MainHeader = () => {
   const isActive = (path) => {
     if (path === "/browse") return location.pathname === "/browse" || location.pathname === "/";
     if (path === "/film") return location.pathname === "/film" || location.pathname === "/cinema";
+    if (path === "/serie-tv") return location.pathname === "/serie-tv" || location.pathname === "/serie";
     return location.pathname.startsWith(path);
   };
   const avatarImage = avatarSrc(isLoggedIn ? userInfo?.profileImage : null);
