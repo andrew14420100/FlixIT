@@ -39,6 +39,15 @@ def _install_trailer_registration_hook():
             notify,
         )
 
+        # Ads must be registered from this guaranteed startup path. The older
+        # sitecustomize hook is kept as a harmless fallback, while the service
+        # itself is idempotent through app.state.flixit_ads_registered.
+        try:
+            from services.ads import register_ad_service
+            register_ad_service(app, db, get_current_admin, log_admin_action)
+        except Exception as exc:
+            print(f"[ads] registration skipped: {exc}")
+
         try:
             from services.trailers.sc_youtube_metadata_policy import install_sc_youtube_metadata_policy
             install_sc_youtube_metadata_policy()
@@ -143,7 +152,7 @@ def _install_trailer_registration_hook():
         return result
 
     register_with_trailers._flixit_trailer_hook = True
-    register_with_trailers._original_register = original_register
+    register_with_trailers._original = original_register
     premium_module.register = register_with_trailers
 
 
@@ -315,7 +324,7 @@ def _install_full_sc_artwork_catalog_hook():
                         return logo, "streamingcommunity", "it"
                 return None, None, None
 
-            choose_sc_logo_only._flixit_sc_logo_only_v14 = True
+            choose_sc_logo_only._flixit_sc_logo_v14 = True
             choose_sc_logo_only._original = current_choose_logo
             OfficialArtworkResolver._choose_logo = staticmethod(choose_sc_logo_only)
     except Exception:
