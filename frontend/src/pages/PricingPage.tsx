@@ -201,7 +201,7 @@ function PlanCard({ slot, duration, active, onSelect }) {
     >
       {slot.featured ? <div style={{ position: "absolute", top: 16, right: 16, padding: "6px 10px", borderRadius: 999, background: "#e50914", color: "#fff", fontSize: 10.5, fontWeight: 800, letterSpacing: ".05em" }}>PIÙ SCELTO</div> : null}
 
-      <div style={{ padding: "clamp(22px,1.7vw,32px)" }}>
+      <div className="premium-plan-card-body" style={{ padding: "clamp(22px,1.7vw,32px)" }}>
         <div style={{ paddingRight: slot.featured ? 92 : 0 }}>
           <div style={{ color: active ? "#ff4650" : "rgba(255,255,255,.54)", fontWeight: 700, fontSize: 11.5, letterSpacing: ".08em", textTransform: "uppercase" }}>{duration.label}</div>
           <h2 className="dp-h2" style={{ marginTop: 7, fontSize: "clamp(29px,2vw,40px)" }}>{slot.name}</h2>
@@ -473,8 +473,21 @@ export function Component() {
       </div>
 
       <style>{`
+        [data-testid="pricing-page"],
+        [data-testid="pricing-page"] *,
+        [data-testid="pricing-page"] button,
+        [data-testid="pricing-page"] input,
+        [data-testid="pricing-page"] textarea,
+        [data-testid="pricing-page"] select {
+          font-family: "Netflix Sans Local", "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+        }
         .premium-elevator-hero { overflow: hidden; background: #010912; }
-        .premium-elevator-media { background: radial-gradient(circle at 78% 42%, rgba(40,72,105,.28), transparent 44%), #010912; }
+        .premium-elevator-media {
+          background:
+            radial-gradient(circle at 16% 46%, rgba(229,9,20,.14), transparent 34%),
+            radial-gradient(circle at 78% 42%, rgba(40,72,105,.28), transparent 44%),
+            #010912;
+        }
         .premium-poster-stage {
           position: absolute;
           z-index: 1;
@@ -553,6 +566,15 @@ export function Component() {
             linear-gradient(90deg, #010912 0%, rgba(1,9,18,.97) 22%, rgba(1,9,18,.73) 39%, rgba(1,9,18,.17) 61%, rgba(1,9,18,.02) 78%),
             linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.76) 11%, rgba(3,12,22,.08) 36%, transparent 58%);
         }
+        .premium-plans-grid { align-items: stretch; }
+        .premium-plan-card { height: 100%; }
+        .premium-plan-card-body {
+          display: flex;
+          flex-direction: column;
+          height: 100%;
+          box-sizing: border-box;
+        }
+        .premium-plan-card-body > button { margin-top: auto !important; }
         @keyframes premium-elevator-up {
           from { transform: translate3d(0, 0, 0); }
           to { transform: translate3d(0, -50%, 0); }
@@ -568,10 +590,16 @@ export function Component() {
           .premium-poster-stage { top: -15%; right: -32%; width: 115vw; height: 145%; opacity: .52; }
           .premium-poster-tilt { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; transform: rotate(-11deg) translate3d(0,0,0); }
           .premium-poster-column-4 { display: none; }
-          .premium-poster-vignette { background: linear-gradient(90deg, rgba(1,9,18,.96) 0%, rgba(1,9,18,.84) 48%, rgba(1,9,18,.35) 100%), linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.72) 16%, transparent 54%); }
+          .premium-poster-vignette { background: linear-gradient(90deg, rgba(1,9,18,.88) 0%, rgba(1,9,18,.76) 42%, rgba(1,9,18,.30) 100%), linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.72) 16%, transparent 54%); }
         }
         @media (min-width: 900px) {
           [data-testid="pricing-page"] .premium-plan-card:hover { transform: translateY(-3px); }
+          .premium-poster-stage { right: -6%; width: min(88vw, 1420px); }
+          .premium-poster-vignette {
+            background:
+              linear-gradient(90deg, rgba(1,9,18,.82) 0%, rgba(1,9,18,.72) 18%, rgba(1,9,18,.50) 35%, rgba(1,9,18,.16) 59%, rgba(1,9,18,.02) 80%),
+              linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.76) 11%, rgba(3,12,22,.08) 36%, transparent 58%);
+          }
         }
         @media (prefers-reduced-motion: reduce) {
           .premium-poster-track { animation-play-state: paused !important; }
