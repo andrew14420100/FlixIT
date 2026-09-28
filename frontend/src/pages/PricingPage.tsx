@@ -27,60 +27,26 @@ export const euro = (cents) => {
 };
 
 const PLAN_SPECS = [
-  {
-    key: "base",
-    name: "Base",
-    subtitle: "L'essenziale per guardare tutto il catalogo FlixIT.",
-    quality: "Fino a 720p",
-    devices: "1 dispositivo",
-    ads: "1 pubblicità a contenuto",
-    priority: "Livello 3",
-    aliases: ["base", "basic"],
-  },
-  {
-    key: "pro",
-    name: "Pro",
-    subtitle: "Più qualità e nessuna interruzione pubblicitaria.",
-    quality: "Fino a 1080p",
-    devices: "2 dispositivi",
-    ads: "Senza pubblicità",
-    priority: "Livello 2",
-    aliases: ["pro", "standard"],
-    featured: true,
-  },
-  {
-    key: "unlimited",
-    name: "Unlimited",
-    subtitle: "La massima libertà di visione su tutti i tuoi dispositivi.",
-    quality: "Fino a 1080p",
-    devices: "Dispositivi illimitati",
-    ads: "Senza pubblicità",
-    priority: "Livello 1",
-    aliases: ["unlimited", "illimitato", "premium"],
-  },
+  { key: "base", name: "Base", subtitle: "L'essenziale per guardare tutto il catalogo FlixIT.", quality: "Fino a 720p", devices: "1 dispositivo", ads: "1 pubblicità a contenuto", priority: "Livello 3", aliases: ["base", "basic"] },
+  { key: "pro", name: "Pro", subtitle: "Più qualità e nessuna interruzione pubblicitaria.", quality: "Fino a 1080p", devices: "2 dispositivi", ads: "Senza pubblicità", priority: "Livello 2", aliases: ["pro", "standard"], featured: true },
+  { key: "unlimited", name: "Unlimited", subtitle: "La massima libertà di visione su tutti i tuoi dispositivi.", quality: "Fino a 1080p", devices: "Dispositivi illimitati", ads: "Senza pubblicità", priority: "Livello 1", aliases: ["unlimited", "illimitato", "premium"] },
 ];
 
 const DURATION_OPTIONS = [
-  { key: "month", label: "Mensile", shortLabel: "1 mese", days: 30 },
-  { key: "quarter", label: "3 mesi", shortLabel: "3 mesi", days: 90 },
-  { key: "half", label: "6 mesi", shortLabel: "6 mesi", days: 180 },
-  { key: "year", label: "Annuale", shortLabel: "12 mesi", days: 365 },
+  { key: "month", label: "Mensile", shortLabel: "1 mese", days: 30, months: 1 },
+  { key: "quarter", label: "3 mesi", shortLabel: "3 mesi", days: 90, months: 3 },
+  { key: "half", label: "6 mesi", shortLabel: "6 mesi", days: 180, months: 6 },
+  { key: "year", label: "Annuale", shortLabel: "12 mesi", days: 365, months: 12 },
 ];
 
 function normalizeName(value) {
-  return String(value || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+  return String(value || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 function durationMatches(plan, durationKey) {
   const days = Number(plan?.duration_days || 0);
   const interval = String(plan?.interval || "").toLowerCase();
   const name = normalizeName(plan?.name);
-
   if (durationKey === "month") return interval === "month" || days === 30 || name.includes("mensile") || name.includes("1 mese");
   if (durationKey === "quarter") return days === 90 || name.includes("3 mesi") || name.includes("trimestrale") || name.includes("quarter");
   if (durationKey === "half") return days === 180 || name.includes("6 mesi") || name.includes("semestrale");
@@ -92,28 +58,17 @@ function featureProfile(plan, spec) {
   const features = Array.isArray(plan?.features) ? plan.features.map((value) => String(value || "").trim()).filter(Boolean) : [];
   const normalized = features.map((value) => ({ raw: value, key: normalizeName(value) }));
   const find = (test) => normalized.find(({ key }) => test(key))?.raw;
-
   const quality = find((key) => key.includes("1080p") || key.includes("720p")) || spec.quality;
   const devices = find((key) => key.includes("dispositiv") && (key.includes("illimit") || /(^| )1 dispositiv/.test(key) || /(^| )2 dispositiv/.test(key))) || spec.devices;
   const ads = find((key) => key.includes("pubblicita")) || spec.ads;
   const priorityRaw = find((key) => key.includes("priorita") && /livello [123]/.test(key));
   const priority = priorityRaw ? priorityRaw.replace(/^Priorità\s*/i, "") : spec.priority;
-
-  return {
-    quality,
-    devices,
-    ads,
-    priority,
-    subtitle: String(plan?.description || "").trim() || spec.subtitle,
-  };
+  return { quality, devices, ads, priority, subtitle: String(plan?.description || "").trim() || spec.subtitle };
 }
 
 function attachAdminPlans(plans, durationKey) {
-  const source = [...(plans || [])]
-    .filter((plan) => durationMatches(plan, durationKey))
-    .sort((a, b) => Number(a?.order || 0) - Number(b?.order || 0));
+  const source = [...(plans || [])].filter((plan) => durationMatches(plan, durationKey)).sort((a, b) => Number(a?.order || 0) - Number(b?.order || 0));
   const used = new Set();
-
   return PLAN_SPECS.map((spec) => {
     let backingIndex = source.findIndex((plan, index) => {
       if (used.has(index)) return false;
@@ -127,6 +82,17 @@ function attachAdminPlans(plans, durationKey) {
   });
 }
 
+function priceBreakdown(plan, duration, monthlyPlan) {
+  const totalCents = Math.max(0, Number(plan?.price_cents || 0));
+  const months = Math.max(1, Number(duration?.months || 1));
+  const effectiveMonthlyCents = totalCents / months;
+  const referenceMonthlyCents = Math.max(0, Number(monthlyPlan?.price_cents || 0));
+  const fullTotalCents = referenceMonthlyCents > 0 ? referenceMonthlyCents * months : 0;
+  const savingsCents = months > 1 && fullTotalCents > totalCents ? fullTotalCents - totalCents : 0;
+  const discountPercent = savingsCents > 0 && fullTotalCents > 0 ? Math.round((savingsCents / fullTotalCents) * 100) : 0;
+  return { totalCents, months, effectiveMonthlyCents, referenceMonthlyCents, fullTotalCents, savingsCents, discountPercent, discounted: discountPercent > 0 };
+}
+
 function resolvePoster(value) {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -137,16 +103,7 @@ function resolvePoster(value) {
 
 function posterFromItem(item) {
   const artwork = item?.__artwork || item?.artwork || item?.assets || {};
-  return resolvePoster(
-    artwork?.poster_url ||
-    artwork?.poster_path ||
-    artwork?.boxartHighRes ||
-    item?.poster_path ||
-    item?.posterPath ||
-    item?.poster_url ||
-    item?.cover_path ||
-    item?.image
-  );
+  return resolvePoster(artwork?.poster_url || artwork?.poster_path || artwork?.boxartHighRes || item?.poster_path || item?.posterPath || item?.poster_url || item?.cover_path || item?.image);
 }
 
 function premiumPosterScore(item, row, rowIndex, itemIndex) {
@@ -164,30 +121,22 @@ function premiumPosterScore(item, row, rowIndex, itemIndex) {
 function collectPremiumPosters(data) {
   const candidates = [];
   const rows = Array.isArray(data?.rows) ? data.rows : [];
-
   rows.forEach((row, rowIndex) => {
     (row?.items || []).forEach((item, itemIndex) => {
       const src = posterFromItem(item);
-      if (!src) return;
-      candidates.push({ src, score: premiumPosterScore(item, row, rowIndex, itemIndex) });
+      if (src) candidates.push({ src, score: premiumPosterScore(item, row, rowIndex, itemIndex) });
     });
   });
-
   const hero = data?.hero || {};
   const heroAssets = hero?.assets || {};
   const heroPoster = resolvePoster(heroAssets?.poster_path || heroAssets?.poster_url || hero?.detail?.poster_path);
   if (heroPoster) candidates.push({ src: heroPoster, score: 500 });
-
   const seen = new Set();
-  return candidates
-    .sort((a, b) => b.score - a.score)
-    .filter((entry) => {
-      if (!entry.src || seen.has(entry.src)) return false;
-      seen.add(entry.src);
-      return true;
-    })
-    .slice(0, 20)
-    .map((entry) => entry.src);
+  return candidates.sort((a, b) => b.score - a.score).filter((entry) => {
+    if (!entry.src || seen.has(entry.src)) return false;
+    seen.add(entry.src);
+    return true;
+  }).slice(0, 20).map((entry) => entry.src);
 }
 
 function FeatureRow({ icon: Icon, label, value, highlight = false }) {
@@ -202,56 +151,39 @@ function FeatureRow({ icon: Icon, label, value, highlight = false }) {
   );
 }
 
-function PlanCard({ slot, duration, active, onSelect }) {
+function PlanCard({ slot, duration, monthlyPlan, active, onSelect }) {
   const plan = slot.adminPlan;
   const available = Boolean(plan?.id);
-
+  const pricing = priceBreakdown(plan, duration, monthlyPlan);
   return (
-    <section
-      className="dp-card premium-plan-card"
-      data-testid={`premium-plan-${slot.key}`}
-      onClick={() => available && onSelect(slot.key)}
-      style={{
-        position: "relative",
-        overflow: "hidden",
-        cursor: available ? "pointer" : "default",
-        borderColor: active ? "rgba(229,9,20,.92)" : undefined,
-        boxShadow: active ? "0 0 0 2px rgba(229,9,20,.14), 0 22px 56px rgba(0,0,0,.38)" : undefined,
-        transition: "transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease",
-      }}
-    >
+    <section className="dp-card premium-plan-card" data-testid={`premium-plan-${slot.key}`} onClick={() => available && onSelect(slot.key)} style={{ position: "relative", overflow: "hidden", cursor: available ? "pointer" : "default", borderColor: active ? "rgba(229,9,20,.92)" : undefined, boxShadow: active ? "0 0 0 2px rgba(229,9,20,.14), 0 22px 56px rgba(0,0,0,.38)" : undefined, transition: "transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease" }}>
       {slot.featured ? <div style={{ position: "absolute", top: 16, right: 16, padding: "6px 10px", borderRadius: 999, background: "#e50914", color: "#fff", fontSize: 10.5, fontWeight: 800, letterSpacing: ".05em" }}>PIÙ SCELTO</div> : null}
-
       <div className="premium-plan-card-body" style={{ padding: "clamp(22px,1.7vw,32px)" }}>
         <div style={{ paddingRight: slot.featured ? 92 : 0 }}>
           <div style={{ color: active ? "#ff4650" : "rgba(255,255,255,.54)", fontWeight: 700, fontSize: 11.5, letterSpacing: ".08em", textTransform: "uppercase" }}>{duration.label}</div>
           <h2 className="dp-h2" style={{ marginTop: 7, fontSize: "clamp(29px,2vw,40px)" }}>{slot.name}</h2>
           <p className="dp-section-sub" style={{ marginTop: 8, minHeight: 42, lineHeight: 1.45 }}>{slot.subtitle}</p>
         </div>
-
-        <div style={{ display: "flex", alignItems: "baseline", gap: 9, marginTop: 20, minHeight: 48 }}>
-          <strong data-testid={`premium-price-${slot.key}`} style={{ fontSize: "clamp(31px,2.15vw,42px)", lineHeight: 1, letterSpacing: "-.03em" }}>{available ? euro(plan.price_cents) : "—"}</strong>
-          <span style={{ color: "rgba(255,255,255,.54)", fontSize: 13.5 }}>/ {duration.shortLabel}</span>
+        <div style={{ marginTop: 18, minHeight: 84 }}>
+          {available && pricing.discounted ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6, minHeight: 24 }}>
+              <span style={{ color: "rgba(255,255,255,.42)", fontSize: 13.5, textDecoration: "line-through" }}>{euro(pricing.referenceMonthlyCents)}/mese</span>
+              <span style={{ padding: "4px 8px", borderRadius: 999, background: "rgba(229,9,20,.16)", border: "1px solid rgba(229,9,20,.34)", color: "#ff6971", fontSize: 11.5, fontWeight: 800 }}>-{pricing.discountPercent}%</span>
+            </div>
+          ) : <div style={{ minHeight: 24 }} />}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, minHeight: 43 }}>
+            <strong data-testid={`premium-price-${slot.key}`} style={{ fontSize: "clamp(31px,2.15vw,42px)", lineHeight: 1, letterSpacing: "-.03em" }}>{available ? euro(pricing.effectiveMonthlyCents) : "—"}</strong>
+            <span style={{ color: "rgba(255,255,255,.54)", fontSize: 13.5 }}>/ mese</span>
+          </div>
+          {available && duration.months > 1 ? <div style={{ marginTop: 7, color: "rgba(255,255,255,.48)", fontSize: 12.5 }}>Totale {duration.label.toLowerCase()}: <strong style={{ color: "rgba(255,255,255,.78)", fontWeight: 700 }}>{euro(pricing.totalCents)}</strong>{pricing.discounted ? <span style={{ marginLeft: 7, textDecoration: "line-through", color: "rgba(255,255,255,.32)" }}>{euro(pricing.fullTotalCents)}</span> : null}</div> : null}
         </div>
-
-        <div className="dp-divider" style={{ margin: "19px 0 3px" }} />
+        <div className="dp-divider" style={{ margin: "16px 0 3px" }} />
         <FeatureRow icon={MovieFilterOutlinedIcon} label="Catalogo" value="Film e Serie TV" highlight />
         <FeatureRow icon={HdOutlinedIcon} label="Qualità" value={slot.quality} />
         <FeatureRow icon={DevicesOutlinedIcon} label="Dispositivi" value={slot.devices} />
         <FeatureRow icon={slot.ads === "Senza pubblicità" ? BlockOutlinedIcon : PlayCircleOutlineIcon} label="Pubblicità" value={slot.ads} />
         <FeatureRow icon={BoltOutlinedIcon} label="Priorità" value={slot.priority} />
-
-        <button
-          type="button"
-          disabled={!available}
-          onClick={(event) => { event.stopPropagation(); if (available) onSelect(slot.key); }}
-          style={{
-            width: "100%", height: 50, marginTop: 22,
-            border: active ? 0 : "1px solid rgba(255,255,255,.20)", borderRadius: 9,
-            background: active ? "#fff" : "rgba(255,255,255,.06)", color: active ? "#0b0b0b" : "#fff",
-            fontWeight: 700, fontSize: 15, cursor: available ? "pointer" : "not-allowed", opacity: available ? 1 : .46,
-          }}
-        >
+        <button type="button" disabled={!available} onClick={(event) => { event.stopPropagation(); if (available) onSelect(slot.key); }} style={{ width: "100%", height: 50, marginTop: 22, border: active ? 0 : "1px solid rgba(255,255,255,.20)", borderRadius: 9, background: active ? "#fff" : "rgba(255,255,255,.06)", color: active ? "#0b0b0b" : "#fff", fontWeight: 700, fontSize: 15, cursor: available ? "pointer" : "not-allowed", opacity: available ? 1 : .46 }}>
           {available ? (active ? "Piano selezionato" : `Scegli ${slot.name}`) : `Configura ${slot.name} · ${duration.label} nell'admin`}
         </button>
       </div>
@@ -260,12 +192,7 @@ function PlanCard({ slot, duration, active, onSelect }) {
 }
 
 function HowStep({ icon: Icon, label, value }) {
-  return (
-    <div className="dp-info" style={{ minHeight: 72 }}>
-      <span className="dp-info__icon"><Icon /></span>
-      <span className="dp-info__text"><span className="dp-info__label">{label}</span><span className="dp-info__value">{value}</span></span>
-    </div>
-  );
+  return <div className="dp-info" style={{ minHeight: 72 }}><span className="dp-info__icon"><Icon /></span><span className="dp-info__text"><span className="dp-info__label">{label}</span><span className="dp-info__value">{value}</span></span></div>;
 }
 
 export function Component() {
@@ -282,13 +209,7 @@ export function Component() {
   const paymentRef = useRef(null);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/public/plans`, { headers: { Accept: "application/json" } })
-      .then((r) => r.json())
-      .then((data) => {
-        setPlans(Array.isArray(data?.items) ? data.items : []);
-        setPaypalEnabled(Boolean(data?.paypal_enabled));
-      })
-      .catch(() => setPlans([]));
+    fetch(`${API_URL}/api/public/plans`, { headers: { Accept: "application/json" } }).then((r) => r.json()).then((data) => { setPlans(Array.isArray(data?.items) ? data.items : []); setPaypalEnabled(Boolean(data?.paypal_enabled)); }).catch(() => setPlans([]));
   }, []);
 
   useEffect(() => {
@@ -301,11 +222,7 @@ export function Component() {
           const response = await fetch(`${API_URL}${path}`, { cache: "no-store", headers: { Accept: "application/json" } });
           if (!response.ok) continue;
           const data = await response.json();
-          collectPremiumPosters(data).forEach((poster) => {
-            if (!poster || seen.has(poster)) return;
-            seen.add(poster);
-            collected.push(poster);
-          });
+          collectPremiumPosters(data).forEach((poster) => { if (!poster || seen.has(poster)) return; seen.add(poster); collected.push(poster); });
           if (alive) setHeroPosters(collected.slice(0, 20));
           if (collected.length >= 16) break;
         } catch {}
@@ -322,19 +239,19 @@ export function Component() {
       const filled = [...column];
       if (!heroPosters.length) return filled;
       let guard = 0;
-      while (filled.length < 4 && guard < 20) {
-        const candidate = heroPosters[(columnIndex + filled.length * 4) % heroPosters.length];
-        if (candidate) filled.push(candidate);
-        guard += 1;
-      }
+      while (filled.length < 4 && guard < 20) { const candidate = heroPosters[(columnIndex + filled.length * 4) % heroPosters.length]; if (candidate) filled.push(candidate); guard += 1; }
       return filled;
     });
   }, [heroPosters]);
 
   const duration = DURATION_OPTIONS.find((item) => item.key === durationKey) || DURATION_OPTIONS[0];
   const slots = useMemo(() => attachAdminPlans(plans || [], durationKey), [plans, durationKey]);
+  const monthlySlots = useMemo(() => attachAdminPlans(plans || [], "month"), [plans]);
+  const monthlyPlanByKey = useMemo(() => Object.fromEntries(monthlySlots.map((slot) => [slot.key, slot.adminPlan])), [monthlySlots]);
   const selectedSlot = slots.find((slot) => slot.key === selectedKey) || slots[0] || null;
   const selectedPlan = selectedSlot?.adminPlan || null;
+  const selectedMonthlyPlan = selectedSlot ? monthlyPlanByKey[selectedSlot.key] : null;
+  const selectedPricing = priceBreakdown(selectedPlan, duration, selectedMonthlyPlan);
 
   useEffect(() => {
     if (plans === null || selectedPlan?.id) return;
@@ -349,282 +266,85 @@ export function Component() {
   const pay = async (provider) => {
     if (!selectedPlan?.id) return;
     if (!userToken()) { openAuthModal("login"); return; }
-    setBusy(provider);
-    setError(null);
+    setBusy(provider); setError(null);
     try {
       const path = provider === "stripe" ? "/api/payments/stripe/checkout" : "/api/payments/paypal/create-order";
-      const response = await fetch(`${API_URL}${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken()}` },
-        body: JSON.stringify({ plan_id: selectedPlan.id, origin_url: window.location.origin }),
-      });
+      const response = await fetch(`${API_URL}${path}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${userToken()}` }, body: JSON.stringify({ plan_id: selectedPlan.id, origin_url: window.location.origin }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Pagamento non avviato");
       const url = provider === "stripe" ? data.checkout_url : data.approve_url;
       if (!url) throw new Error("URL di pagamento mancante");
       window.location.href = url;
-    } catch (e) {
-      setError(e?.message || "Pagamento non avviato");
-      setBusy(null);
-    }
+    } catch (e) { setError(e?.message || "Pagamento non avviato"); setBusy(null); }
   };
 
   return (
     <Box component="main" className="dp-page" data-testid="pricing-page" sx={{ pt: { xs: 0, md: "80px" } }}>
       <section className="dp-hero premium-elevator-hero" style={{ minHeight: 500 }}>
         <div className="dp-hero__media premium-elevator-media">
-          <div className="premium-poster-stage" aria-hidden="true">
-            <div className="premium-poster-tilt">
-              {heroColumns.map((column, columnIndex) => (
-                <div
-                  key={columnIndex}
-                  className={`premium-poster-column premium-poster-column-${columnIndex + 1}`}
-                  style={{
-                    "--premium-duration": `${23 + columnIndex * 3.5}s`,
-                    "--premium-delay": `${-columnIndex * 4.7}s`,
-                  }}
-                >
-                  <div className="premium-poster-track">
-                    {[0, 1].map((copyIndex) => (
-                      <div className="premium-poster-sequence" key={copyIndex}>
-                        {column.map((poster, posterIndex) => (
-                          <div className="premium-poster-card" key={`${copyIndex}-${posterIndex}-${poster}`}>
-                            <img src={poster} alt="" loading={copyIndex === 0 && posterIndex < 2 ? "eager" : "lazy"} decoding="async" />
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="premium-poster-vignette" />
-          <div className="dp-hero__shade dp-hero__shade--left" />
-          <div className="dp-hero__shade dp-hero__shade--top" />
-          <div className="dp-hero__shade dp-hero__shade--bottom" />
+          <div className="premium-poster-stage" aria-hidden="true"><div className="premium-poster-tilt">
+            {heroColumns.map((column, columnIndex) => <div key={columnIndex} className={`premium-poster-column premium-poster-column-${columnIndex + 1}`} style={{ "--premium-duration": `${23 + columnIndex * 3.5}s`, "--premium-delay": `${-columnIndex * 4.7}s` }}><div className="premium-poster-track">{[0, 1].map((copyIndex) => <div className="premium-poster-sequence" key={copyIndex}>{column.map((poster, posterIndex) => <div className="premium-poster-card" key={`${copyIndex}-${posterIndex}-${poster}`}><img src={poster} alt="" loading={copyIndex === 0 && posterIndex < 2 ? "eager" : "lazy"} decoding="async" /></div>)}</div>)}</div></div>)}
+          </div></div>
+          <div className="premium-poster-vignette" /><div className="dp-hero__shade dp-hero__shade--left" /><div className="dp-hero__shade dp-hero__shade--top" /><div className="dp-hero__shade dp-hero__shade--bottom" />
         </div>
-
         <div className="dp-hero__content">
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12, color: "#e50914", fontWeight: 800, letterSpacing: ".08em", fontSize: 13, textTransform: "uppercase" }}>
-            <WorkspacePremiumOutlinedIcon style={{ fontSize: 20 }} /> FlixIT Premium
-          </div>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, marginBottom: 12, color: "#e50914", fontWeight: 800, letterSpacing: ".08em", fontSize: 13, textTransform: "uppercase" }}><WorkspacePremiumOutlinedIcon style={{ fontSize: 20 }} /> FlixIT Premium</div>
           <h1 className="dp-hero__title" style={{ textTransform: "none", maxWidth: "min(38vw,720px)" }}>Scegli il piano. Decidi la durata.</h1>
-          <p style={{ margin: "0 0 22px", maxWidth: 670, color: "rgba(255,255,255,.92)", fontSize: "clamp(16px,1.14vw,22px)", lineHeight: 1.55, textShadow: "0 2px 8px rgba(0,0,0,.65)" }}>
-            Tutto il catalogo film e serie TV. Prima scegli per quanto tempo vuoi Premium, poi confronta Base, Pro e Unlimited in modo semplice e immediato.
-          </p>
-          <div className="dp-hero__meta" style={{ marginBottom: 18 }}>
-            <span className="dp-badge">FINO A 1080p</span>
-            <span>Nessun rinnovo automatico</span>
-            <span className="dp-hero__dot">•</span>
-            <span>Attivazione immediata</span>
-          </div>
-          <button className="dp-play-btn" type="button" onClick={scrollToPlans} style={{ minWidth: 225 }}>
-            <WorkspacePremiumOutlinedIcon /> Scegli l'abbonamento
-          </button>
+          <p style={{ margin: "0 0 22px", maxWidth: 670, color: "rgba(255,255,255,.92)", fontSize: "clamp(16px,1.14vw,22px)", lineHeight: 1.55, textShadow: "0 2px 8px rgba(0,0,0,.65)" }}>Tutto il catalogo film e serie TV. Prima scegli per quanto tempo vuoi Premium, poi confronta Base, Pro e Unlimited in modo semplice e immediato.</p>
+          <div className="dp-hero__meta" style={{ marginBottom: 18 }}><span className="dp-badge">FINO A 1080p</span><span>Nessun rinnovo automatico</span><span className="dp-hero__dot">•</span><span>Attivazione immediata</span></div>
+          <button className="dp-play-btn" type="button" onClick={scrollToPlans} style={{ minWidth: 225 }}><WorkspacePremiumOutlinedIcon /> Scegli l'abbonamento</button>
         </div>
       </section>
 
-      <div className="dp-tabs-wrap" ref={plansRef}>
-        <div className="dp-tabs premium-duration-tabs" role="tablist" aria-label="Durata abbonamento Premium">
-          {DURATION_OPTIONS.map((item) => (
-            <button key={item.key} type="button" role="tab" className={`dp-tab ${durationKey === item.key ? "is-active" : ""}`} aria-selected={durationKey === item.key} onClick={() => selectDuration(item.key)}>{item.label}</button>
-          ))}
-        </div>
-      </div>
+      <div className="dp-tabs-wrap" ref={plansRef}><div className="dp-tabs premium-duration-tabs" role="tablist" aria-label="Durata abbonamento Premium">{DURATION_OPTIONS.map((item) => <button key={item.key} type="button" role="tab" className={`dp-tab ${durationKey === item.key ? "is-active" : ""}`} aria-selected={durationKey === item.key} onClick={() => selectDuration(item.key)}>{item.label}</button>)}</div></div>
 
-      <div className="dp-content">
-        <section className="dp-panel">
-          <div style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 24, marginBottom: 22 }} className="premium-heading-row">
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "rgba(255,255,255,.58)", fontSize: 13, marginBottom: 7 }}>
-                <CalendarMonthOutlinedIcon style={{ fontSize: 18 }} /> Durata selezionata: <strong style={{ color: "#fff" }}>{duration.label}</strong>
-              </div>
-              <h2 className="dp-section-title" style={{ textTransform: "none" }}>Scegli il livello Premium</h2>
-              <p className="dp-section-sub">Le differenze sono mostrate riga per riga. Il prezzo cambia in base alla durata scelta sopra.</p>
-            </div>
-            {user?.is_premium ? <div style={{ display: "inline-flex", alignItems: "center", gap: 7, color: "#8ee6a9", fontSize: 14, fontWeight: 700 }}><CheckIcon style={{ fontSize: 18 }} /> {premiumLabel(user)}</div> : null}
+      <div className="dp-content"><section className="dp-panel">
+        <div style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 24, marginBottom: 22 }} className="premium-heading-row"><div><div style={{ display: "flex", alignItems: "center", gap: 8, color: "rgba(255,255,255,.58)", fontSize: 13, marginBottom: 7 }}><CalendarMonthOutlinedIcon style={{ fontSize: 18 }} /> Durata selezionata: <strong style={{ color: "#fff" }}>{duration.label}</strong></div><h2 className="dp-section-title" style={{ textTransform: "none" }}>Scegli il livello Premium</h2><p className="dp-section-sub">Il prezzo grande è sempre il costo equivalente al mese. Per 3, 6 e 12 mesi lo sconto viene calcolato automaticamente rispetto al piano mensile.</p></div>{user?.is_premium ? <div style={{ display: "inline-flex", alignItems: "center", gap: 7, color: "#8ee6a9", fontSize: 14, fontWeight: 700 }}><CheckIcon style={{ fontSize: 18 }} /> {premiumLabel(user)}</div> : null}</div>
+
+        {plans === null ? <div style={{ minHeight: 320, display: "grid", placeItems: "center" }}><CircularProgress sx={{ color: "#e50914" }} /></div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "clamp(14px,1.2vw,24px)" }} className="premium-plans-grid">{slots.map((slot) => <PlanCard key={`${durationKey}-${slot.key}`} slot={slot} duration={duration} monthlyPlan={monthlyPlanByKey[slot.key]} active={selectedKey === slot.key} onSelect={selectPlan} />)}</div>}
+
+        <section ref={paymentRef} className="dp-card" style={{ marginTop: 24, padding: "clamp(22px,1.8vw,34px)" }}><div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.5fr) minmax(300px,.75fr)", gap: 28, alignItems: "center" }} className="premium-payment-grid">
+          <div>
+            <p className="dp-section-sub" style={{ margin: 0, color: "#e50914", fontWeight: 700 }}>RIEPILOGO</p>
+            <h2 className="dp-h2" style={{ marginTop: 7 }}>{selectedSlot ? `${selectedSlot.name} · ${duration.label}` : "Seleziona un piano"}</h2>
+            {selectedPlan?.id ? <div style={{ marginTop: 15, padding: "16px 18px", borderRadius: 12, border: "1px solid rgba(170,195,215,.14)", background: "rgba(255,255,255,.025)" }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}><span style={{ color: "rgba(255,255,255,.58)", fontSize: 13.5 }}>Totale da pagare ora</span><strong style={{ color: "#fff", fontSize: "clamp(26px,2vw,36px)", letterSpacing: "-.025em" }}>{euro(selectedPricing.totalCents)}</strong></div>
+              {selectedPricing.discounted ? <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 8, color: "rgba(255,255,255,.50)", fontSize: 13 }}><span>Prezzo pieno <span style={{ textDecoration: "line-through" }}>{euro(selectedPricing.fullTotalCents)}</span></span><span style={{ color: "#ff6971", fontWeight: 800 }}>-{selectedPricing.discountPercent}%</span><span>Risparmi {euro(selectedPricing.savingsCents)}</span></div> : null}
+              <div style={{ marginTop: 8, color: "rgba(255,255,255,.52)", fontSize: 13 }}>Equivale a <strong style={{ color: "rgba(255,255,255,.82)" }}>{euro(selectedPricing.effectiveMonthlyCents)}/mese</strong> per {duration.label.toLowerCase()}.</div>
+            </div> : null}
+            <p className="dp-plot" style={{ marginTop: 15, fontSize: "clamp(15px,1vw,19px)", lineHeight: 1.55, WebkitLineClamp: "unset" }}>{selectedPlan?.id ? <>Il totale indicato sopra è quello del periodo selezionato. </> : <>Questa combinazione non è ancora configurata nell'admin. </>}Dopo la conferma del pagamento il piano si attiva immediatamente sul tuo account. Alla scadenza termina senza rinnovo automatico.</p>
+            {!userToken() ? <p className="dp-section-sub">Prima del pagamento ti verrà chiesto di accedere o registrarti.</p> : null}
+            {error ? <div style={{ marginTop: 13, color: "#ff8b91", fontSize: 14 }}>{error}</div> : null}
           </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {selectedPlan?.id ? <div style={{ textAlign: "center", marginBottom: 2 }}><div style={{ color: "rgba(255,255,255,.42)", fontSize: 11.5, textTransform: "uppercase", letterSpacing: ".075em", fontWeight: 800 }}>Totale</div><div style={{ color: "#fff", fontSize: 22, fontWeight: 800, marginTop: 2 }}>{euro(selectedPricing.totalCents)}</div>{selectedPricing.discounted ? <div style={{ color: "#ff6971", fontSize: 12, fontWeight: 800, marginTop: 2 }}>Sconto {selectedPricing.discountPercent}% applicato</div> : null}</div> : null}
+            <button className="dp-play-btn" type="button" disabled={!selectedPlan?.id || Boolean(busy)} onClick={() => pay("stripe")} style={{ width: "100%", minWidth: 0 }}>{busy === "stripe" ? <CircularProgress size={20} sx={{ color: "#111" }} /> : <><CreditCardOutlinedIcon /> Paga {selectedPlan?.id ? euro(selectedPricing.totalCents) : ""} con carta</>}</button>
+            {paypalEnabled ? <button type="button" disabled={!selectedPlan?.id || Boolean(busy)} onClick={() => pay("paypal")} style={{ width: "100%", height: 48, borderRadius: 9, border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.07)", color: "#fff", fontWeight: 700, cursor: "pointer" }}>{busy === "paypal" ? <CircularProgress size={20} sx={{ color: "#fff" }} /> : <><LockOutlinedIcon style={{ fontSize: 18, verticalAlign: "middle", marginRight: 8 }} />Paga {selectedPlan?.id ? euro(selectedPricing.totalCents) : ""} con PayPal</>}</button> : null}
+          </div>
+        </div></section>
 
-          {plans === null ? (
-            <div style={{ minHeight: 320, display: "grid", placeItems: "center" }}><CircularProgress sx={{ color: "#e50914" }} /></div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: "clamp(14px,1.2vw,24px)" }} className="premium-plans-grid">
-              {slots.map((slot) => <PlanCard key={`${durationKey}-${slot.key}`} slot={slot} duration={duration} active={selectedKey === slot.key} onSelect={selectPlan} />)}
-            </div>
-          )}
-
-          <section ref={paymentRef} className="dp-card" style={{ marginTop: 24, padding: "clamp(22px,1.8vw,34px)" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.5fr) minmax(300px,.75fr)", gap: 28, alignItems: "center" }} className="premium-payment-grid">
-              <div>
-                <p className="dp-section-sub" style={{ margin: 0, color: "#e50914", fontWeight: 700 }}>RIEPILOGO</p>
-                <h2 className="dp-h2" style={{ marginTop: 7 }}>{selectedSlot ? `${selectedSlot.name} · ${duration.label}` : "Seleziona un piano"}</h2>
-                <p className="dp-plot" style={{ marginTop: 12, fontSize: "clamp(15px,1vw,19px)", lineHeight: 1.55, WebkitLineClamp: "unset" }}>
-                  {selectedPlan?.id ? <>Totale: <strong>{euro(selectedPlan.price_cents)}</strong>. </> : <>Questa combinazione non è ancora configurata nell'admin. </>}
-                  Dopo la conferma del pagamento il piano si attiva immediatamente sul tuo account. Alla scadenza termina senza rinnovo automatico.
-                </p>
-                {!userToken() ? <p className="dp-section-sub">Prima del pagamento ti verrà chiesto di accedere o registrarti.</p> : null}
-                {error ? <div style={{ marginTop: 13, color: "#ff8b91", fontSize: 14 }}>{error}</div> : null}
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <button className="dp-play-btn" type="button" disabled={!selectedPlan?.id || Boolean(busy)} onClick={() => pay("stripe")} style={{ width: "100%", minWidth: 0 }}>
-                  {busy === "stripe" ? <CircularProgress size={20} sx={{ color: "#111" }} /> : <><CreditCardOutlinedIcon /> Paga con carta</>}
-                </button>
-                {paypalEnabled ? (
-                  <button type="button" disabled={!selectedPlan?.id || Boolean(busy)} onClick={() => pay("paypal")} style={{ width: "100%", height: 48, borderRadius: 9, border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.07)", color: "#fff", fontWeight: 700, cursor: "pointer" }}>
-                    {busy === "paypal" ? <CircularProgress size={20} sx={{ color: "#fff" }} /> : <><LockOutlinedIcon style={{ fontSize: 18, verticalAlign: "middle", marginRight: 8 }} />Paga con PayPal</>}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </section>
-
-          <section style={{ marginTop: 34 }}>
-            <h2 className="dp-section-title" style={{ textTransform: "none" }}>Come funziona</h2>
-            <p className="dp-section-sub">Quattro passaggi chiari, senza rinnovo automatico.</p>
-            <div className="dp-info-grid premium-how-grid" style={{ gridTemplateColumns: "repeat(4,minmax(0,1fr))" }}>
-              <HowStep icon={CalendarMonthOutlinedIcon} label="1 · Durata" value="Mensile, 3, 6 o 12 mesi" />
-              <HowStep icon={WorkspacePremiumOutlinedIcon} label="2 · Piano" value="Base, Pro o Unlimited" />
-              <HowStep icon={CreditCardOutlinedIcon} label="3 · Pagamento" value="Completa il pagamento" />
-              <HowStep icon={CheckIcon} label="4 · Attivazione" value="Immediata dopo la conferma" />
-            </div>
-          </section>
-        </section>
-      </div>
+        <section style={{ marginTop: 34 }}><h2 className="dp-section-title" style={{ textTransform: "none" }}>Come funziona</h2><p className="dp-section-sub">Quattro passaggi chiari, senza rinnovo automatico.</p><div className="dp-info-grid premium-how-grid" style={{ gridTemplateColumns: "repeat(4,minmax(0,1fr))" }}><HowStep icon={CalendarMonthOutlinedIcon} label="1 · Durata" value="Mensile, 3, 6 o 12 mesi" /><HowStep icon={WorkspacePremiumOutlinedIcon} label="2 · Piano" value="Base, Pro o Unlimited" /><HowStep icon={CreditCardOutlinedIcon} label="3 · Pagamento" value="Completa il pagamento" /><HowStep icon={CheckIcon} label="4 · Attivazione" value="Immediata dopo la conferma" /></div></section>
+      </section></div>
 
       <style>{`
-        [data-testid="pricing-page"],
-        [data-testid="pricing-page"] *,
-        [data-testid="pricing-page"] button,
-        [data-testid="pricing-page"] input,
-        [data-testid="pricing-page"] textarea,
-        [data-testid="pricing-page"] select {
-          font-family: "Netflix Sans Local", "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important;
-        }
+        [data-testid="pricing-page"], [data-testid="pricing-page"] *, [data-testid="pricing-page"] button, [data-testid="pricing-page"] input, [data-testid="pricing-page"] textarea, [data-testid="pricing-page"] select { font-family: "Netflix Sans Local", "Netflix Sans", "Helvetica Neue", Helvetica, Arial, sans-serif !important; }
         .premium-elevator-hero { overflow: hidden; background: #010912; }
-        .premium-elevator-media {
-          background:
-            radial-gradient(circle at 16% 46%, rgba(229,9,20,.14), transparent 34%),
-            radial-gradient(circle at 78% 42%, rgba(40,72,105,.28), transparent 44%),
-            #010912;
-        }
-        .premium-poster-stage {
-          position: absolute;
-          z-index: 1;
-          top: -24%;
-          right: -5%;
-          width: min(72vw, 1180px);
-          height: 155%;
-          overflow: hidden;
-          opacity: .98;
-          -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 9%, #000 91%, transparent 100%);
-          mask-image: linear-gradient(180deg, transparent 0%, #000 9%, #000 91%, transparent 100%);
-        }
-        .premium-poster-tilt {
-          width: 100%;
-          height: 100%;
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: clamp(10px, 1vw, 18px);
-          transform: rotate(-10.5deg) translate3d(4%, -1%, 0);
-          transform-origin: 56% 50%;
-        }
-        .premium-poster-column {
-          min-width: 0;
-          height: 122%;
-          overflow: hidden;
-          border-radius: 14px;
-          will-change: transform;
-        }
-        .premium-poster-column-1 { transform: translateY(6%); opacity: .64; }
-        .premium-poster-column-2 { transform: translateY(-2%) scale(1.035); opacity: .94; z-index: 2; }
-        .premium-poster-column-3 { transform: translateY(9%) scale(1.075); opacity: 1; z-index: 3; }
-        .premium-poster-column-4 { transform: translateY(-5%); opacity: .72; }
-        .premium-poster-track {
-          display: flex;
-          flex-direction: column;
-          animation: premium-elevator-up var(--premium-duration) linear infinite;
-          animation-delay: var(--premium-delay);
-          will-change: transform;
-        }
-        .premium-poster-sequence {
-          display: flex;
-          flex-direction: column;
-          gap: clamp(10px, .9vw, 16px);
-          padding-bottom: clamp(10px, .9vw, 16px);
-        }
-        .premium-poster-card {
-          position: relative;
-          width: 100%;
-          aspect-ratio: 2 / 3;
-          overflow: hidden;
-          border-radius: clamp(9px, .75vw, 14px);
-          background: #091522;
-          border: 1px solid rgba(170,195,215,.22);
-          box-shadow: 0 16px 36px rgba(0,0,0,.42);
-        }
-        .premium-poster-card img {
-          display: block;
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-          transform: scale(1.015);
-        }
-        .premium-poster-card::after {
-          content: "";
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.14));
-          pointer-events: none;
-        }
-        .premium-poster-vignette {
-          position: absolute;
-          z-index: 2;
-          inset: 0;
-          pointer-events: none;
-          background:
-            linear-gradient(90deg, #010912 0%, rgba(1,9,18,.97) 22%, rgba(1,9,18,.73) 39%, rgba(1,9,18,.17) 61%, rgba(1,9,18,.02) 78%),
-            linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.76) 11%, rgba(3,12,22,.08) 36%, transparent 58%);
-        }
-        .premium-plans-grid { align-items: stretch; }
-        .premium-plan-card { height: 100%; }
-        .premium-plan-card-body {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-          box-sizing: border-box;
-        }
-        .premium-plan-card-body > button { margin-top: auto !important; }
-        @keyframes premium-elevator-up {
-          from { transform: translate3d(0, 0, 0); }
-          to { transform: translate3d(0, -50%, 0); }
-        }
-        @media (max-width: 899px) {
-          .premium-duration-tabs { width: min(94vw, 620px); justify-content: flex-start; }
-          .premium-plans-grid { grid-template-columns: 1fr !important; }
-          .premium-payment-grid { grid-template-columns: 1fr !important; }
-          .premium-heading-row { align-items: flex-start !important; flex-direction: column; }
-          .premium-how-grid { grid-template-columns: 1fr !important; }
-          [data-testid="pricing-page"] .dp-hero__content { width: min(88vw, 680px); left: 6vw; bottom: 54px; }
-          [data-testid="pricing-page"] .dp-hero__title { max-width: 88vw !important; font-size: clamp(38px, 12vw, 64px); }
-          .premium-poster-stage { top: -15%; right: -32%; width: 115vw; height: 145%; opacity: .52; }
-          .premium-poster-tilt { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; transform: rotate(-11deg) translate3d(0,0,0); }
-          .premium-poster-column-4 { display: none; }
-          .premium-poster-vignette { background: linear-gradient(90deg, rgba(1,9,18,.88) 0%, rgba(1,9,18,.76) 42%, rgba(1,9,18,.30) 100%), linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.72) 16%, transparent 54%); }
-        }
-        @media (min-width: 900px) {
-          [data-testid="pricing-page"] .premium-plan-card:hover { transform: translateY(-3px); }
-          .premium-poster-stage { right: -6%; width: min(88vw, 1420px); }
-          .premium-poster-vignette {
-            background:
-              linear-gradient(90deg, rgba(1,9,18,.82) 0%, rgba(1,9,18,.72) 18%, rgba(1,9,18,.50) 35%, rgba(1,9,18,.16) 59%, rgba(1,9,18,.02) 80%),
-              linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.76) 11%, rgba(3,12,22,.08) 36%, transparent 58%);
-          }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .premium-poster-track { animation-play-state: paused !important; }
-        }
+        .premium-elevator-media { background: radial-gradient(circle at 16% 46%, rgba(229,9,20,.14), transparent 34%), radial-gradient(circle at 78% 42%, rgba(40,72,105,.28), transparent 44%), #010912; }
+        .premium-poster-stage { position: absolute; z-index: 1; top: -24%; right: -5%; width: min(72vw, 1180px); height: 155%; overflow: hidden; opacity: .98; -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 9%, #000 91%, transparent 100%); mask-image: linear-gradient(180deg, transparent 0%, #000 9%, #000 91%, transparent 100%); }
+        .premium-poster-tilt { width: 100%; height: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(10px, 1vw, 18px); transform: rotate(-10.5deg) translate3d(4%, -1%, 0); transform-origin: 56% 50%; }
+        .premium-poster-column { min-width: 0; height: 122%; overflow: hidden; border-radius: 14px; will-change: transform; }
+        .premium-poster-column-1 { transform: translateY(6%); opacity: .64; } .premium-poster-column-2 { transform: translateY(-2%) scale(1.035); opacity: .94; z-index: 2; } .premium-poster-column-3 { transform: translateY(9%) scale(1.075); opacity: 1; z-index: 3; } .premium-poster-column-4 { transform: translateY(-5%); opacity: .72; }
+        .premium-poster-track { display: flex; flex-direction: column; animation: premium-elevator-up var(--premium-duration) linear infinite; animation-delay: var(--premium-delay); will-change: transform; }
+        .premium-poster-sequence { display: flex; flex-direction: column; gap: clamp(10px, .9vw, 16px); padding-bottom: clamp(10px, .9vw, 16px); }
+        .premium-poster-card { position: relative; width: 100%; aspect-ratio: 2 / 3; overflow: hidden; border-radius: clamp(9px, .75vw, 14px); background: #091522; border: 1px solid rgba(170,195,215,.22); box-shadow: 0 16px 36px rgba(0,0,0,.42); }
+        .premium-poster-card img { display: block; width: 100%; height: 100%; object-fit: cover; transform: scale(1.015); }
+        .premium-poster-card::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.14)); pointer-events: none; }
+        .premium-poster-vignette { position: absolute; z-index: 2; inset: 0; pointer-events: none; background: linear-gradient(90deg, #010912 0%, rgba(1,9,18,.97) 22%, rgba(1,9,18,.73) 39%, rgba(1,9,18,.17) 61%, rgba(1,9,18,.02) 78%), linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.76) 11%, rgba(3,12,22,.08) 36%, transparent 58%); }
+        .premium-plans-grid { align-items: stretch; } .premium-plan-card { height: 100%; } .premium-plan-card-body { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; } .premium-plan-card-body > button { margin-top: auto !important; }
+        @keyframes premium-elevator-up { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(0, -50%, 0); } }
+        @media (max-width: 899px) { .premium-duration-tabs { width: min(94vw, 620px); justify-content: flex-start; } .premium-plans-grid { grid-template-columns: 1fr !important; } .premium-payment-grid { grid-template-columns: 1fr !important; } .premium-heading-row { align-items: flex-start !important; flex-direction: column; } .premium-how-grid { grid-template-columns: 1fr !important; } [data-testid="pricing-page"] .dp-hero__content { width: min(88vw, 680px); left: 6vw; bottom: 54px; } [data-testid="pricing-page"] .dp-hero__title { max-width: 88vw !important; font-size: clamp(38px, 12vw, 64px); } .premium-poster-stage { top: -15%; right: -32%; width: 115vw; height: 145%; opacity: .52; } .premium-poster-tilt { grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; transform: rotate(-11deg) translate3d(0,0,0); } .premium-poster-column-4 { display: none; } .premium-poster-vignette { background: linear-gradient(90deg, rgba(1,9,18,.88) 0%, rgba(1,9,18,.76) 42%, rgba(1,9,18,.30) 100%), linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.72) 16%, transparent 54%); } }
+        @media (min-width: 900px) { [data-testid="pricing-page"] .premium-plan-card:hover { transform: translateY(-3px); } .premium-poster-stage { right: -6%; width: min(88vw, 1420px); } .premium-poster-vignette { background: linear-gradient(90deg, rgba(1,9,18,.82) 0%, rgba(1,9,18,.72) 18%, rgba(1,9,18,.50) 35%, rgba(1,9,18,.16) 59%, rgba(1,9,18,.02) 80%), linear-gradient(0deg, #030c16 0%, rgba(3,12,22,.76) 11%, rgba(3,12,22,.08) 36%, transparent 58%); } }
+        @media (prefers-reduced-motion: reduce) { .premium-poster-track { animation-play-state: paused !important; } }
       `}</style>
     </Box>
   );
