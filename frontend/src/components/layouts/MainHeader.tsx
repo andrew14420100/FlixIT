@@ -23,7 +23,7 @@ import { useNotifications } from "src/hooks/useNotifications";
 import { avatarSrc } from "src/config/avatars";
 
 const API_URL = "";
-const MENU_CACHE_KEY = "flixit_public_menu_v3_film_series";
+const MENU_CACHE_KEY = "flixit_public_menu_v4_premium";
 const MENU_CACHE_MS = 30 * 60 * 1000;
 const ME_MEMO_MS = 60 * 1000;
 
@@ -31,29 +31,52 @@ const NAV_ITEMS = [
   { id: "home", name: "Home", path: "/browse" },
   { id: "film", name: "Film", path: "/film" },
   { id: "serie", name: "Serie TV", path: "/serie-tv" },
-  { id: "prime-visioni", name: "Prime Visioni", path: "/p/prime-visioni" },
-  { id: "cinema-d-autore", name: "Cinema d'Autore", path: "/p/cinema-d-autore" },
+  { id: "premium", name: "Premium", path: "/premium" },
   { id: "catalogo", name: "Catalogo", path: "/archivio" },
 ];
 const isPremiumPath = (p) => (p || "").startsWith("/p/");
 
 function normalizeMenuItems(items) {
-  return (Array.isArray(items) ? items : []).map((item) => {
-    const id = String(item?.id || "").toLowerCase();
-    const name = String(item?.name || item?.label || "").trim().toLowerCase();
-    const path = String(item?.path || item?.link || "").trim().toLowerCase();
-    if (id === "cinema" || name === "cinema" || path === "/cinema") {
-      return { ...item, id: "film", name: "Film", label: "Film", path: "/film", link: "/film" };
-    }
-    if (
-      id === "serie" || id === "serie-tv" ||
-      name === "serie" || name === "serie tv" ||
-      path === "/serie" || path === "/serie-tv"
-    ) {
-      return { ...item, id: "serie", name: "Serie TV", label: "Serie TV", path: "/serie-tv", link: "/serie-tv" };
-    }
-    return item;
-  });
+  const normalized = (Array.isArray(items) ? items : [])
+    .map((item) => {
+      const id = String(item?.id || "").toLowerCase();
+      const name = String(item?.name || item?.label || "").trim().toLowerCase();
+      const path = String(item?.path || item?.link || "").trim().toLowerCase();
+
+      if (
+        id === "prime-visioni" || id === "cinema-d-autore" ||
+        name === "prime visioni" || name === "cinema d'autore" ||
+        path === "/p/prime-visioni" || path === "/p/cinema-d-autore"
+      ) {
+        return null;
+      }
+
+      if (id === "cinema" || name === "cinema" || path === "/cinema") {
+        return { ...item, id: "film", name: "Film", label: "Film", path: "/film", link: "/film" };
+      }
+      if (
+        id === "serie" || id === "serie-tv" ||
+        name === "serie" || name === "serie tv" ||
+        path === "/serie" || path === "/serie-tv"
+      ) {
+        return { ...item, id: "serie", name: "Serie TV", label: "Serie TV", path: "/serie-tv", link: "/serie-tv" };
+      }
+      if (id === "premium" || name === "premium" || path === "/premium") {
+        return { ...item, id: "premium", name: "Premium", label: "Premium", path: "/premium", link: "/premium" };
+      }
+      return item;
+    })
+    .filter(Boolean);
+
+  const hasPremium = normalized.some((item) => String(item?.path || item?.link || "").toLowerCase() === "/premium");
+  if (!hasPremium) {
+    const catalogIndex = normalized.findIndex((item) => String(item?.id || "").toLowerCase() === "catalogo");
+    const premiumItem = { id: "premium", name: "Premium", label: "Premium", path: "/premium", link: "/premium", active: true, visible: true };
+    if (catalogIndex >= 0) normalized.splice(catalogIndex, 0, premiumItem);
+    else normalized.push(premiumItem);
+  }
+
+  return normalized;
 }
 
 let menuMemo: { at: number; promise: Promise<any> } | null = null;
