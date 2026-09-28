@@ -15,6 +15,10 @@ function isHomeRoute(pathname = "") {
   return (
     path === "/" ||
     path === `/${MAIN_PATH.browse}` ||
+    path === "/film" ||
+    path === "/cinema" ||
+    path === "/serie-tv" ||
+    path === "/serie" ||
     path === `/${MAIN_PATH.browse}/genre/movie` ||
     path === `/${MAIN_PATH.browse}/genre/tv` ||
     path === `/${MAIN_PATH.browse}/latest` ||
@@ -22,9 +26,6 @@ function isHomeRoute(pathname = "") {
   );
 }
 
-// Start downloading the Home route chunk as soon as the router module executes
-// instead of waiting for React Router's lazy match. It remains a separate chunk,
-// so parsing the main shell does not get heavier.
 const initialHomeChunk =
   typeof window !== "undefined" && isHomeRoute(window.location.pathname)
     ? import("src/pages/HomePage")
@@ -58,7 +59,7 @@ const router = createBrowserRouter([
       { path: "serie-tv", lazy: () => import("src/pages/SeriePage") },
       { path: "archivio", lazy: () => import("src/pages/ArchivePage") },
       { path: "cinema", lazy: () => import("src/pages/CinemaHubPage") },
-      { path: "serie", lazy: () => import("src/pages/SerieHubPage") },
+      { path: "serie", lazy: () => import("src/pages/SeriePage") },
       { path: "p/:slug", lazy: () => import("src/pages/PremiumPage") },
       { path: "premium", lazy: () => import("src/pages/PricingPage") },
       { path: "premium/success", lazy: () => import("src/pages/PaymentResultPage") },
@@ -111,9 +112,6 @@ function canWarmLikelyNextRoutes() {
   return effectiveType !== "slow-2g" && effectiveType !== "2g";
 }
 
-// Warm Detail and Watch only after the initial document has fully loaded. On
-// constrained or data-saver connections the browser should spend bandwidth on
-// Hero/card images and API data instead of speculative JavaScript chunks.
 if (typeof window !== "undefined" && isHomeRoute(window.location.pathname)) {
   const warmLikelyNextRoutes = () => {
     if (!canWarmLikelyNextRoutes() || document.visibilityState === "hidden") return;
