@@ -38,5 +38,5 @@ export function AdminLoginShell() {
 
 export {
   DashboardPage, ContentsPage, HeroPage, SectionsPage, MenuPage, LogsPage, SettingsPage, ArtworkPage, TrailersPage,
-  UsersPage, TicketsPage, PlansPage, PremiumPagesPage, ComingSoonAdminPage, PaymentsPage,
+  UsersPage, TicketsPage, PlansPage, AdsPage, PremiumPagesPage, ComingSoonAdminPage, PaymentsPage,
 } from "src/admin";
