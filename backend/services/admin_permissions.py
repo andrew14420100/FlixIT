@@ -94,7 +94,6 @@ def _user_target_id(path: str) -> Optional[str]:
     if not tail:
         return None
     first = tail.split("/", 1)[0]
-    # Collection helpers are not user ids.
     if first in ("manual-create",):
         return None
     return first or None
@@ -124,8 +123,6 @@ def _required_permission(path: str, method: str):
             return "users_edit"
         if method == "DELETE":
             return "users_delete"
-        # The legacy generic PATCH endpoint can change roles. Role management is
-        # deliberately never delegable: only Superadmin may use it.
         if method in ("PATCH", "PUT"):
             return "__superadmin__"
         return "users_edit"
@@ -147,6 +144,8 @@ def _required_permission(path: str, method: str):
             return "ads_create"
         return "ads_edit"
 
+    if path == "/api/admin/cleanup":
+        return "catalog_edit"
     if path.startswith((
         "/api/admin/contents",
         "/api/admin/import-from-tmdb",
@@ -197,8 +196,6 @@ def register_admin_permissions(app, db, get_current_admin, log_admin_action):
         if user.get("role") == "superadmin":
             return await call_next(request)
 
-        # Even when a Superadmin delegates a user-management permission, a
-        # normal Admin can never operate on a Superadmin account.
         target_id = _user_target_id(path)
         if target_id:
             target = users.find_one({"id": target_id}, {"_id": 0, "role": 1})
