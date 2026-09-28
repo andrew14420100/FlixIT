@@ -3,9 +3,11 @@
 // Installed before the public catalogue renders. Some valid StreamingCommunity
 // title logos were being discarded client-side when the provider title was a
 // parent/variant of the catalogue title. If SC actually returned a logo, keep
-// that asset eligible and let the normal artwork pipeline/proxy render it.
+// that asset eligible and force remote SC CDN logos through the local artwork
+// proxy so browser CORS/CDN quirks cannot make an existing logo disappear.
 
 const FLAG = "__flixitScLogoRecoveryV1";
+const ARTWORK_PROXY = "/api/public/artwork-proxy";
 
 function isScLogoEntry(value: any) {
   const source = String(value?.logo_source || "").trim().toLowerCase();
@@ -18,16 +20,24 @@ function isScLogoEntry(value: any) {
   );
 }
 
+function proxiedScUrl(value: any) {
+  const url = String(value || "").trim();
+  if (!url) return url;
+  if (url.startsWith(`${ARTWORK_PROXY}?`) || url.startsWith("/")) return url;
+  if (!/^https?:\/\//i.test(url)) return url;
+  if (!/streamingcommunity|streamingunity/i.test(url)) return url;
+  return `${ARTWORK_PROXY}?url=${encodeURIComponent(url)}`;
+}
+
 function normalizeEntry(value: any) {
   if (!value || typeof value !== "object" || !isScLogoEntry(value)) return value;
   return {
     ...value,
-    // A returned SC logo is a usable positive artwork result. Keeping active=true
-    // prevents a valid logo from being dropped by the batch merge path.
     active: true,
+    logo_url: proxiedScUrl(value.logo_url),
     logo_source: value.logo_source || "streamingcommunity",
     // The old generic-parent guard uses this field to null the logo. The backend
-    // has already resolved the asset, so do not re-reject it in the browser.
+    // has already resolved the SC asset, so do not reject it a second time.
     sc_provider_name: null,
     logo_identity_rejected: false,
   };
