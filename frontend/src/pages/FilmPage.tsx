@@ -18,7 +18,7 @@ export function Component() {
 
   return (
     <Routes location={filmLocation}>
-      <Route path=":mediaType" element={<HomePage />} />
+      <Route path=':mediaType' element={<HomePage />} />
     </Routes>
   );
 }
