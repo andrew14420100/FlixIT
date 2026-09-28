@@ -57,9 +57,13 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
   const src = candidates[candidateIndex] || null;
   if (!src || !embeddedTitleTreatment) return null;
 
-  const removeFromContinueWatching = (event: any) => {
+  const stopCardInteraction = (event: any) => {
     event.preventDefault?.();
     event.stopPropagation?.();
+  };
+
+  const removeFromContinueWatching = (event: any) => {
+    stopCardInteraction(event);
     watch?.onRemove?.();
   };
 
@@ -115,13 +119,45 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
           className="netflix-standard-card-remove"
           aria-label={`Rimuovi ${title || "contenuto"} da Continua a guardare`}
           title="Rimuovi da Continua a guardare"
+          data-testid={`continue-watching-remove-${videoSafeId(title)}`}
+          onMouseDown={stopCardInteraction}
+          onTouchStart={(event) => event.stopPropagation?.()}
           onClick={removeFromContinueWatching}
+          style={{
+            position: "absolute",
+            top: 7,
+            right: 7,
+            zIndex: 12,
+            width: 30,
+            height: 30,
+            padding: 0,
+            margin: 0,
+            borderRadius: "50%",
+            border: "1px solid rgba(255,255,255,.72)",
+            background: "rgba(8,8,8,.82)",
+            color: "#fff",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            boxShadow: "0 2px 10px rgba(0,0,0,.38)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+          }}
         >
-          <CloseRoundedIcon className="netflix-standard-card-remove-icon" aria-hidden="true" />
+          <CloseRoundedIcon
+            className="netflix-standard-card-remove-icon"
+            aria-hidden="true"
+            sx={{ fontSize: 20, pointerEvents: "none" }}
+          />
         </button>
       ) : null}
     </div>
   );
 });
+
+function videoSafeId(value: any) {
+  return String(value || "contenuto").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "contenuto";
+}
 
 export default NetflixStandardCard;
