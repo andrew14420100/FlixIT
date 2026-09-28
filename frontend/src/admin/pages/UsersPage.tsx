@@ -186,7 +186,7 @@ function AdminPermissionsDialog({ target, open, onClose, onDone }) {
     <Dialog open={open} onClose={() => !busy && onClose()} maxWidth="md" fullWidth PaperProps={dialogPaper}>
       <DialogTitle sx={{ color: '#fff', fontWeight: 800 }}>Permessi Admin · {target?.email}</DialogTitle>
       <DialogContent>
-        <Alert severity="info" sx={{ mb: 2, bgcolor: 'rgba(96,165,250,.08)', color: '#bfdbfe' }}>Il Superadmin ha sempre accesso completo. Questi interruttori modificano solo questo Admin.</Alert>
+        <Alert severity="info" sx={{ mb: 2, bgcolor: 'rgba(96,165,250,.08)', color: '#bfdbfe' }}>Il Superadmin ha sempre accesso completo. Questi interruttori modificano solo questo Admin. I ruoli restano sempre riservati al Superadmin.</Alert>
         {loading ? <Box sx={{ py: 5, textAlign: 'center' }}><CircularProgress sx={{ color: '#e50914' }} /></Box> : groups.map((group) => (
           <Box key={group.id} sx={{ mb: 2.2 }}>
             <Typography sx={{ color: '#fff', fontWeight: 750, mb: 1 }}>{group.label}</Typography>
@@ -232,6 +232,7 @@ const UsersPage: React.FC = () => {
 
   const notify = (message, severity = 'success') => setSnack({ severity, message });
   const patch = async (u, body, okMsg) => { try { await api(`/api/admin/users/${u.id}`, { method: 'PATCH', body: JSON.stringify(body) }); notify(okMsg); load(); } catch (e: any) { notify(e.message, 'error'); } };
+  const setStatus = async (u, banned, reason = '', okMsg = 'Stato utente aggiornato') => { try { await api(`/api/admin/users/${u.id}/status`, { method: 'PATCH', body: JSON.stringify({ banned: Boolean(banned), ban_reason: reason || '' }) }); notify(okMsg); load(); } catch (e: any) { notify(e.message, 'error'); } };
   const forceReset = (u) => { if (window.confirm(`Forzare il reset password di ${u.email}? Al prossimo accesso vedrà un popup bloccante.`)) api(`/api/admin/users/${u.id}/force-reset`, { method: 'POST' }).then(() => { notify('Reset password forzato'); load(); }).catch((e) => notify(e.message, 'error')); };
   const remove = (u) => { if (window.confirm(`Eliminare definitivamente ${u.email}?`)) api(`/api/admin/users/${u.id}`, { method: 'DELETE' }).then(() => { notify('Utente eliminato'); load(); }).catch((e) => notify(e.message, 'error')); };
   const manageable = (u) => u.id !== me?.id && (isSuper || u.role !== 'superadmin');
@@ -269,7 +270,7 @@ const UsersPage: React.FC = () => {
                 {data.items.map((u) => (
                   <tr key={u.id}>
                     <td><Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}><Avatar variant="rounded" src={avatarSrc(u.profileImage)} sx={{ width: 36, height: 36, borderRadius: 1.5 }} /><Box><Typography sx={{ fontWeight: 600, fontSize: 14 }}>{u.name || '—'}</Typography><Typography sx={{ color: 'grey.500', fontSize: 12.5 }}>{u.email}</Typography></Box></Box></td>
-                    <td>{manageable(u) && can('users_edit') ? <TextField select size="small" value={u.role} onChange={(e) => patch(u, { role: e.target.value }, 'Ruolo aggiornato')} sx={{ ...fieldSx, minWidth: 135, '& .MuiSelect-select': { py: .6, fontSize: 13 } }}><MenuItem value="user">Utente</MenuItem><MenuItem value="admin">Admin</MenuItem>{isSuper && <MenuItem value="superadmin">Superadmin</MenuItem>}</TextField> : <Chip size="small" label={ROLE_LABEL[u.role] || u.role} sx={{ bgcolor: ROLE_COLOR[u.role], color: '#fff' }} />}</td>
+                    <td>{manageable(u) && isSuper ? <TextField select size="small" value={u.role} onChange={(e) => patch(u, { role: e.target.value }, 'Ruolo aggiornato')} sx={{ ...fieldSx, minWidth: 135, '& .MuiSelect-select': { py: .6, fontSize: 13 } }}><MenuItem value="user">Utente</MenuItem><MenuItem value="admin">Admin</MenuItem><MenuItem value="superadmin">Superadmin</MenuItem></TextField> : <Tooltip title={!isSuper ? 'Solo Superadmin' : ''}><Chip size="small" label={ROLE_LABEL[u.role] || u.role} sx={{ bgcolor: ROLE_COLOR[u.role], color: '#fff' }} /></Tooltip>}</td>
                     <td><Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>{u.role === 'superadmin' ? <Chip size="small" label="Illimitato" sx={{ bgcolor: 'rgba(229,9,20,.2)', color: '#ff8a90' }} /> : u.is_premium ? <Chip size="small" label={u.premium?.plan_name || (u.premium?.lifetime ? 'A vita' : `Premium · ${fmtDay(u.premium?.expiresAt)}`)} sx={{ bgcolor: 'rgba(74,222,128,.12)', color: '#4ade80' }} /> : <Chip size="small" label="Gratuito" sx={{ bgcolor: 'rgba(255,255,255,.06)', color: 'grey.400' }} />}{u.role !== 'superadmin' && <LockedHint allowed={can('users_assign_plan')}><IconButton size="small" onClick={() => setPremiumTarget(u)} sx={{ color: '#ff5a63' }}><WorkspacePremiumIcon fontSize="small" /></IconButton></LockedHint>}</Box></td>
                     <td><Box sx={{ display: 'flex', gap: .5, flexWrap: 'wrap' }}>{u.banned ? <Chip size="small" label="Sospeso" sx={{ bgcolor: 'rgba(229,9,20,.25)', color: '#ff8a90' }} /> : <Chip size="small" label="Attivo" sx={{ bgcolor: 'rgba(255,255,255,.06)', color: '#ddd' }} />}{u.must_reset_password && <Chip size="small" label={u.created_by_admin ? 'Password da creare' : 'Reset pwd'} sx={{ bgcolor: 'rgba(96,165,250,.15)', color: '#93c5fd' }} />}</Box></td>
                     <td><Typography sx={{ fontSize: 12.5, color: 'grey.400' }}>{fmt(u.last_seen_at || u.last_login_at)}</Typography><Typography sx={{ fontSize: 11.5, color: 'grey.600' }}>Iscritto {fmtDay(u.createdAt)}</Typography></td>
@@ -278,7 +279,7 @@ const UsersPage: React.FC = () => {
                       {isSuper && u.role === 'admin' && <Tooltip title="Permessi Admin"><IconButton size="small" onClick={() => setPermissionsTarget(u)} sx={{ color: '#a78bfa' }}><AdminPanelSettingsRoundedIcon fontSize="small" /></IconButton></Tooltip>}
                       {manageable(u) && <>
                         <LockedHint allowed={can('users_reset_password')}><IconButton size="small" onClick={() => forceReset(u)} sx={{ color: '#60a5fa' }}><LockResetIcon fontSize="small" /></IconButton></LockedHint>
-                        <LockedHint allowed={can('users_edit')}><IconButton size="small" onClick={() => (u.banned ? patch(u, { banned: false }, 'Utente riattivato') : (setBanTarget(u), setBanReason('')))} sx={{ color: u.banned ? '#4ade80' : '#fbbf24' }}>{u.banned ? <CheckCircleIcon fontSize="small" /> : <BlockIcon fontSize="small" />}</IconButton></LockedHint>
+                        <LockedHint allowed={can('users_edit')}><IconButton size="small" onClick={() => (u.banned ? setStatus(u, false, '', 'Utente riattivato') : (setBanTarget(u), setBanReason('')))} sx={{ color: u.banned ? '#4ade80' : '#fbbf24' }}>{u.banned ? <CheckCircleIcon fontSize="small" /> : <BlockIcon fontSize="small" />}</IconButton></LockedHint>
                         <LockedHint allowed={can('users_delete')}><IconButton size="small" onClick={() => remove(u)} sx={{ color: '#ff5a63' }}><DeleteOutlineIcon fontSize="small" /></IconButton></LockedHint>
                       </>}
                     </Box></td>
@@ -295,7 +296,7 @@ const UsersPage: React.FC = () => {
       <Dialog open={Boolean(banTarget)} onClose={() => setBanTarget(null)} PaperProps={dialogPaper}>
         <DialogTitle sx={{ color: '#fff', fontWeight: 700 }}>Sospendi {banTarget?.email}</DialogTitle>
         <DialogContent><TextField fullWidth multiline minRows={2} label="Motivo (mostrato all'utente)" value={banReason} onChange={(e) => setBanReason(e.target.value)} sx={fieldSx} /></DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}><Button onClick={() => setBanTarget(null)} sx={{ color: 'grey.400', textTransform: 'none' }}>Annulla</Button><Button variant="contained" onClick={() => { patch(banTarget, { banned: true, ban_reason: banReason }, 'Utente sospeso'); setBanTarget(null); }} sx={redBtn}>Sospendi</Button></DialogActions>
+        <DialogActions sx={{ px: 3, pb: 2 }}><Button onClick={() => setBanTarget(null)} sx={{ color: 'grey.400', textTransform: 'none' }}>Annulla</Button><Button variant="contained" onClick={() => { setStatus(banTarget, true, banReason, 'Utente sospeso'); setBanTarget(null); }} sx={redBtn}>Sospendi</Button></DialogActions>
       </Dialog>
       {premiumTarget && <PremiumDialog user={premiumTarget} plans={plans} onClose={() => setPremiumTarget(null)} onDone={(m) => { setPremiumTarget(null); notify(m); load(); }} />}
       {paymentsTarget && <PaymentsDialog user={paymentsTarget} canRefund={can('refunds_manage')} onClose={() => setPaymentsTarget(null)} onRefunded={() => { notify('Rimborso eseguito'); load(); }} />}
