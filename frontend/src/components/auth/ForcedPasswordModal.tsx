@@ -23,6 +23,7 @@ export default function ForcedPasswordModal({ onDone }) {
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const firstAccess = sessionStorage.getItem("flixit_first_access") === "1";
   const valid = RULES.every(([, ok]) => ok(pwd)) && pwd === confirm;
 
   const submit = async (e) => {
@@ -35,6 +36,13 @@ export default function ForcedPasswordModal({ onDone }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Impossibile aggiornare la password");
       localStorage.setItem("user_token", data.token);
+      if (firstAccess) {
+        try {
+          await fetch(`${API_URL}/api/auth/first-access-complete`, { method: "POST", headers: authHeaders() });
+        } catch {}
+        sessionStorage.removeItem("flixit_first_access");
+      }
+      window.dispatchEvent(new Event("flixit-auth-changed"));
       onDone?.();
     } catch (err) {
       setError(err.message);
@@ -50,8 +58,8 @@ export default function ForcedPasswordModal({ onDone }) {
         <Box sx={{ width: 56, height: 56, borderRadius: "16px", display: "grid", placeItems: "center", bgcolor: "rgba(229,9,20,0.15)", mb: 2.5 }}>
           <LockResetIcon sx={{ fontSize: 30, color: "#ff5a63" }} />
         </Box>
-        <Typography data-testid="forced-password-title" sx={{ fontFamily: "'Unbounded', sans-serif", fontWeight: 700, fontSize: { xs: 20, sm: 24 }, color: "#fff", lineHeight: 1.15 }}>Reimposta la password</Typography>
-        <Typography sx={{ color: "#A3A3A3", fontSize: 14, mt: 1, mb: 3 }}>L'amministratore ha richiesto il cambio della tua password. Per continuare a usare FlixIT devi sceglierne una nuova adesso.</Typography>
+        <Typography data-testid="forced-password-title" sx={{ fontFamily: "'Unbounded', sans-serif", fontWeight: 700, fontSize: { xs: 20, sm: 24 }, color: "#fff", lineHeight: 1.15 }}>{firstAccess ? "Crea la tua password" : "Reimposta la password"}</Typography>
+        <Typography sx={{ color: "#A3A3A3", fontSize: 14, mt: 1, mb: 3 }}>{firstAccess ? "Il tuo account FlixIT è stato creato dall'amministratore. Per continuare devi scegliere adesso la tua password personale." : "L'amministratore ha richiesto il cambio della tua password. Per continuare a usare FlixIT devi sceglierne una nuova adesso."}</Typography>
 
         {error && <Box data-testid="forced-password-error" role="alert" sx={{ mb: 2, px: 2, py: 1.3, borderRadius: "10px", fontSize: 14, color: "#ff6b72", bgcolor: "rgba(229,9,20,0.15)", border: "1px solid rgba(229,9,20,0.4)" }}>{error}</Box>}
 
@@ -74,7 +82,7 @@ export default function ForcedPasswordModal({ onDone }) {
         <Box component="button" type="submit" disabled={!valid || saving} data-testid="forced-password-submit"
           sx={{ width: "100%", height: 50, borderRadius: "12px", border: "none", cursor: valid && !saving ? "pointer" : "not-allowed", color: "#fff", bgcolor: valid ? "#E50914" : "rgba(229,9,20,0.4)",
             fontFamily: "'Unbounded', sans-serif", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", transition: "background-color 200ms ease", "&:hover": { bgcolor: valid ? "#F6121D" : undefined } }}>
-          {saving ? <CircularProgress size={22} sx={{ color: "#fff" }} /> : "Salva la nuova password"}
+          {saving ? <CircularProgress size={22} sx={{ color: "#fff" }} /> : firstAccess ? "Crea password e continua" : "Salva la nuova password"}
         </Box>
       </Box>
     </Box>
