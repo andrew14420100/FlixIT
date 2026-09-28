@@ -5,7 +5,7 @@ still have that monthly value stored directly in ``price_cents``; the migration
 converts those old records to the one-off checkout total and stores the original
 monthly rate as metadata.
 
-Advertising and manual-user services are attached by wrapping
+Advertising, manual-user and admin-permission services are attached by wrapping
 ``premium.register`` before server_core imports it. The existing services
 package may wrap the same function afterwards for trailers/artwork; the wrappers
 compose cleanly.
@@ -76,6 +76,12 @@ def _install_ads_registration_hook():
         except Exception as exc:
             # Manual account management is additive and must not block boot.
             print(f"[manual-users] registration skipped: {exc}")
+        try:
+            from services.admin_permissions import register_admin_permissions
+            register_admin_permissions(app, db, get_current_admin, log_admin_action)
+        except Exception as exc:
+            # Permission hardening is additive; never prevent the API booting.
+            print(f"[admin-permissions] registration skipped: {exc}")
         return result
 
     register_with_ads._flixit_ads_hook = True
