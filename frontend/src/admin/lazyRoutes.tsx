@@ -3,6 +3,7 @@
 import { ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import { AuthProvider, ProtectedRoute, AdminLayout, LoginPage } from "src/admin";
+import AdminReadOnlyGuard from "src/admin/components/AdminReadOnlyGuard";
 import adminTheme from "src/admin/adminTheme";
 
 function AdminTheme({ children }) {
@@ -36,6 +37,7 @@ export function AdminLoginShell() {
   );
 }
 
+export { AdminReadOnlyGuard };
 export {
   DashboardPage, ContentsPage, HeroPage, SectionsPage, MenuPage, LogsPage, SettingsPage, ArtworkPage, TrailersPage,
   UsersPage, TicketsPage, PlansPage, AdsPage, PremiumPagesPage, ComingSoonAdminPage, PaymentsPage,
