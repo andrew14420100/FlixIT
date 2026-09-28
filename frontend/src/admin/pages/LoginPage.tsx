@@ -28,7 +28,7 @@ const LoginPage: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/admin/dashboard');
+      navigate('/browse', { replace: true });
     }
   }, [isAuthenticated, navigate]);
 
@@ -39,7 +39,7 @@ const LoginPage: React.FC = () => {
 
     try {
       await login(email, password);
-      navigate('/admin/dashboard');
+      navigate('/browse', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Credenziali non valide');
     } finally {
@@ -55,8 +55,7 @@ const LoginPage: React.FC = () => {
         alignItems: 'center',
         justifyContent: 'center',
         bgcolor: '#0a0a0a',
-        backgroundImage:
-          'radial-gradient(ellipse at top, rgba(229, 9, 20, 0.1) 0%, transparent 50%)',
+        backgroundImage: 'radial-gradient(ellipse at top, rgba(229, 9, 20, 0.1) 0%, transparent 50%)',
         p: 2,
       }}
       data-testid="admin-login-page"
@@ -74,32 +73,12 @@ const LoginPage: React.FC = () => {
         }}
       >
         <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Typography
-            variant="h4"
-            sx={{
-              fontWeight: 800,
-              color: '#e50914',
-              letterSpacing: '3px',
-              mb: 1,
-            }}
-          >
-            ADMIN
-          </Typography>
-          <Typography variant="body2" sx={{ color: 'grey.500' }}>
-            Accedi alla dashboard di amministrazione
-          </Typography>
+          <Typography variant="h4" sx={{ fontWeight: 800, color: '#e50914', letterSpacing: '3px', mb: 1 }}>ADMIN</Typography>
+          <Typography variant="body2" sx={{ color: 'grey.500' }}>Accesso amministrativo</Typography>
         </Box>
 
         {error && (
-          <Alert
-            severity="error"
-            sx={{
-              mb: 3,
-              bgcolor: 'rgba(211, 47, 47, 0.1)',
-              border: '1px solid rgba(211, 47, 47, 0.3)',
-            }}
-            data-testid="login-error"
-          >
+          <Alert severity="error" sx={{ mb: 3, bgcolor: 'rgba(211, 47, 47, 0.1)', border: '1px solid rgba(211, 47, 47, 0.3)' }} data-testid="login-error">
             {error}
           </Alert>
         )}
@@ -115,19 +94,8 @@ const LoginPage: React.FC = () => {
             autoComplete="email"
             autoFocus
             inputProps={{ 'data-testid': 'login-email-input' }}
-            sx={{
-              mb: 3,
-              '& .MuiOutlinedInput-root': {
-                bgcolor: 'rgba(255,255,255,0.03)',
-              },
-            }}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <EmailIcon sx={{ color: 'grey.600' }} />
-                </InputAdornment>
-              ),
-            }}
+            sx={{ mb: 3, '& .MuiOutlinedInput-root': { bgcolor: 'rgba(255,255,255,0.03)' } }}
+            InputProps={{ startAdornment: <InputAdornment position="start"><EmailIcon sx={{ color: 'grey.600' }} /></InputAdornment> }}
           />
 
           <TextField
@@ -139,31 +107,13 @@ const LoginPage: React.FC = () => {
             required
             autoComplete="current-password"
             inputProps={{ 'data-testid': 'login-password-input' }}
-            sx={{
-              mb: 4,
-              '& .MuiOutlinedInput-root': {
-                bgcolor: 'rgba(255,255,255,0.03)',
-              },
-            }}
+            sx={{ mb: 4, '& .MuiOutlinedInput-root': { bgcolor: 'rgba(255,255,255,0.03)' } }}
             InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <LockIcon sx={{ color: 'grey.600' }} />
-                </InputAdornment>
-              ),
+              startAdornment: <InputAdornment position="start"><LockIcon sx={{ color: 'grey.600' }} /></InputAdornment>,
               endAdornment: (
                 <InputAdornment position="end">
-                  <IconButton
-                    onClick={() => setShowPassword(!showPassword)}
-                    edge="end"
-                    size="small"
-                    data-testid="toggle-password-visibility"
-                  >
-                    {showPassword ? (
-                      <VisibilityOffIcon sx={{ color: 'grey.500' }} />
-                    ) : (
-                      <VisibilityIcon sx={{ color: 'grey.500' }} />
-                    )}
+                  <IconButton onClick={() => setShowPassword(!showPassword)} edge="end" size="small" data-testid="toggle-password-visibility">
+                    {showPassword ? <VisibilityOffIcon sx={{ color: 'grey.500' }} /> : <VisibilityIcon sx={{ color: 'grey.500' }} />}
                   </IconButton>
                 </InputAdornment>
               ),
@@ -176,38 +126,11 @@ const LoginPage: React.FC = () => {
             variant="contained"
             disabled={loading || !email || !password}
             data-testid="login-submit-btn"
-            sx={{
-              py: 1.75,
-              bgcolor: '#e50914',
-              fontSize: 16,
-              fontWeight: 600,
-              textTransform: 'none',
-              borderRadius: 2,
-              '&:hover': {
-                bgcolor: '#b20710',
-              },
-              '&:disabled': {
-                bgcolor: 'rgba(229, 9, 20, 0.4)',
-                color: 'rgba(255,255,255,0.5)',
-              },
-            }}
+            sx={{ py: 1.75, bgcolor: '#e50914', fontSize: 16, fontWeight: 600, textTransform: 'none', borderRadius: 2, '&:hover': { bgcolor: '#b20710' }, '&:disabled': { bgcolor: 'rgba(229, 9, 20, 0.4)', color: 'rgba(255,255,255,0.5)' } }}
           >
             {loading ? <CircularProgress size={26} sx={{ color: '#fff' }} /> : 'Accedi'}
           </Button>
         </Box>
-
-        <Typography
-          variant="caption"
-          sx={{
-            display: 'block',
-            textAlign: 'center',
-            mt: 4,
-            color: 'grey.600',
-            fontSize: 12,
-          }}
-        >
-          Credenziali: admin@admin.com / admin123
-        </Typography>
       </Paper>
     </Box>
   );
