@@ -26,11 +26,39 @@ export function AuthForm({ mode, onSuccess }) {
   const [saving, setSaving] = useState(false);
   const [alert, setAlert] = useState(null);
 
+  const storeSession = (data, firstAccess = false) => {
+    localStorage.setItem("user_token", data.token);
+    if (firstAccess) sessionStorage.setItem("flixit_first_access", "1");
+    window.dispatchEvent(new Event("flixit-auth-changed"));
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setSaving(true);
     setAlert(null);
     try {
+      // Admin-created accounts intentionally have no known password yet. Claim
+      // the pending account by email and let the existing blocking password
+      // modal force creation of the first real password.
+      if (!isRegister) {
+        const firstRes = await fetch(`${API_URL}/api/auth/first-access`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const firstData = await firstRes.json().catch(() => ({}));
+        if (firstRes.status === 403 && firstData.detail?.code === "banned") {
+          throw new Error(`Account sospeso${firstData.detail.reason ? `: ${firstData.detail.reason}` : ""}. Contatta l'assistenza.`);
+        }
+        if (firstRes.ok && firstData?.eligible && firstData?.token) {
+          storeSession(firstData, true);
+          setAlert({ type: "success", text: "Account riconosciuto. Crea ora la tua password." });
+          setTimeout(() => onSuccess?.(firstData), 180);
+          return;
+        }
+        if (!password) throw new Error("Inserisci la password. Se l'account è stato creato dall'amministratore, basta l'email al primo accesso.");
+      }
+
       const res = await fetch(`${API_URL}/api/auth/${isRegister ? "register" : "login"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -39,7 +67,7 @@ export function AuthForm({ mode, onSuccess }) {
       const data = await res.json().catch(() => ({}));
       if (res.status === 403 && data.detail?.code === "banned") throw new Error(`Account sospeso${data.detail.reason ? `: ${data.detail.reason}` : ""}. Contatta l'assistenza.`);
       if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : (isRegister ? "Errore nella registrazione" : "Credenziali non valide"));
-      localStorage.setItem("user_token", data.token);
+      storeSession(data, false);
       setAlert({ type: "success", text: isRegister ? "Account creato, benvenuto!" : "Accesso effettuato" });
       setTimeout(() => onSuccess?.(data), 600);
     } catch (err) {
@@ -66,7 +94,7 @@ export function AuthForm({ mode, onSuccess }) {
       )}
       <Box component="input" type="email" placeholder="Email" value={email} required autoComplete="email" onChange={(e) => setEmail(e.target.value)} sx={inputSx} data-testid="auth-modal-email-input" />
       <Box sx={{ position: "relative" }}>
-        <Box component="input" type={showPassword ? "text" : "password"} placeholder="Password" value={password} required minLength={4}
+        <Box component="input" type={showPassword ? "text" : "password"} placeholder={isRegister ? "Password" : "Password (vuota al primo accesso)"} value={password} required={isRegister} minLength={isRegister ? 4 : undefined}
           autoComplete={isRegister ? "new-password" : "current-password"} onChange={(e) => setPassword(e.target.value)} sx={{ ...inputSx, pr: 6 }} data-testid="auth-modal-password-input" />
         <Box component="button" type="button" onClick={() => setShowPassword((s) => !s)} aria-label="Mostra password" data-testid="auth-modal-password-toggle"
           sx={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer",
@@ -74,6 +102,7 @@ export function AuthForm({ mode, onSuccess }) {
           {showPassword ? <VisibilityOffIcon sx={{ fontSize: 20 }} /> : <VisibilityIcon sx={{ fontSize: 20 }} />}
         </Box>
       </Box>
+      {!isRegister && <Typography sx={{ fontSize: 12, color: "#777", mt: -1 }}>Account creato dall'amministratore? Al primo accesso inserisci l'email e lascia vuota la password.</Typography>}
       <Box component="button" type="submit" disabled={saving} data-testid="auth-modal-submit-button"
         sx={{ mt: 1, height: 50, borderRadius: "12px", border: "none", cursor: saving ? "default" : "pointer", color: "#fff",
           bgcolor: "#E50914", fontFamily: "'Unbounded', sans-serif", fontWeight: 700, fontSize: 14, letterSpacing: "0.04em",
