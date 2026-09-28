@@ -1,11 +1,13 @@
-"""Run the idempotent Premium price normalization whenever the backend Python
-runtime starts from this directory.
+"""FlixIT backend startup hooks.
 
 Premium 3/6/12-month prices are monthly rates in the admin UI. Legacy plans may
 still have that monthly value stored directly in ``price_cents``; the migration
 converts those old records to the one-off checkout total and stores the original
-monthly rate as metadata. Re-running it is safe because migrated plans are
-skipped.
+monthly rate as metadata.
+
+The ads service is attached by wrapping ``premium.register`` before server_core
+imports it. The existing services package may wrap the same function afterwards
+for trailers/artwork; both wrappers compose cleanly.
 """
 
 import os
@@ -20,3 +22,52 @@ if os.environ.get("FLIXIT_SKIP_PREMIUM_PRICE_MIGRATION") != "1":
     except Exception as exc:
         # A maintenance migration must never prevent the API from starting.
         print(f"[premium-price-migration] skipped: {exc}")
+
+
+def _install_ads_registration_hook():
+    try:
+        import premium as premium_module
+    except Exception as exc:
+        print(f"[ads] premium hook unavailable: {exc}")
+        return
+
+    current = getattr(premium_module, "register", None)
+    if not callable(current) or getattr(current, "_flixit_ads_hook", False):
+        return
+
+    original_register = current
+
+    def register_with_ads(
+        app,
+        db,
+        get_current_user,
+        get_current_admin,
+        log_admin_action,
+        fetch_tmdb_data,
+        enrich_items,
+        notify,
+    ):
+        result = original_register(
+            app,
+            db,
+            get_current_user,
+            get_current_admin,
+            log_admin_action,
+            fetch_tmdb_data,
+            enrich_items,
+            notify,
+        )
+        try:
+            from services.ads import register_ad_service
+            register_ad_service(app, db, get_current_admin, log_admin_action)
+        except Exception as exc:
+            # Advertising must never prevent the main streaming API from booting.
+            print(f"[ads] registration skipped: {exc}")
+        return result
+
+    register_with_ads._flixit_ads_hook = True
+    register_with_ads._original_register = original_register
+    premium_module.register = register_with_ads
+
+
+_install_ads_registration_hook()
