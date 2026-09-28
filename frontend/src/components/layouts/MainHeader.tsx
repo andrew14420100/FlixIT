@@ -23,19 +23,31 @@ import { useNotifications } from "src/hooks/useNotifications";
 import { avatarSrc } from "src/config/avatars";
 
 const API_URL = "";
-const MENU_CACHE_KEY = "flixit_public_menu_v1";
+const MENU_CACHE_KEY = "flixit_public_menu_v2_film";
 const MENU_CACHE_MS = 30 * 60 * 1000;
 const ME_MEMO_MS = 60 * 1000;
 
 const NAV_ITEMS = [
   { id: "home", name: "Home", path: "/browse" },
-  { id: "cinema", name: "Cinema", path: "/cinema" },
+  { id: "film", name: "Film", path: "/film" },
   { id: "serie", name: "Serie TV", path: "/serie" },
   { id: "prime-visioni", name: "Prime Visioni", path: "/p/prime-visioni" },
   { id: "cinema-d-autore", name: "Cinema d'Autore", path: "/p/cinema-d-autore" },
   { id: "catalogo", name: "Catalogo", path: "/archivio" },
 ];
 const isPremiumPath = (p) => (p || "").startsWith("/p/");
+
+function normalizeMenuItems(items) {
+  return (Array.isArray(items) ? items : []).map((item) => {
+    const id = String(item?.id || "").toLowerCase();
+    const name = String(item?.name || item?.label || "").trim().toLowerCase();
+    const path = String(item?.path || item?.link || "").trim().toLowerCase();
+    if (id === "cinema" || name === "cinema" || path === "/cinema") {
+      return { ...item, id: "film", name: "Film", label: "Film", path: "/film", link: "/film" };
+    }
+    return item;
+  });
+}
 
 let menuMemo: { at: number; promise: Promise<any> } | null = null;
 let meMemo: { token: string; at: number; promise: Promise<any> } | null = null;
@@ -44,7 +56,7 @@ function readMenuCache() {
   try {
     const cached = JSON.parse(localStorage.getItem(MENU_CACHE_KEY) || "null");
     if (!cached?.savedAt || !Array.isArray(cached?.items) || !cached.items.length) return null;
-    return cached;
+    return { ...cached, items: normalizeMenuItems(cached.items) };
   } catch {
     return null;
   }
@@ -52,7 +64,7 @@ function readMenuCache() {
 
 function persistMenu(items) {
   try {
-    localStorage.setItem(MENU_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), items }));
+    localStorage.setItem(MENU_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), items: normalizeMenuItems(items) }));
   } catch {}
 }
 
@@ -62,8 +74,10 @@ function fetchMenuShared() {
   const promise = fetch(`${API_URL}/api/public/menu`, { headers: { Accept: "application/json" } })
     .then((response) => response.ok ? response.json() : null)
     .then((data) => {
-      if (data?.items?.length) persistMenu(data.items);
-      return data;
+      if (!data) return data;
+      const items = normalizeMenuItems(data?.items);
+      if (items?.length) persistMenu(items);
+      return { ...data, items };
     })
     .catch(() => null);
   menuMemo = { at: now, promise };
@@ -104,9 +118,6 @@ const MainHeader = () => {
       });
     };
 
-    // NAV_ITEMS / local cache are sufficient for the initial header frame. Menu
-    // revalidation is low priority and should not compete with Home bootstrap,
-    // Hero imagery and the first visible cards on a hard refresh.
     const cacheIsFresh = cached?.savedAt && Date.now() - Number(cached.savedAt) < MENU_CACHE_MS;
     if (!cacheIsFresh) {
       if ("requestIdleCallback" in window) {
@@ -138,6 +149,7 @@ const MainHeader = () => {
   const visibleMenuItems = menuItems.filter(i => i.active !== false && i.visible !== false);
   const isActive = (path) => {
     if (path === "/browse") return location.pathname === "/browse" || location.pathname === "/";
+    if (path === "/film") return location.pathname === "/film" || location.pathname === "/cinema";
     return location.pathname.startsWith(path);
   };
   const avatarImage = avatarSrc(isLoggedIn ? userInfo?.profileImage : null);
