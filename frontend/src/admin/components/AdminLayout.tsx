@@ -75,6 +75,7 @@ const menuGroups: Array<{ label: string; items: NavItem[] }> = [
     items: [
       { text: 'Piani Premium', icon: <WorkspacePremiumOutlinedIcon />, path: 'plans' },
       { text: 'Pagine Premium', icon: <AutoAwesomeOutlinedIcon />, path: 'premium-pages' },
+      { text: 'Pubblicità', icon: <OndemandVideoOutlinedIcon />, path: 'ads' },
       { text: 'Pagamenti', icon: <PaymentsOutlinedIcon />, path: 'payments' },
     ],
   },
