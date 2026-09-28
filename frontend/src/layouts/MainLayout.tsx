@@ -1,4 +1,5 @@
 // @ts-nocheck
+import "src/scLogoRecoveryBootstrap";
 import { lazy, Suspense, useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import Box from "@mui/material/Box";
@@ -44,6 +45,8 @@ function isHomeRoute(pathname: string) {
   return (
     path === "/" ||
     path === "/browse" ||
+    path === "/film" ||
+    path === "/cinema" ||
     path === "/browse/genre/movie" ||
     path === "/browse/genre/tv" ||
     path === "/browse/latest" ||
