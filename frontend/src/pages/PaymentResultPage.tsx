@@ -57,7 +57,7 @@ export function Component() {
   const view = {
     checking: { Icon: null, title: "Verifica del pagamento…", text: "Stiamo confermando la transazione con il provider.", color: "#fff" },
     pending: { Icon: HourglassEmptyIcon, title: "Pagamento in elaborazione", text: message, color: "#fbbf24" },
-    paid: { Icon: CheckCircleOutlineIcon, title: "Benvenuto in Premium!", text: `Il piano ${planName || "Premium"} è attivo sul tuo account. Le sezioni esclusive sono sbloccate.`, color: "#4ade80" },
+    paid: { Icon: CheckCircleOutlineIcon, title: "Piano attivato!", text: `Il piano ${planName || "Premium"} è stato attivato immediatamente sul tuo account. Alla scadenza non verrà rinnovato automaticamente.`, color: "#4ade80" },
     failed: { Icon: ErrorOutlineIcon, title: "Pagamento non completato", text: message || "Nessun addebito effettuato. Puoi riprovare quando vuoi.", color: "#ff5a63" },
     cancelled: { Icon: ErrorOutlineIcon, title: "Pagamento annullato", text: "Hai interrotto il checkout: nessun addebito effettuato.", color: "#A3A3A3" },
   }[state];
@@ -73,7 +73,7 @@ export function Component() {
         <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
           {state === "paid" ? (
             <>
-              <Box component="button" type="button" onClick={() => navigate("/p/prime-visioni")} data-testid="payment-go-premium" sx={ctaSx}>Vai a Prime Visioni</Box>
+              <Box component="button" type="button" onClick={() => navigate("/browse")} data-testid="payment-go-home" sx={ctaSx}>Vai alla Home</Box>
               <Box component="button" type="button" onClick={() => navigate("/account")} data-testid="payment-go-account" sx={ghostSx}>Il mio account</Box>
             </>
           ) : state === "checking" ? null : (
