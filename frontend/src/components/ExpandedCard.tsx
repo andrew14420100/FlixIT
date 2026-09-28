@@ -193,6 +193,20 @@ function IconStar({ filled = false }: any) {
   );
 }
 
+function IconClose() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M6 6l12 12M18 6 6 18"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function IconChevron() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -219,7 +233,7 @@ function ScHoverButton({ primary = false, label, onClick, selected = false, chil
   );
 }
 
-export default function ExpandedCard({ item, mediaType, onPlay, onDetail }: any) {
+export default function ExpandedCard({ item, mediaType, onPlay, onDetail, watch }: any) {
   const [inList, setInList] = useState(
     !!firstValue(item?.isInPlaylist, item?.in_playlist, item?.inList, item?.in_list, false)
   );
@@ -321,6 +335,10 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail }: any)
     item?.onRate?.(next ? "like" : null, event);
   };
 
+  const removeFromContinueWatching = (event: any) => {
+    watch?.onRemove?.(event);
+  };
+
   return (
     <>
       <div className="previewModal--player_container has-smaller-buttons mini-modal" data-uia="previewModal--player_container">
@@ -372,6 +390,12 @@ export default function ExpandedCard({ item, mediaType, onPlay, onDetail }: any)
             <ScHoverButton label="Preferito" onClick={toggleFavorite} selected={liked}>
               <IconStar filled={liked} />
             </ScHoverButton>
+
+            {watch?.onRemove ? (
+              <ScHoverButton label="Rimuovi da Continua a guardare" onClick={removeFromContinueWatching}>
+                <IconClose />
+              </ScHoverButton>
+            ) : null}
 
             <div className="sc-hover-controls-spacer" />
 
