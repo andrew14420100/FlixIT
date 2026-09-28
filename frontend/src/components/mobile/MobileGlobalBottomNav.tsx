@@ -18,7 +18,7 @@ function prefetchPath(path: string) {
   const run = () => {
     if (path === "/browse") import("src/pages/HomePage").catch(() => prefetched.delete(path));
     else if (path === "/film") import("src/pages/FilmPage").catch(() => prefetched.delete(path));
-    else if (path === "/serie") import("src/pages/SerieHubPage").catch(() => prefetched.delete(path));
+    else if (path === "/serie-tv") import("src/pages/SeriePage").catch(() => prefetched.delete(path));
     else if (path === "/account") import("src/pages/AccountPage").catch(() => prefetched.delete(path));
   };
   if ((window as any).requestIdleCallback) {
@@ -39,7 +39,7 @@ export default function MobileGlobalBottomNav() {
     () => [
       { label: "Home", path: "/browse", icon: HomeRoundedIcon },
       { label: "Film", path: "/film", icon: MovieCreationOutlinedIcon },
-      { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
+      { label: "Serie TV", path: "/serie-tv", icon: LiveTvOutlinedIcon },
       { label: "Cerca", path: "__search__", icon: SearchRoundedIcon },
       { label: "Account", path: "/account", icon: AccountCircleOutlinedIcon },
     ],
@@ -72,6 +72,8 @@ export default function MobileGlobalBottomNav() {
       path.startsWith("/detail/movie/")
     ) return 1;
     if (
+      path === "/serie-tv" ||
+      path.startsWith("/serie-tv/") ||
       path === "/serie" ||
       path.startsWith("/serie/") ||
       path.startsWith("/browse/tv/") ||
