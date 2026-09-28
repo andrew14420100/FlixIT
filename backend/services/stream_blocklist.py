@@ -12,12 +12,16 @@ from datetime import datetime, timezone
 logger = logging.getLogger("flixit.stream_blocklist")
 
 # server_core always imports this module before premium.register() is called.
-# Import the manual-user bootstrap here so Admin user creation and first-access
-# routes are registered even when Python does not auto-load sitecustomize.
+# Import the additive bootstraps here so Admin first-access routes and role
+# permissions are registered even when Python does not auto-load sitecustomize.
 try:
     import services.manual_users_bootstrap  # noqa: F401
 except Exception as exc:
     logger.warning("manual user bootstrap unavailable: %s", exc)
+try:
+    import services.admin_permissions_bootstrap  # noqa: F401
+except Exception as exc:
+    logger.warning("admin permission bootstrap unavailable: %s", exc)
 
 _collection = None
 _blocked: dict[str, set[int]] = {"movie": set(), "tv": set()}
