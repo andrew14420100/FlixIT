@@ -152,7 +152,7 @@ def _install_trailer_registration_hook():
         return result
 
     register_with_trailers._flixit_trailer_hook = True
-    register_with_trailers._original = original_register
+    register_with_trailers._original_register = original_register
     premium_module.register = register_with_trailers
 
 
@@ -324,7 +324,7 @@ def _install_full_sc_artwork_catalog_hook():
                         return logo, "streamingcommunity", "it"
                 return None, None, None
 
-            choose_sc_logo_only._flixit_sc_logo_v14 = True
+            choose_sc_logo_only._flixit_sc_logo_only_v14 = True
             choose_sc_logo_only._original = current_choose_logo
             OfficialArtworkResolver._choose_logo = staticmethod(choose_sc_logo_only)
     except Exception:
