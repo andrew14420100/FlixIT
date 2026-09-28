@@ -1,7 +1,8 @@
 // @ts-nocheck
 import React, { useState } from 'react';
-import { useNavigate, useLocation, Outlet } from 'react-router-dom';
+import { useNavigate, useLocation, useParams, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { adminSessionBase, clearAdminSession } from 'src/utils/adminSession';
 import Box from '@mui/material/Box';
 import Drawer from '@mui/material/Drawer';
 import AppBar from '@mui/material/AppBar';
@@ -48,45 +49,49 @@ interface NavItem {
 }
 
 const menuItems: NavItem[] = [
-  { text: 'Dashboard', icon: <DashboardIcon />, path: '/admin/dashboard' },
-  { text: 'Utenti', icon: <PersonIcon />, path: '/admin/users' },
-  { text: 'Pagamenti', icon: <PaymentsIcon />, path: '/admin/payments' },
-  { text: 'Piani Premium', icon: <WorkspacePremiumIcon />, path: '/admin/plans' },
-  { text: 'Pagine Premium', icon: <AutoAwesomeIcon />, path: '/admin/premium-pages' },
-  { text: 'In Arrivo', icon: <UpcomingIcon />, path: '/admin/coming-soon' },
-  { text: 'Ticket', icon: <SupportAgentIcon />, path: '/admin/tickets' },
-  { text: 'Contenuti', icon: <MovieIcon />, path: '/admin/contents' },
-  { text: 'Hero Section', icon: <ViewCarouselIcon />, path: '/admin/hero' },
-  { text: 'Sezioni', icon: <FeaturedPlayListIcon />, path: '/admin/sections' },
-  { text: 'Menu Header', icon: <MenuOpenIcon />, path: '/admin/menu' },
-  { text: 'Impostazioni', icon: <SettingsIcon />, path: '/admin/settings' },
-  { text: 'Artwork Netflix', icon: <ImageSearchIcon />, path: '/admin/artwork' },
-  { text: 'Trailer', icon: <OndemandVideoIcon />, path: '/admin/trailers' },
-  { text: 'Log Attività', icon: <HistoryIcon />, path: '/admin/logs' },
+  { text: 'Dashboard', icon: <DashboardIcon />, path: '' },
+  { text: 'Utenti', icon: <PersonIcon />, path: 'users' },
+  { text: 'Pagamenti', icon: <PaymentsIcon />, path: 'payments' },
+  { text: 'Piani Premium', icon: <WorkspacePremiumIcon />, path: 'plans' },
+  { text: 'Pagine Premium', icon: <AutoAwesomeIcon />, path: 'premium-pages' },
+  { text: 'In Arrivo', icon: <UpcomingIcon />, path: 'coming-soon' },
+  { text: 'Ticket', icon: <SupportAgentIcon />, path: 'tickets' },
+  { text: 'Contenuti', icon: <MovieIcon />, path: 'contents' },
+  { text: 'Hero Section', icon: <ViewCarouselIcon />, path: 'hero' },
+  { text: 'Sezioni', icon: <FeaturedPlayListIcon />, path: 'sections' },
+  { text: 'Menu Header', icon: <MenuOpenIcon />, path: 'menu' },
+  { text: 'Impostazioni', icon: <SettingsIcon />, path: 'settings' },
+  { text: 'Artwork Netflix', icon: <ImageSearchIcon />, path: 'artwork' },
+  { text: 'Trailer', icon: <OndemandVideoIcon />, path: 'trailers' },
+  { text: 'Log Attività', icon: <HistoryIcon />, path: 'logs' },
 ];
 
 const AdminLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { adminSession } = useParams();
   const { email, logout } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('lg'));
   const [mobileOpen, setMobileOpen] = useState(false);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const basePath = adminSessionBase(adminSession);
 
+  const routeFor = (path: string) => (path ? `${basePath}/${path}` : basePath);
   const handleDrawerToggle = () => setMobileOpen((value) => !value);
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget);
   const handleMenuClose = () => setAnchorEl(null);
   const handleLogout = () => {
     handleMenuClose();
     logout();
-    navigate('/admin/login');
+    clearAdminSession();
+    navigate('/browse', { replace: true });
   };
   const handleNavigate = (path: string) => {
-    navigate(path);
+    navigate(routeFor(path));
     if (isMobile) setMobileOpen(false);
   };
-  const currentPage = menuItems.find((item) => item.path === location.pathname)?.text || 'Admin';
+  const currentPage = menuItems.find((item) => routeFor(item.path) === location.pathname)?.text || 'Admin';
 
   const drawerContent = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: '#0d0d0d' }}>
@@ -97,9 +102,10 @@ const AdminLayout: React.FC = () => {
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.06)' }} />
       <List sx={{ flex: 1, px: 2, py: 3, overflowY: 'auto' }}>
         {menuItems.map((item) => {
-          const isActive = location.pathname === item.path;
+          const target = routeFor(item.path);
+          const isActive = location.pathname === target;
           return (
-            <ListItem key={item.path} disablePadding sx={{ mb: 1 }}>
+            <ListItem key={item.text} disablePadding sx={{ mb: 1 }}>
               <ListItemButton
                 onClick={() => handleNavigate(item.path)}
                 data-testid={`nav-${item.text.toLowerCase().replace(/\s/g, '-')}`}
