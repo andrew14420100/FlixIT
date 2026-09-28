@@ -28,6 +28,16 @@ function heroViewport() {
   return window.innerWidth < 700 ? 'mobile' : 'desktop';
 }
 
+function forcedHeroMediaType() {
+  if (typeof window === 'undefined') return null;
+  const raw = String(window.location.pathname || '/');
+  const path = raw.length > 1 ? raw.replace(/\/+$/, '') : raw;
+
+  if (path === '/film' || path === '/browse/genre/movie') return 'movie';
+  if (path === '/serie-tv' || path === '/browse/genre/tv') return 'tv';
+  return null;
+}
+
 function rawArtwork(value: any) {
   if (!value) return '';
   if (typeof value === 'string') return value.trim();
@@ -121,6 +131,95 @@ function normalizeHero(value: any, extraArtwork: any = null, mediaAssets: any = 
   };
 }
 
+function heroMatchesMediaType(value: any, mediaType: 'movie' | 'tv' | null) {
+  if (!mediaType) return true;
+  if (!value?.contentId) return false;
+  const valueType = value?.mediaType === 'movie' ? 'movie' : 'tv';
+  return valueType === mediaType;
+}
+
+function itemMediaType(item: any) {
+  return item?.type === 'tv' || item?.media_type === 'tv' ? 'tv' : 'movie';
+}
+
+function heroFromItem(item: any, mediaType: 'movie' | 'tv') {
+  const id = Number(item?.tmdbId || item?.tmdb_id || item?.id || 0);
+  if (!id) return null;
+
+  const itemAssets = item?.assets || item?.media_assets || {};
+  const assets = {
+    ...itemAssets,
+    backdrop_path:
+      itemAssets?.backdrop_path ||
+      item?.backdrop_path ||
+      item?.backdrop ||
+      null,
+    poster_path:
+      itemAssets?.poster_path ||
+      item?.poster_path ||
+      item?.poster ||
+      null,
+    hero_backdrop_path:
+      itemAssets?.hero_backdrop_path ||
+      item?.hero_backdrop_path ||
+      null,
+  };
+
+  return normalizeHero({
+    contentId: String(id),
+    mediaType,
+    customTitle: item?.title || item?.name || item?.original_title || item?.original_name || null,
+    customDescription: item?.overview || item?.description || null,
+    customBackdrop: heroArtworkUrl(
+      item?.customBackdrop,
+      item?.hero_backdrop_path,
+      assets?.hero_backdrop_path,
+      item?.backdrop_path,
+      assets?.backdrop_path,
+      item?.poster_path,
+      assets?.poster_path
+    ),
+    seasonLabel: null,
+    detail: item,
+    assets,
+  });
+}
+
+function pickHeroFromRows(data: any, mediaType: 'movie' | 'tv') {
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+  for (const row of rows) {
+    const items = Array.isArray(row?.items) ? row.items : [];
+    const item = items.find((entry: any) => entry && itemMediaType(entry) === mediaType);
+    if (item) {
+      const hero = heroFromItem(item, mediaType);
+      if (hero?.contentId) return hero;
+    }
+  }
+  return null;
+}
+
+async function filteredHeroFromHome(mediaType: 'movie' | 'tv', signal?: AbortSignal) {
+  const urls = ['/api/public/home-bootstrap-fast', '/api/public/home-bootstrap'];
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        signal,
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) continue;
+      const data = await response.json();
+      const hero = pickHeroFromRows(data, mediaType);
+      if (hero?.contentId) return hero;
+    } catch (error: any) {
+      if (error?.name === 'AbortError') throw error;
+    }
+  }
+
+  return null;
+}
+
 async function enrichHero(value: any, signal?: AbortSignal) {
   const normalized = normalizeHero(value);
   if (!normalized?.contentId) return normalized;
@@ -164,10 +263,12 @@ function bootstrappedHero() {
 export function useHeroData(initialHero: HeroSettings | null = null) {
   const profile = heroProfile();
   const viewport = heroViewport();
-  const hydrated = initialHero?.contentId ? normalizeHero(initialHero) : bootstrappedHero();
+  const mediaFilter = forcedHeroMediaType();
+  const candidate = initialHero?.contentId ? normalizeHero(initialHero) : bootstrappedHero();
+  const hydrated = heroMatchesMediaType(candidate, mediaFilter) ? candidate : null;
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v8-sc-logo-only', profile, viewport],
+    queryKey: ['hero-settings-v9-media-filter', profile, viewport, mediaFilter || 'all'],
     queryFn: async ({ signal }: any) => {
       try {
         const response = await fetch('/api/public/hero', {
@@ -175,17 +276,32 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
           cache: 'no-store',
           headers: { Accept: 'application/json' },
         });
-        if (!response.ok) return enrichHero(hydrated, signal);
 
-        const data = await response.json();
-        if (!data?.contentId) return enrichHero(hydrated, signal);
-
-        const normalized = await enrichHero(data, signal);
-        if (typeof window !== 'undefined') {
-          (window as any).__flixitHomeHero = normalized;
+        const data = response.ok ? await response.json() : null;
+        if (data?.contentId && heroMatchesMediaType(data, mediaFilter)) {
+          const normalized = await enrichHero(data, signal);
+          if (typeof window !== 'undefined' && !mediaFilter) {
+            (window as any).__flixitHomeHero = normalized;
+          }
+          return normalized;
         }
-        return normalized;
-      } catch {
+
+        if (mediaFilter) {
+          const filtered = await filteredHeroFromHome(mediaFilter, signal);
+          if (filtered?.contentId) return enrichHero(filtered, signal);
+        }
+
+        return enrichHero(hydrated, signal);
+      } catch (error: any) {
+        if (error?.name === 'AbortError') throw error;
+
+        if (mediaFilter) {
+          try {
+            const filtered = await filteredHeroFromHome(mediaFilter, signal);
+            if (filtered?.contentId) return enrichHero(filtered, signal);
+          } catch {}
+        }
+
         return enrichHero(hydrated, signal);
       }
     },
