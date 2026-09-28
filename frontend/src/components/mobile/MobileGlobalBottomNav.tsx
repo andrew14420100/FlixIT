@@ -17,7 +17,7 @@ function prefetchPath(path: string) {
   prefetched.add(path);
   const run = () => {
     if (path === "/browse") import("src/pages/HomePage").catch(() => prefetched.delete(path));
-    else if (path === "/cinema") import("src/pages/CinemaHubPage").catch(() => prefetched.delete(path));
+    else if (path === "/film") import("src/pages/FilmPage").catch(() => prefetched.delete(path));
     else if (path === "/serie") import("src/pages/SerieHubPage").catch(() => prefetched.delete(path));
     else if (path === "/account") import("src/pages/AccountPage").catch(() => prefetched.delete(path));
   };
@@ -38,7 +38,7 @@ export default function MobileGlobalBottomNav() {
   const items = useMemo(
     () => [
       { label: "Home", path: "/browse", icon: HomeRoundedIcon },
-      { label: "Cinema", path: "/cinema", icon: MovieCreationOutlinedIcon },
+      { label: "Film", path: "/film", icon: MovieCreationOutlinedIcon },
       { label: "Serie TV", path: "/serie", icon: LiveTvOutlinedIcon },
       { label: "Cerca", path: "__search__", icon: SearchRoundedIcon },
       { label: "Account", path: "/account", icon: AccountCircleOutlinedIcon },
@@ -54,8 +54,6 @@ export default function MobileGlobalBottomNav() {
 
   useEffect(() => {
     if (!isMobile || isWatch) return;
-    // Once the first screen is stable, warm the tiny route chunks behind the
-    // bottom navigation. A tap then swaps screens without waiting for a chunk.
     const timer = window.setTimeout(() => {
       items.forEach((item) => prefetchPath(item.path));
     }, 1400);
@@ -66,6 +64,8 @@ export default function MobileGlobalBottomNav() {
     const path = location.pathname;
     if (path === "/" || path === "/browse") return 0;
     if (
+      path === "/film" ||
+      path.startsWith("/film/") ||
       path === "/cinema" ||
       path.startsWith("/cinema/") ||
       path.startsWith("/browse/movie/") ||
@@ -111,10 +111,6 @@ export default function MobileGlobalBottomNav() {
     );
   }, [location.pathname, activeIndex, isMobile, isWatch]);
 
-  // Chrome on iPhone moves the visual viewport when its bottom toolbar hides or
-  // reappears. A fixed element normally snaps to the new viewport edge. We use a
-  // FLIP compensation so the menu visually stays where it was, then glides to
-  // Chrome's new resting position instead of jumping.
   useEffect(() => {
     if (!isMobile || isWatch || !window.visualViewport) return;
 
@@ -185,9 +181,6 @@ export default function MobileGlobalBottomNav() {
   if (!isMobile || isWatch) return null;
 
   const openSearch = () => {
-    // SearchBox exposes this event specifically for mobile. Dispatching it is
-    // robust even when the header layout changes; clicking firstElementChild was
-    // a brittle DOM dependency and occasionally failed after lazy navigation.
     window.dispatchEvent(new CustomEvent("flixit-open-search"));
     window.setTimeout(
       () => document.querySelector<HTMLInputElement>('[data-testid="search-input"]')?.focus(),
