@@ -13,12 +13,14 @@ import DialogActions from '@mui/material/DialogActions';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
 import Chip from '@mui/material/Chip';
+import CircularProgress from '@mui/material/CircularProgress';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import CampaignOutlinedIcon from '@mui/icons-material/CampaignOutlined';
 import PlayCircleOutlineRoundedIcon from '@mui/icons-material/PlayCircleOutlineRounded';
 import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
+import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
 import { api, cardSx, dialogPaper, fieldSx, redBtn } from './shared';
 
 const EMPTY = {
@@ -35,6 +37,7 @@ const AdsPage: React.FC = () => {
   const [items, setItems] = useState<any[]>([]);
   const [form, setForm] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [snack, setSnack] = useState<any>(null);
 
   const load = async () => {
@@ -66,9 +69,43 @@ const AdsPage: React.FC = () => {
     ends_at: form?.ends_at ? new Date(form.ends_at).toISOString() : null,
   });
 
+  const uploadVideo = async (file: File | null) => {
+    if (!file) return;
+    const ext = String(file.name || '').split('.').pop()?.toLowerCase();
+    if (!['mp4', 'webm', 'm4v', 'mov'].includes(ext || '')) {
+      setSnack({ severity: 'warning', message: 'Formato non supportato. Usa MP4, WebM, M4V o MOV.' });
+      return;
+    }
+    if (file.size > 150 * 1024 * 1024) {
+      setSnack({ severity: 'warning', message: 'Il video supera 150 MB.' });
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const response = await fetch('/api/admin/ads/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('admin_token')}`,
+          'Content-Type': file.type || 'application/octet-stream',
+          'X-File-Name': encodeURIComponent(file.name || 'pubblicita.mp4'),
+        },
+        body: file,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Caricamento video fallito');
+      setForm((current) => ({ ...(current || EMPTY), video_url: data.url }));
+      setSnack({ severity: 'success', message: 'Video caricato. Verrà riprodotto direttamente nel player FlixIT.' });
+    } catch (e: any) {
+      setSnack({ severity: 'error', message: e?.message || 'Caricamento video fallito' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const save = async () => {
     if (!form?.name?.trim() || !form?.video_url?.trim()) {
-      setSnack({ severity: 'warning', message: 'Inserisci nome campagna e URL del video.' });
+      setSnack({ severity: 'warning', message: 'Inserisci il nome e carica un video oppure usa un URL video diretto.' });
       return;
     }
     setBusy(true);
@@ -142,7 +179,7 @@ const AdsPage: React.FC = () => {
           <Box>
             <PlayCircleOutlineRoundedIcon sx={{ color: 'rgba(255,255,255,.25)', fontSize: 54, mb: 1.5 }} />
             <Typography sx={{ color: '#fff', fontWeight: 750, fontSize: 17 }}>Nessuna campagna configurata</Typography>
-            <Typography sx={{ color: 'rgba(255,255,255,.42)', fontSize: 13.5, mt: .7 }}>Finché non aggiungi un video, il player non interrompe i contenuti.</Typography>
+            <Typography sx={{ color: 'rgba(255,255,255,.42)', fontSize: 13.5, mt: .7 }}>Carica un MP4/WebM: verrà riprodotto dal player FlixIT senza iframe o controlli di servizi esterni.</Typography>
           </Box>
         </Box>
       ) : (
@@ -178,12 +215,53 @@ const AdsPage: React.FC = () => {
         </Box>
       )}
 
-      <Dialog open={Boolean(form)} onClose={() => !busy && setForm(null)} PaperProps={{ ...dialogPaper, sx: { ...(dialogPaper?.sx || {}), width: 'min(680px, calc(100% - 28px))' } }}>
+      <Dialog open={Boolean(form)} onClose={() => !busy && !uploading && setForm(null)} PaperProps={{ ...dialogPaper, sx: { ...(dialogPaper?.sx || {}), width: 'min(680px, calc(100% - 28px))' } }}>
         <DialogTitle sx={{ color: '#fff', fontWeight: 800 }}>{form?.id ? 'Modifica campagna' : 'Nuova campagna'}</DialogTitle>
         {form ? <DialogContent sx={{ pt: '10px !important' }}>
           <Box sx={{ display: 'grid', gap: 2 }}>
             <TextField label="Nome campagna" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} sx={fieldSx} fullWidth />
-            <TextField label="URL video pubblicitario" value={form.video_url} onChange={(e) => setForm({ ...form, video_url: e.target.value })} helperText="Usa un video HTTPS riproducibile direttamente dal browser, preferibilmente MP4/WebM." sx={fieldSx} fullWidth />
+
+            <Box sx={{ ...cardSx, p: 2, display: 'grid', gap: 1.4 }}>
+              <Box>
+                <Typography sx={{ color: '#fff', fontSize: 14, fontWeight: 750 }}>Video pubblicitario nel player FlixIT</Typography>
+                <Typography sx={{ color: 'rgba(255,255,255,.45)', fontSize: 12.5, mt: .4 }}>
+                  Carica direttamente il file della pubblicità. YouTube non può essere riprodotto nel player nativo senza usare il player YouTube.
+                </Typography>
+              </Box>
+              <Button
+                component="label"
+                variant="outlined"
+                disabled={uploading}
+                startIcon={uploading ? <CircularProgress size={17} /> : <CloudUploadRoundedIcon />}
+                sx={{ justifySelf: 'start', color: '#fff', borderColor: 'rgba(255,255,255,.22)', textTransform: 'none', borderRadius: 2 }}
+              >
+                {uploading ? 'Caricamento…' : 'Carica MP4 / WebM'}
+                <input
+                  hidden
+                  type="file"
+                  accept="video/mp4,video/webm,video/x-m4v,video/quicktime,.mp4,.webm,.m4v,.mov"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    e.target.value = '';
+                    uploadVideo(file);
+                  }}
+                />
+              </Button>
+              {form.video_url ? (
+                <Box sx={{ borderRadius: '10px', overflow: 'hidden', bgcolor: '#000', aspectRatio: '16 / 9', border: '1px solid rgba(255,255,255,.10)' }}>
+                  <video key={form.video_url} src={form.video_url} controls preload="metadata" playsInline style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
+                </Box>
+              ) : null}
+            </Box>
+
+            <TextField
+              label="Oppure URL video diretto"
+              value={form.video_url}
+              onChange={(e) => setForm({ ...form, video_url: e.target.value })}
+              helperText="Solo URL diretti a video riproducibili dal browser. I link youtube.com / youtu.be non sono supportati dal player nativo."
+              sx={fieldSx}
+              fullWidth
+            />
             <TextField label="Link campagna (facoltativo)" value={form.click_url} onChange={(e) => setForm({ ...form, click_url: e.target.value })} sx={fieldSx} fullWidth />
             <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
               <TextField type="number" label="Ordine" value={form.order} onChange={(e) => setForm({ ...form, order: Number(e.target.value || 0) })} sx={fieldSx} />
@@ -194,8 +272,8 @@ const AdsPage: React.FC = () => {
           </Box>
         </DialogContent> : null}
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button disabled={busy} onClick={() => setForm(null)} sx={{ color: 'rgba(255,255,255,.54)', textTransform: 'none' }}>Annulla</Button>
-          <Button disabled={busy} onClick={save} variant="contained" sx={redBtn}>{busy ? 'Salvataggio…' : 'Salva campagna'}</Button>
+          <Button disabled={busy || uploading} onClick={() => setForm(null)} sx={{ color: 'rgba(255,255,255,.54)', textTransform: 'none' }}>Annulla</Button>
+          <Button disabled={busy || uploading} onClick={save} variant="contained" sx={redBtn}>{busy ? 'Salvataggio…' : 'Salva campagna'}</Button>
         </DialogActions>
       </Dialog>
 
