@@ -88,6 +88,26 @@ function durationMatches(plan, durationKey) {
   return false;
 }
 
+function featureProfile(plan, spec) {
+  const features = Array.isArray(plan?.features) ? plan.features.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  const normalized = features.map((value) => ({ raw: value, key: normalizeName(value) }));
+  const find = (test) => normalized.find(({ key }) => test(key))?.raw;
+
+  const quality = find((key) => key.includes("1080p") || key.includes("720p")) || spec.quality;
+  const devices = find((key) => key.includes("dispositiv") && (key.includes("illimit") || /(^| )1 dispositiv/.test(key) || /(^| )2 dispositiv/.test(key))) || spec.devices;
+  const ads = find((key) => key.includes("pubblicita")) || spec.ads;
+  const priorityRaw = find((key) => key.includes("priorita") && /livello [123]/.test(key));
+  const priority = priorityRaw ? priorityRaw.replace(/^Priorità\s*/i, "") : spec.priority;
+
+  return {
+    quality,
+    devices,
+    ads,
+    priority,
+    subtitle: String(plan?.description || "").trim() || spec.subtitle,
+  };
+}
+
 function attachAdminPlans(plans, durationKey) {
   const source = [...(plans || [])]
     .filter((plan) => durationMatches(plan, durationKey))
@@ -102,7 +122,8 @@ function attachAdminPlans(plans, durationKey) {
     });
     if (backingIndex < 0) backingIndex = source.findIndex((_, index) => !used.has(index));
     if (backingIndex >= 0) used.add(backingIndex);
-    return { ...spec, adminPlan: backingIndex >= 0 ? source[backingIndex] : null };
+    const adminPlan = backingIndex >= 0 ? source[backingIndex] : null;
+    return { ...spec, ...(adminPlan ? featureProfile(adminPlan, spec) : {}), adminPlan };
   });
 }
 
