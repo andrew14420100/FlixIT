@@ -1,17 +1,24 @@
 // @ts-nocheck
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { Component as HomePage } from "./HomePage";
 
 /**
- * Pagina Film = stessa esperienza della Home, con il filtro movie applicato
- * all'intera pagina. Usiamo la stessa HomePage (Hero, righe, Top 10,
- * Continua a guardare, responsive/mobile) così ogni futura modifica alla Home
- * viene ereditata automaticamente anche qui.
+ * /film e' una pagina autonoma, separata dalla Home.
+ * Riusa la stessa esperienza grafica/componenti della Home ma fornisce un
+ * contesto di route virtuale con mediaType=movie, cosi Hero, righe, Top 10 e
+ * Continua a guardare vengono filtrati esclusivamente sui film senza cambiare
+ * l'URL reale /film e senza reindirizzare l'utente alla Home.
  */
 export function Component() {
+  const location = useLocation();
+  const filmLocation = {
+    ...location,
+    pathname: "/film/movie",
+  };
+
   return (
-    <Routes location="/browse/genre/movie">
-      <Route path="/browse/genre/:mediaType" element={<HomePage />} />
+    <Routes location={filmLocation}>
+      <Route path=":mediaType" element={<HomePage />} />
     </Routes>
   );
 }
