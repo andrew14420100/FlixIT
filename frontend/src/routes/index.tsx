@@ -1,10 +1,11 @@
 // @ts-nocheck
-import { Navigate, createBrowserRouter } from "react-router-dom";
+import { Navigate, Outlet, createBrowserRouter, useParams } from "react-router-dom";
 import { MAIN_PATH } from "src/constant";
 import MainLayout from "src/layouts/MainLayout";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import ComingSoonPage, { PLACEHOLDER_SECTIONS } from "src/pages/ComingSoonPage";
+import { isActiveAdminSessionNonce } from "src/utils/adminSession";
 
 const adminChunk = () => import("src/admin/lazyRoutes");
 const adminPage = (name) => () => adminChunk().then((m) => ({ Component: m[name] }));
@@ -42,6 +43,14 @@ function ErrorPage() {
   );
 }
 
+function AdminSessionGate() {
+  const { adminSession } = useParams();
+  if (!isActiveAdminSessionNonce(adminSession)) {
+    return <Navigate to={`/${MAIN_PATH.browse}`} replace />;
+  }
+  return <Outlet />;
+}
+
 const router = createBrowserRouter([
   {
     path: "/",
@@ -73,28 +82,33 @@ const router = createBrowserRouter([
       { path: "account", lazy: () => import("src/pages/AccountPage") },
     ],
   },
-  { path: "/admin/login", lazy: adminPage("AdminLoginShell"), errorElement: <ErrorPage /> },
+  { path: "/admin", element: <Navigate to={`/${MAIN_PATH.browse}`} replace /> },
   {
-    path: "/admin",
-    lazy: adminPage("AdminShell"),
+    path: "/admin/:adminSession",
+    element: <AdminSessionGate />,
     errorElement: <ErrorPage />,
     children: [
-      { index: true, element: <Navigate to="/admin/dashboard" replace /> },
-      { path: "dashboard", lazy: adminPage("DashboardPage") },
-      { path: "contents", lazy: adminPage("ContentsPage") },
-      { path: "hero", lazy: adminPage("HeroPage") },
-      { path: "sections", lazy: adminPage("SectionsPage") },
-      { path: "menu", lazy: adminPage("MenuPage") },
-      { path: "settings", lazy: adminPage("SettingsPage") },
-      { path: "artwork", lazy: adminPage("ArtworkPage") },
-      { path: "trailers", lazy: adminPage("TrailersPage") },
-      { path: "logs", lazy: adminPage("LogsPage") },
-      { path: "users", lazy: adminPage("UsersPage") },
-      { path: "tickets", lazy: adminPage("TicketsPage") },
-      { path: "plans", lazy: adminPage("PlansPage") },
-      { path: "premium-pages", lazy: adminPage("PremiumPagesPage") },
-      { path: "coming-soon", lazy: adminPage("ComingSoonAdminPage") },
-      { path: "payments", lazy: adminPage("PaymentsPage") },
+      {
+        lazy: adminPage("AdminShell"),
+        children: [
+          { index: true, lazy: adminPage("DashboardPage") },
+          { path: "dashboard", element: <Navigate to=".." replace relative="path" /> },
+          { path: "contents", lazy: adminPage("ContentsPage") },
+          { path: "hero", lazy: adminPage("HeroPage") },
+          { path: "sections", lazy: adminPage("SectionsPage") },
+          { path: "menu", lazy: adminPage("MenuPage") },
+          { path: "settings", lazy: adminPage("SettingsPage") },
+          { path: "artwork", lazy: adminPage("ArtworkPage") },
+          { path: "trailers", lazy: adminPage("TrailersPage") },
+          { path: "logs", lazy: adminPage("LogsPage") },
+          { path: "users", lazy: adminPage("UsersPage") },
+          { path: "tickets", lazy: adminPage("TicketsPage") },
+          { path: "plans", lazy: adminPage("PlansPage") },
+          { path: "premium-pages", lazy: adminPage("PremiumPagesPage") },
+          { path: "coming-soon", lazy: adminPage("ComingSoonAdminPage") },
+          { path: "payments", lazy: adminPage("PaymentsPage") },
+        ],
+      },
     ],
   },
   { path: "*", element: <ErrorPage /> },
