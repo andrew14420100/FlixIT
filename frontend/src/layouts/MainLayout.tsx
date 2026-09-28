@@ -47,6 +47,8 @@ function isHomeRoute(pathname: string) {
     path === "/browse" ||
     path === "/film" ||
     path === "/cinema" ||
+    path === "/serie-tv" ||
+    path === "/serie" ||
     path === "/browse/genre/movie" ||
     path === "/browse/genre/tv" ||
     path === "/browse/latest" ||
