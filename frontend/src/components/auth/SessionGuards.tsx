@@ -14,18 +14,28 @@ export default function SessionGuards() {
   const [banned, setBanned] = useState(() => sessionStorage.getItem("flixit_banned_reason"));
 
   useEffect(() => {
-    if (!localStorage.getItem("user_token")) return;
     let cancelled = false;
     const check = async () => {
+      if (!localStorage.getItem("user_token")) {
+        if (!cancelled) setMustReset(false);
+        return;
+      }
       if (document.visibilityState === "hidden") return;
       const data = await fetchNotificationsShared(false);
       if (!cancelled && data) setMustReset(Boolean(data.must_reset_password));
     };
+
     check();
     const unsubscribe = subscribeNotificationRefresh(check);
+    const onAuthChanged = () => check();
+    const onVisibility = () => document.visibilityState === "visible" && check();
+    window.addEventListener("flixit-auth-changed", onAuthChanged);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       unsubscribe?.();
+      window.removeEventListener("flixit-auth-changed", onAuthChanged);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
