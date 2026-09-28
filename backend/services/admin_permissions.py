@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Dict
+from typing import Dict, Optional
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -44,7 +44,7 @@ PERMISSION_GROUPS = [
     {"id": "users", "label": "Utenti", "items": [
         ("users_view", "Visualizza utenti"),
         ("users_create", "Crea utenti"),
-        ("users_edit", "Modifica ruoli e sospensioni"),
+        ("users_edit", "Sospendi o riattiva utenti"),
         ("users_assign_plan", "Assegna o revoca piani"),
         ("users_reset_password", "Forza reset password"),
         ("users_delete", "Elimina utenti"),
@@ -86,6 +86,20 @@ def effective_permissions(user: dict) -> Dict[str, bool]:
     return merged
 
 
+def _user_target_id(path: str) -> Optional[str]:
+    prefix = "/api/admin/users/"
+    if not str(path or "").startswith(prefix):
+        return None
+    tail = str(path)[len(prefix):].strip("/")
+    if not tail:
+        return None
+    first = tail.split("/", 1)[0]
+    # Collection helpers are not user ids.
+    if first in ("manual-create",):
+        return None
+    return first or None
+
+
 def _required_permission(path: str, method: str):
     path = str(path or "")
     method = str(method or "GET").upper()
@@ -106,8 +120,14 @@ def _required_permission(path: str, method: str):
             return "users_assign_plan"
         if path.endswith("/manual-create"):
             return "users_create"
+        if path.endswith("/status"):
+            return "users_edit"
         if method == "DELETE":
             return "users_delete"
+        # The legacy generic PATCH endpoint can change roles. Role management is
+        # deliberately never delegable: only Superadmin may use it.
+        if method in ("PATCH", "PUT"):
+            return "__superadmin__"
         return "users_edit"
 
     if path.startswith("/api/admin/plans"):
@@ -147,8 +167,6 @@ def _required_permission(path: str, method: str):
     if path.startswith("/api/admin/logs"):
         return "logs_view"
 
-    # Routes not covered by the requested restrictions keep their current
-    # behaviour (tickets, menu header, premium pages, dashboard, etc.).
     return None
 
 
@@ -179,6 +197,14 @@ def register_admin_permissions(app, db, get_current_admin, log_admin_action):
         if user.get("role") == "superadmin":
             return await call_next(request)
 
+        # Even when a Superadmin delegates a user-management permission, a
+        # normal Admin can never operate on a Superadmin account.
+        target_id = _user_target_id(path)
+        if target_id:
+            target = users.find_one({"id": target_id}, {"_id": 0, "role": 1})
+            if target and target.get("role") == "superadmin":
+                return JSONResponse(status_code=403, content={"detail": "Solo Superadmin"})
+
         required = _required_permission(path, request.method)
         if required == "__superadmin__":
             return JSONResponse(status_code=403, content={"detail": "Solo Superadmin"})
@@ -191,8 +217,19 @@ def register_admin_permissions(app, db, get_current_admin, log_admin_action):
     class PermissionsIn(BaseModel):
         permissions: Dict[str, bool]
 
+    class UserStatusIn(BaseModel):
+        banned: bool
+        ban_reason: str = ""
+
     def require_superadmin(admin=Depends(get_current_admin)):
         if admin.get("role") != "superadmin":
+            raise HTTPException(status_code=403, detail="Solo Superadmin")
+        return admin
+
+    def require_user_status_permission(admin=Depends(get_current_admin)):
+        if admin.get("role") == "superadmin":
+            return admin
+        if not effective_permissions(admin).get("users_edit"):
             raise HTTPException(status_code=403, detail="Solo Superadmin")
         return admin
 
@@ -247,5 +284,24 @@ def register_admin_permissions(app, db, get_current_admin, log_admin_action):
         if log_admin_action:
             log_admin_action("ADMIN_PERMISSIONS_RESET", user_id, {"email": target.get("email")})
         return {"ok": True, "permissions": dict(DEFAULT_ADMIN_PERMISSIONS)}
+
+    @router.patch("/api/admin/users/{user_id}/status")
+    def update_user_status(user_id: str, data: UserStatusIn, admin=Depends(require_user_status_permission)):
+        target = users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+        if not target:
+            raise HTTPException(status_code=404, detail="Utente non trovato")
+        if target.get("role") == "superadmin" and admin.get("role") != "superadmin":
+            raise HTTPException(status_code=403, detail="Solo Superadmin")
+        if target.get("id") == admin.get("id") and data.banned:
+            raise HTTPException(status_code=400, detail="Non puoi sospendere il tuo account")
+        update = {
+            "banned": bool(data.banned),
+            "ban_reason": str(data.ban_reason or "") if data.banned else "",
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        users.update_one({"id": user_id}, {"$set": update})
+        if log_admin_action:
+            log_admin_action("USER_STATUS_UPDATE", user_id, {"email": target.get("email"), **update})
+        return {"ok": True, **update}
 
     app.include_router(router)
