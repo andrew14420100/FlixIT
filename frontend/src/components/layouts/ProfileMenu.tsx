@@ -1,5 +1,4 @@
 // @ts-nocheck
-import { useNavigate } from "react-router-dom";
 import Popover from "@mui/material/Popover";
 import Box from "@mui/material/Box";
 import Avatar from "@mui/material/Avatar";
@@ -44,7 +43,6 @@ function Row({ id, label, hint, Icon, onClick, color = "#fff", iconBg = "rgba(25
 }
 
 export default function ProfileMenu({ anchorEl, onClose, user, avatarImage, onNavigate, onLogout }) {
-  const navigate = useNavigate();
   const isPremium = Boolean(user?.is_premium);
 
   const goAdmin = () => {
@@ -54,11 +52,21 @@ export default function ProfileMenu({ anchorEl, onClose, user, avatarImage, onNa
     if (userToken) localStorage.setItem("admin_token", userToken);
 
     const nonce = createAdminSessionNonce();
+    const target = `${window.location.origin}/admin/${nonce}`;
 
-    // Il nonce resta legato al sessionStorage della scheda corrente.
-    // Nessuna nuova finestra o nuova scheda viene aperta.
-    seedAdminSession(window.sessionStorage, nonce);
-    navigate(`/admin/${nonce}`);
+    // Nessuna feature da popup: i browser lo trattano come una normale nuova scheda.
+    // Il nonce viene scritto esclusivamente nel sessionStorage della nuova tab.
+    const adminTab = window.open("about:blank", "_blank");
+    if (!adminTab) return;
+
+    try {
+      seedAdminSession(adminTab.sessionStorage, nonce);
+      adminTab.opener = null;
+      adminTab.location.replace(target);
+      adminTab.focus?.();
+    } catch {
+      try { adminTab.close(); } catch {}
+    }
   };
 
   return (
