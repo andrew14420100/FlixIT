@@ -17,6 +17,7 @@ export { default as TrailersPage } from './pages/TrailersPage';
 export { default as UsersPage } from './pages/UsersPage';
 export { default as TicketsPage } from './pages/TicketsPage';
 export { default as PlansPage } from './pages/PlansPage';
+export { default as AdsPage } from './pages/AdsPage';
 export { default as PremiumPagesPage } from './pages/PremiumPagesPage';
 export { default as ComingSoonAdminPage } from './pages/ComingSoonAdminPage';
 export { default as PaymentsPage } from './pages/PaymentsPage';
