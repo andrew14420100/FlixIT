@@ -54,33 +54,11 @@ export default function ProfileMenu({ anchorEl, onClose, user, avatarImage, onNa
     if (userToken) localStorage.setItem("admin_token", userToken);
 
     const nonce = createAdminSessionNonce();
-    const target = `${window.location.origin}/admin/${nonce}`;
 
-    // Opening about:blank synchronously keeps this inside the user's click,
-    // so popup blockers are far less likely to reject it. The nonce is written
-    // only into the new browsing session before that window navigates to Admin.
-    const adminWindow = window.open(
-      "about:blank",
-      "_blank",
-      "popup=yes,width=1500,height=950,resizable=yes,scrollbars=yes"
-    );
-
-    if (adminWindow) {
-      try {
-        seedAdminSession(adminWindow.sessionStorage, nonce);
-        adminWindow.opener = null;
-        adminWindow.location.replace(target);
-        adminWindow.focus?.();
-        return;
-      } catch {
-        try { adminWindow.close(); } catch {}
-      }
-    }
-
-    // Fallback for browsers that don't expose the initial about:blank storage.
-    // The newly opened same-origin tab receives a snapshot of sessionStorage.
+    // Il nonce resta legato al sessionStorage della scheda corrente.
+    // Nessuna nuova finestra o nuova scheda viene aperta.
     seedAdminSession(window.sessionStorage, nonce);
-    window.open(target, "_blank");
+    navigate(`/admin/${nonce}`);
   };
 
   return (
