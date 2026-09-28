@@ -104,6 +104,7 @@ const router = createBrowserRouter([
           { path: "users", lazy: adminPage("UsersPage") },
           { path: "tickets", lazy: adminPage("TicketsPage") },
           { path: "plans", lazy: adminPage("PlansPage") },
+          { path: "ads", lazy: adminPage("AdsPage") },
           { path: "premium-pages", lazy: adminPage("PremiumPagesPage") },
           { path: "coming-soon", lazy: adminPage("ComingSoonAdminPage") },
           { path: "payments", lazy: adminPage("PaymentsPage") },
