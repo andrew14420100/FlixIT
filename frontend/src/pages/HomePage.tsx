@@ -13,7 +13,6 @@ import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_FAST_URL = "/api/public/home-bootstrap-fast";
 const HOME_BOOTSTRAP_FULL_URL = "/api/public/home-bootstrap";
-// v8 flushes browser snapshots created before the SC-only logo/home fixes.
 const HOME_QUERY_KEY = ["home-bootstrap-v8-sc-logo-home-fixes"];
 const HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
 const HOME_STALE_MS = 10 * 60 * 1000;
@@ -95,6 +94,7 @@ function itemKey(item) {
 }
 
 function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
+  const filteredPage = filterMediaType === "movie" || filterMediaType === "tv";
   const claimed = new Set(initialClaimed);
   return (rows || [])
     .map((row, rowIndex) => {
@@ -103,10 +103,10 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
       const items = (row?.items || []).filter((item) => {
         if (!item) return false;
         const key = itemKey(item);
-        if (!key || seen.has(key) || claimed.has(key)) return false;
+        if (!key || seen.has(key) || (!filteredPage && claimed.has(key))) return false;
         seen.add(key);
 
-        if (filterMediaType === "movie" || filterMediaType === "tv") {
+        if (filteredPage) {
           const itemType = item?.type === "tv" || item?.media_type === "tv" ? "tv" : "movie";
           if (itemType !== filterMediaType) return false;
         }
@@ -115,14 +115,16 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
 
       const limit = type === "top10" ? 10 : 50;
       const visible = items.slice(0, limit);
-      visible.forEach((item) => claimed.add(itemKey(item)));
+      if (!filteredPage) {
+        visible.forEach((item) => claimed.add(itemKey(item)));
+      }
       return {
         ...row,
         key: row?.key || `${type || "row"}-${rowIndex}`,
         items: visible,
       };
     })
-    .filter((row) => row.items.length > 0);
+    .filter((row) => row.items.length > 0 && (!filteredPage || row.section_type !== "top10"));
 }
 
 async function fetchBootstrapUrl(url: string, signal?: AbortSignal) {
@@ -212,6 +214,7 @@ export async function loader() {
 
 export function Component() {
   const { mediaType: filterMediaType } = useParams();
+  const filteredPage = filterMediaType === "movie" || filterMediaType === "tv";
   const queryClient = useQueryClient();
   const currentMediaType = filterMediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
   const { items: progressItems, username, removeItem } = useContinueWatching();
@@ -219,14 +222,12 @@ export function Component() {
   const [visibleRowCount, setVisibleRowCount] = useState(FIRST_PAINT_ROWS);
 
   const continueItems = useMemo(() => {
+    if (filteredPage) return [];
     return (progressItems || [])
       .filter((item) => {
         const duration = Number(item?.duration || 0);
         const progress = Number(item?.progress || 0);
         if (duration > 0 && progress / duration >= 0.95) return false;
-        if (filterMediaType === "movie" || filterMediaType === "tv") {
-          return item?.media_type === filterMediaType;
-        }
         return true;
       })
       .map((item) => ({
@@ -250,7 +251,7 @@ export function Component() {
           onRemove: () => removeItem(item.tmdb_id),
         },
       }));
-  }, [progressItems, filterMediaType, removeItem]);
+  }, [progressItems, filteredPage, removeItem]);
 
   const continueKeys = useMemo(
     () => new Set(continueItems.map(itemKey).filter(Boolean)),
@@ -422,7 +423,7 @@ export function Component() {
           className="sliders"
           data-testid="home-rows"
         >
-          {continueItems.length > 0 ? (
+          {!filteredPage && continueItems.length > 0 ? (
             <HomepageSlider
               rowId="continua"
               title={continueTitle}
