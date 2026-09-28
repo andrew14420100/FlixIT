@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { unstable_ClassNameGenerator as ClassNameGenerator } from "@mui/material/className";
+import "./playerAdsBootstrap";
 
 ClassNameGenerator.configure((componentName) => {
   let newComponentName = componentName;
