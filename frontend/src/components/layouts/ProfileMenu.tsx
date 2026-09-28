@@ -12,6 +12,7 @@ import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettin
 import LogoutIcon from "@mui/icons-material/Logout";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import { premiumLabel } from "src/hooks/useCurrentUser";
+import { createAdminSessionNonce, seedAdminSession } from "src/utils/adminSession";
 
 const ITEMS = [
   { id: "account", label: "Il mio account", hint: "Profilo, avatar, password", Icon: PersonOutlineIcon, to: "/account" },
@@ -45,7 +46,43 @@ function Row({ id, label, hint, Icon, onClick, color = "#fff", iconBg = "rgba(25
 export default function ProfileMenu({ anchorEl, onClose, user, avatarImage, onNavigate, onLogout }) {
   const navigate = useNavigate();
   const isPremium = Boolean(user?.is_premium);
-  const goAdmin = () => { onClose(); localStorage.setItem("admin_token", localStorage.getItem("user_token")); navigate("/admin"); };
+
+  const goAdmin = () => {
+    onClose();
+
+    const userToken = localStorage.getItem("user_token");
+    if (userToken) localStorage.setItem("admin_token", userToken);
+
+    const nonce = createAdminSessionNonce();
+    const target = `${window.location.origin}/admin/${nonce}`;
+
+    // Opening about:blank synchronously keeps this inside the user's click,
+    // so popup blockers are far less likely to reject it. The nonce is written
+    // only into the new browsing session before that window navigates to Admin.
+    const adminWindow = window.open(
+      "about:blank",
+      "_blank",
+      "popup=yes,width=1500,height=950,resizable=yes,scrollbars=yes"
+    );
+
+    if (adminWindow) {
+      try {
+        seedAdminSession(adminWindow.sessionStorage, nonce);
+        adminWindow.opener = null;
+        adminWindow.location.replace(target);
+        adminWindow.focus?.();
+        return;
+      } catch {
+        try { adminWindow.close(); } catch {}
+      }
+    }
+
+    // Fallback for browsers that don't expose the initial about:blank storage.
+    // The newly opened same-origin tab receives a snapshot of sessionStorage.
+    seedAdminSession(window.sessionStorage, nonce);
+    window.open(target, "_blank");
+  };
+
   return (
     <Popover
       open={Boolean(anchorEl)} anchorEl={anchorEl} onClose={onClose}
