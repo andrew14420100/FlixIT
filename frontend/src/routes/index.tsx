@@ -9,6 +9,18 @@ import { isActiveAdminSessionNonce } from "src/utils/adminSession";
 
 const adminChunk = () => import("src/admin/lazyRoutes");
 const adminPage = (name) => () => adminChunk().then((m) => ({ Component: m[name] }));
+const adminReadOnlyPage = (name, editPermission) => async () => {
+  const m = await adminChunk();
+  const Page = m[name];
+  const Guard = m.AdminReadOnlyGuard;
+  return {
+    Component: () => (
+      <Guard editPermission={editPermission}>
+        <Page />
+      </Guard>
+    ),
+  };
+};
 
 function isHomeRoute(pathname = "") {
   const raw = String(pathname || "/");
@@ -93,20 +105,20 @@ const router = createBrowserRouter([
         children: [
           { index: true, lazy: adminPage("DashboardPage") },
           { path: "dashboard", element: <Navigate to=".." replace relative="path" /> },
-          { path: "contents", lazy: adminPage("ContentsPage") },
-          { path: "hero", lazy: adminPage("HeroPage") },
-          { path: "sections", lazy: adminPage("SectionsPage") },
+          { path: "contents", lazy: adminReadOnlyPage("ContentsPage", "catalog_edit") },
+          { path: "hero", lazy: adminReadOnlyPage("HeroPage", "home_edit") },
+          { path: "sections", lazy: adminReadOnlyPage("SectionsPage", "home_edit") },
           { path: "menu", lazy: adminPage("MenuPage") },
-          { path: "settings", lazy: adminPage("SettingsPage") },
-          { path: "artwork", lazy: adminPage("ArtworkPage") },
-          { path: "trailers", lazy: adminPage("TrailersPage") },
+          { path: "settings", lazy: adminReadOnlyPage("SettingsPage", "settings_edit") },
+          { path: "artwork", lazy: adminReadOnlyPage("ArtworkPage", "catalog_edit") },
+          { path: "trailers", lazy: adminReadOnlyPage("TrailersPage", "catalog_edit") },
           { path: "logs", lazy: adminPage("LogsPage") },
           { path: "users", lazy: adminPage("UsersPage") },
           { path: "tickets", lazy: adminPage("TicketsPage") },
           { path: "plans", lazy: adminPage("PlansPage") },
           { path: "ads", lazy: adminPage("AdsPage") },
           { path: "premium-pages", lazy: adminPage("PremiumPagesPage") },
-          { path: "coming-soon", lazy: adminPage("ComingSoonAdminPage") },
+          { path: "coming-soon", lazy: adminReadOnlyPage("ComingSoonAdminPage", "catalog_edit") },
           { path: "payments", lazy: adminPage("PaymentsPage") },
         ],
       },
