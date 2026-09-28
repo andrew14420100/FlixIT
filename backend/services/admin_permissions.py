@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Dict
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,86 +17,61 @@ from pydantic import BaseModel
 
 
 DEFAULT_ADMIN_PERMISSIONS: Dict[str, bool] = {
-    # Users
     "users_view": True,
     "users_create": False,
     "users_edit": False,
     "users_assign_plan": False,
     "users_reset_password": True,
     "users_delete": False,
-    # Premium / payments
     "plans_view": True,
     "plans_manage": True,
     "payments_view": True,
     "refunds_manage": False,
-    # Advertising
     "ads_view": True,
     "ads_create": True,
     "ads_edit": True,
     "ads_delete": False,
-    # Catalog / home
     "catalog_view": True,
     "catalog_edit": False,
     "home_view": True,
     "home_edit": False,
-    # Technical settings / audit
     "settings_view": True,
     "settings_edit": False,
     "logs_view": True,
 }
 
 PERMISSION_GROUPS = [
-    {
-        "id": "users",
-        "label": "Utenti",
-        "items": [
-            ("users_view", "Visualizza utenti"),
-            ("users_create", "Crea utenti"),
-            ("users_edit", "Modifica ruoli e sospensioni"),
-            ("users_assign_plan", "Assegna o revoca piani"),
-            ("users_reset_password", "Forza reset password"),
-            ("users_delete", "Elimina utenti"),
-        ],
-    },
-    {
-        "id": "premium",
-        "label": "Premium e pagamenti",
-        "items": [
-            ("plans_view", "Visualizza piani Premium"),
-            ("plans_manage", "Modifica piani Premium"),
-            ("payments_view", "Visualizza pagamenti"),
-            ("refunds_manage", "Esegui rimborsi"),
-        ],
-    },
-    {
-        "id": "ads",
-        "label": "Pubblicità",
-        "items": [
-            ("ads_view", "Visualizza campagne"),
-            ("ads_create", "Crea campagne"),
-            ("ads_edit", "Modifica campagne"),
-            ("ads_delete", "Elimina campagne"),
-        ],
-    },
-    {
-        "id": "catalog",
-        "label": "Catalogo e Home",
-        "items": [
-            ("catalog_view", "Visualizza catalogo, artwork e trailer"),
-            ("catalog_edit", "Modifica catalogo, artwork e trailer"),
-            ("home_view", "Visualizza Hero e sezioni Home"),
-            ("home_edit", "Modifica Hero e sezioni Home"),
-        ],
-    },
-    {
-        "id": "system",
-        "label": "Sistema",
-        "items": [
-            ("settings_view", "Visualizza impostazioni tecniche"),
-            ("settings_edit", "Modifica impostazioni tecniche"),
-            ("logs_view", "Visualizza log attività"),
-        ],
-    },
+    {"id": "users", "label": "Utenti", "items": [
+        ("users_view", "Visualizza utenti"),
+        ("users_create", "Crea utenti"),
+        ("users_edit", "Modifica ruoli e sospensioni"),
+        ("users_assign_plan", "Assegna o revoca piani"),
+        ("users_reset_password", "Forza reset password"),
+        ("users_delete", "Elimina utenti"),
+    ]},
+    {"id": "premium", "label": "Premium e pagamenti", "items": [
+        ("plans_view", "Visualizza piani Premium"),
+        ("plans_manage", "Modifica piani Premium"),
+        ("payments_view", "Visualizza pagamenti"),
+        ("refunds_manage", "Esegui rimborsi"),
+    ]},
+    {"id": "ads", "label": "Pubblicità", "items": [
+        ("ads_view", "Visualizza campagne"),
+        ("ads_create", "Crea campagne"),
+        ("ads_edit", "Modifica campagne"),
+        ("ads_delete", "Elimina campagne"),
+    ]},
+    {"id": "catalog", "label": "Catalogo e Home", "items": [
+        ("catalog_view", "Visualizza catalogo, artwork e trailer"),
+        ("catalog_edit", "Modifica catalogo, artwork e trailer"),
+        ("home_view", "Visualizza Hero e sezioni Home"),
+        ("home_edit", "Modifica Hero e sezioni Home"),
+    ]},
+    {"id": "system", "label": "Sistema", "items": [
+        ("settings_view", "Visualizza impostazioni tecniche"),
+        ("settings_edit", "Modifica impostazioni tecniche"),
+        ("logs_view", "Visualizza log attività"),
+    ]},
 ]
 
 
@@ -121,6 +96,8 @@ def _required_permission(path: str, method: str):
         return "__superadmin__"
 
     if path.startswith("/api/admin/users"):
+        if "/payments" in path:
+            return "payments_view" if method == "GET" else "refunds_manage"
         if method == "GET":
             return "users_view"
         if "force-reset" in path or "reset-password" in path:
