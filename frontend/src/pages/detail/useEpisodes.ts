@@ -1,11 +1,11 @@
 // @ts-nocheck
 /**
- * FlixIT Detail Page - instant persistent season/episode cache.
+ * FlixIT Detail Page - strict Italian episode cache (v15).
  *
- * v14 renders every episode returned by the authoritative backend immediately.
- * The backend already removes definitive non-Italian episodes; rows whose audio
- * is still being checked remain visible instead of turning the whole season into
- * an empty/loading state.
+ * The backend is authoritative for episode visibility. A season is persisted in
+ * the browser only after the backend has an authoritative Italian catalogue for
+ * that exact season; provisional metadata must never become a long-lived cache
+ * that can keep English/original episodes visible after validation completes.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -15,7 +15,7 @@ const SEASONS_STALE_MS = 30 * 60 * 1000;
 const EPISODES_STALE_MS = 10 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BACKGROUND_SEASON_CONCURRENCY = 2;
-const EPISODE_CACHE_PREFIX = "flixit:it-episodes-v14:";
+const EPISODE_CACHE_PREFIX = "flixit:it-episodes-v15:";
 const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
@@ -54,14 +54,28 @@ function hasEpisodes(value) {
   return Array.isArray(value?.episodes) && value.episodes.length > 0;
 }
 
+function isAuthoritativeSeason(value) {
+  return !!(
+    value &&
+    value.catalog_authoritative_for_season === true &&
+    String(value?.italian_audio_policy_version || "").includes("v15")
+  );
+}
+
+function clearPersistent(key) {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.removeItem(key); } catch {}
+  try { window.sessionStorage.removeItem(key); } catch {}
+}
+
 function writePersistent(key, value) {
   if (typeof window === "undefined" || !value) return;
 
-  // Never persist an empty answer. A temporary metadata/provider failure must
-  // not make an empty season the first paint for the next ten minutes.
-  if (!hasEpisodes(value)) {
-    try { window.localStorage.removeItem(key); } catch {}
-    try { window.sessionStorage.removeItem(key); } catch {}
+  // v15 never stores provisional/unfiltered metadata as a fresh episode cache.
+  // This prevents an English/original row from surviving after the backend has
+  // refreshed the Italian catalogue.
+  if (!hasEpisodes(value) || !isAuthoritativeSeason(value)) {
+    clearPersistent(key);
     return;
   }
 
@@ -88,7 +102,12 @@ async function warmSeason(mediaId, seasonNumber) {
   const promise = (async () => {
     const storageKey = `${EPISODE_CACHE_PREFIX}${mediaId}:${seasonNumber}`;
     const cached = readPersistent(storageKey);
-    if (cached && hasEpisodes(cached.data) && Date.now() - cached.savedAt < EPISODES_STALE_MS) {
+    if (
+      cached &&
+      isAuthoritativeSeason(cached.data) &&
+      hasEpisodes(cached.data) &&
+      Date.now() - cached.savedAt < EPISODES_STALE_MS
+    ) {
       return cached.data;
     }
 
@@ -116,7 +135,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const seasonsCached = useMemo(() => readPersistent(seasonsCacheKey), [seasonsCacheKey]);
 
   const seasonsQuery = useQuery({
-    queryKey: ["dp-seasons-it-v14", mediaId],
+    queryKey: ["dp-seasons-it-v15", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
     initialData: seasonsCached?.data,
@@ -167,10 +186,12 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
 
   const episodeCacheKey = `${EPISODE_CACHE_PREFIX}${mediaId}:${selected}`;
   const rawEpisodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
-  const episodeCached = hasEpisodes(rawEpisodeCached?.data) ? rawEpisodeCached : null;
+  const episodeCached = isAuthoritativeSeason(rawEpisodeCached?.data) && hasEpisodes(rawEpisodeCached?.data)
+    ? rawEpisodeCached
+    : null;
 
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-it-v14", mediaId, selected],
+    queryKey: ["dp-season-episodes-it-v15", mediaId, selected],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
     enabled: !!mediaId && !!selected && !!enabled,
     initialData: episodeCached?.data,
@@ -184,9 +205,9 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     retry: 1,
     refetchInterval: (query) => {
       const data = query?.state?.data || {};
-      // Validation happens behind the already-visible list. Poll gently so a
-      // confirmed negative disappears without ever showing a loading panel.
-      return Number(data?.validation_pending_count || 0) > 0 ? 5000 : false;
+      if (data?.catalog_pending === true) return 1000;
+      if (Number(data?.validation_pending_count || 0) > 0) return 1500;
+      return false;
     },
     refetchIntervalInBackground: true,
   });
@@ -203,6 +224,8 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
       ? episodeCached.data
       : episodesQuery.data;
 
+  // Backend v15 has already removed episodes absent from an authoritative
+  // Italian season catalogue. Keep only explicit negatives out as an extra guard.
   const episodes = useMemo(
     () => (episodeSource?.episodes || []).filter(
       (episode) => episode?.vixsrc_available !== false && episode?.italian_available !== false
@@ -264,7 +287,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     episodes,
     loadingSeasons: seasonsQuery.isLoading && !seasonsQuery.data,
     loadingEpisodes: episodes.length === 0 && episodesQuery.isLoading && !episodeCached?.data,
-    checkingItalian: false,
+    checkingItalian: episodes.length === 0 && episodesQuery.data?.catalog_pending === true,
     seasonsError: seasonsQuery.isError,
   };
 }
