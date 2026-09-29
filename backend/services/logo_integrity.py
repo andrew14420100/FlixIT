@@ -1,12 +1,12 @@
 """Logo integrity guard for performance artwork bundles.
 
 Backdrop/card matching may tolerate a fuzzy title match, but a wrong transparent
-logo is visually much worse.  Keep artwork matching permissive while publishing a
-logo only when the StreamingCommunity record name exactly matches either the
-Italian or original title after normalization.
+logo is visually much worse. Artwork remains available, while transparent logos
+are published only for an exact normalized title identity.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import unicodedata
 from typing import Any
@@ -23,11 +23,14 @@ def _normal(value: Any) -> str:
 
 def _exact_title(raw: dict, provider_name: Any) -> bool:
     expected = {
-        _normal(raw.get("title") or raw.get("name")),
-        _normal(raw.get("original_title") or raw.get("original_name")),
+        _normal(raw.get("title")),
+        _normal(raw.get("name")),
+        _normal(raw.get("original_title")),
+        _normal(raw.get("original_name")),
     }
     expected.discard("")
-    return bool(expected and _normal(provider_name) in expected)
+    provider = _normal(provider_name)
+    return bool(provider and provider in expected)
 
 
 def install_logo_integrity(app=None) -> bool:
@@ -62,12 +65,33 @@ def install_logo_integrity(app=None) -> bool:
     verified_bundle._original = current
     performance_api._bundle = verified_bundle
 
+    # The persistent Home snapshot may have been built before this guard was
+    # installed. Rebuild it in the background and then hot-reload the fast path;
+    # users continue receiving the old snapshot until the verified one is ready.
+    if app is not None:
+        async def rebuild_home_visuals() -> None:
+            try:
+                import server_core as core
+                from services import home_bootstrap as home
+                from services import home_bootstrap_fast as home_fast
+
+                await home._build_snapshot(app, core)
+                await asyncio.to_thread(home_fast._read_hot, core, home, force=True)
+            except Exception:
+                pass
+
+        try:
+            asyncio.get_running_loop().create_task(rebuild_home_visuals())
+        except RuntimeError:
+            pass
+
     try:
         if app is not None:
             app.state.flixit_logo_integrity = {
                 "installed": True,
                 "mode": "exact_normalized_title_for_logo",
-                "ambiguous_logo_behavior": "hide_logo_keep_backdrop",
+                "ambiguous_logo_behavior": "hide_logo_keep_backdrop_use_title_fallback",
+                "home_snapshot_refresh": "background",
             }
     except Exception:
         pass
