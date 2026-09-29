@@ -8,7 +8,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { API_URL } from "./detailUtils";
+import { API_URL, warmPlayback } from "./detailUtils";
 
 const SEASONS_STALE_MS = 30 * 60 * 1000;
 const EPISODES_STALE_MS = 10 * 60 * 1000;
@@ -100,8 +100,9 @@ export function episodeStillUrl(value) {
   return raw.startsWith("/") ? `https://image.tmdb.org/t/p/w780${raw}` : "";
 }
 
-export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
+export default function useEpisodes(mediaId, enabled, preferredSeason, active, preferredEpisode = 1) {
   const preferred = Math.max(1, Number(preferredSeason || 1));
+  const preferredEpisodeNumber = Math.max(1, Number(preferredEpisode || 1));
   const seasonsCacheKey = `flixit:it-seasons:${mediaId}`;
   const seasonsCached = useMemo(() => readPersistent(seasonsCacheKey), [seasonsCacheKey]);
 
@@ -208,6 +209,26 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
       image.src = src;
     });
   }, [episodes]);
+
+  // Resolve only the episode the user is most likely to play and its successor.
+  // The global fetch coalescer and backend stream_cache make duplicate calls cheap,
+  // while limiting this to two streams avoids hammering the provider.
+  useEffect(() => {
+    if (!enabled || !mediaId || !selected || !episodes.length) return undefined;
+    const wanted = Number(selected) === preferred
+      ? preferredEpisodeNumber
+      : Number(episodes[0]?.episode_number || 1);
+    let index = episodes.findIndex((episode) => Number(episode?.episode_number) === wanted);
+    if (index < 0) index = 0;
+    const targets = episodes.slice(index, index + 2)
+      .map((episode) => Number(episode?.episode_number || 0))
+      .filter(Boolean);
+    return scheduleIdle(() => {
+      targets.forEach((episodeNumber) => {
+        void warmPlayback("tv", Number(mediaId), Number(selected), episodeNumber);
+      });
+    }, active ? 500 : 1400);
+  }, [enabled, mediaId, selected, preferred, preferredEpisodeNumber, active, episodes]);
 
   useEffect(() => {
     if (!enabled || !mediaId || seasons.length < 2) return undefined;
