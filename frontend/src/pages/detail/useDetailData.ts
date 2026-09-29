@@ -1,10 +1,10 @@
 // @ts-nocheck
 /**
  * FlixIT Detail Page v2 - data layer.
- * Priority: Italian detail -> SC title logo -> artwork/media assets ->
- * direct image fallback -> progress -> verified Italian non-YouTube trailer.
+ * Priority: cached Home visual seed -> Italian detail -> verified SC title logo
+ * -> artwork/media assets -> direct image fallback -> account progress -> trailer.
  */
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useGetAppendedVideosQuery, useGetTVSeasonDetailsQuery } from "src/store/slices/discover";
 import { MEDIA_TYPE } from "src/types/Common";
@@ -19,6 +19,7 @@ const TMDB_ORIGINAL_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
 const TMDB_EPISODE_IMAGE_BASE = "https://image.tmdb.org/t/p/w780";
 const DETAIL_CACHE_PREFIX = "flixit:detail:v1:";
 const DETAIL_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
 
 function detailCacheKey(typeSlug: string, mediaId: number) {
   return `${DETAIL_CACHE_PREFIX}${typeSlug}:${mediaId}`;
@@ -44,6 +45,82 @@ function writeDetailCache(typeSlug: string, mediaId: number, data: any) {
       JSON.stringify({ savedAt: Date.now(), data })
     );
   } catch {}
+}
+
+function itemId(value: any) {
+  try {
+    return Number(value?.tmdbId || value?.tmdb_id || value?.contentId || value?.id || 0);
+  } catch {
+    return 0;
+  }
+}
+
+function itemType(value: any) {
+  const raw = String(value?.type || value?.media_type || value?.mediaType || "").toLowerCase();
+  return raw === "tv" ? "tv" : "movie";
+}
+
+function isStreamingCommunityLogo(source: any) {
+  const value = String(source || "").trim().toLowerCase();
+  return value === "streamingcommunity" || value.startsWith("streamingcommunity_");
+}
+
+function visualSeedFromItem(item: any, typeSlug: string, mediaId: number) {
+  if (!item || itemId(item) !== Number(mediaId) || itemType(item) !== typeSlug) return null;
+  const detail = item?.detail && typeof item.detail === "object" ? item.detail : item;
+  const artwork = item?.__artwork && typeof item.__artwork === "object" ? item.__artwork : {};
+  const assets = item?.assets && typeof item.assets === "object" ? item.assets : {};
+
+  const verifiedArtworkLogo = artwork?.logo_verified !== false && isStreamingCommunityLogo(artwork?.logo_source)
+    ? artwork?.logo_url
+    : null;
+  const assetLogo = isStreamingCommunityLogo(assets?.logo_source)
+    ? (assets?.logo_path || assets?.logo_url)
+    : null;
+
+  return {
+    detail,
+    backdrop:
+      item?.customBackdrop ||
+      artwork?.detail_backdrop_url ||
+      artwork?.hero_backdrop_url ||
+      artwork?.backdrop_url ||
+      assets?.detail_backdrop_path ||
+      assets?.hero_backdrop_path ||
+      assets?.backdrop_path ||
+      detail?.backdrop_path ||
+      null,
+    fallbackBackdrop:
+      detail?.backdrop_path || assets?.backdrop_path || detail?.poster_path || null,
+    logo: verifiedArtworkLogo || assetLogo || null,
+    logoSource: verifiedArtworkLogo || assetLogo ? "streamingcommunity" : null,
+  };
+}
+
+function readHomeVisualSeed(typeSlug: string, mediaId: number) {
+  if (typeof window === "undefined" || !mediaId) return null;
+
+  try {
+    const liveHero = (window as any).__flixitHomeHero;
+    const seed = visualSeedFromItem(liveHero, typeSlug, mediaId);
+    if (seed) return seed;
+  } catch {}
+
+  try {
+    const cached = JSON.parse(localStorage.getItem(HOME_CACHE_KEY) || "null")?.data;
+    if (!cached) return null;
+
+    const heroSeed = visualSeedFromItem(cached?.hero, typeSlug, mediaId);
+    if (heroSeed) return heroSeed;
+
+    for (const row of cached?.rows || []) {
+      for (const item of row?.items || []) {
+        const seed = visualSeedFromItem(item, typeSlug, mediaId);
+        if (seed) return seed;
+      }
+    }
+  } catch {}
+  return null;
 }
 
 function tmdbOriginalArtUrl(value: any) {
@@ -76,18 +153,14 @@ function uniqueUrls(values: any[]) {
   return result;
 }
 
-function isStreamingCommunityLogo(source: any) {
-  const value = String(source || "").trim().toLowerCase();
-  return value === "streamingcommunity" || value.startsWith("streamingcommunity_");
-}
-
 export default function useDetailData(typeSlug: string, mediaId: number) {
   const isTV = typeSlug === "tv";
   const type = isTV ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
   const cachedDetail = useMemo(() => readDetailCache(typeSlug, mediaId), [typeSlug, mediaId]);
+  const homeSeed = useMemo(() => readHomeVisualSeed(typeSlug, mediaId), [typeSlug, mediaId]);
 
   const detailQuery = useGetAppendedVideosQuery({ mediaType: type, id: mediaId }, { skip: !mediaId });
-  const detail = detailQuery.data || cachedDetail || null;
+  const detail = detailQuery.data || cachedDetail || homeSeed?.detail || null;
   const detailError = !!detailQuery.isError && !detail;
 
   useEffect(() => {
@@ -117,7 +190,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   const assets = useAutomaticMediaAssets(assetItem, type, !!mediaId);
 
   const officialArtwork = useQuery({
-    queryKey: ["dp-sc-logo-only-v3", typeSlug, mediaId],
+    queryKey: ["dp-sc-logo-only-v4-verified", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
       const response = await fetch(`${API_URL}/api/public/official-artwork/${typeSlug}/${mediaId}`, {
         signal,
@@ -155,13 +228,18 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   const officialScLogo = isStreamingCommunityLogo(officialArtwork.data?.logo_source)
     ? artUrl(officialArtwork.data?.logo_url)
     : null;
+  const seededScLogo = isStreamingCommunityLogo(homeSeed?.logoSource)
+    ? artUrl(homeSeed?.logo)
+    : null;
   const automaticScLogo = isStreamingCommunityLogo(assets?.logo_source)
     ? artUrl(assets?.logo_path)
     : null;
-  const existingLogoUrl = officialScLogo || automaticScLogo || null;
+  const existingLogoUrl = officialScLogo || seededScLogo || automaticScLogo || null;
 
-  const backdropUrls = useMemo(
+  const preferredBackdropUrls = useMemo(
     () => uniqueUrls([
+      artUrl(homeSeed?.backdrop),
+      artUrl(homeSeed?.fallbackBackdrop),
       artUrl(officialArtwork.data?.detail_backdrop_url),
       artUrl(officialArtwork.data?.hero_backdrop_url),
       artUrl(officialArtwork.data?.backdrop_url),
@@ -177,6 +255,10 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       tmdbOriginalArtUrl(englishFallback.data?.poster_path),
     ]),
     [
+      typeSlug,
+      mediaId,
+      homeSeed?.backdrop,
+      homeSeed?.fallbackBackdrop,
       officialArtwork.data?.detail_backdrop_url,
       officialArtwork.data?.hero_backdrop_url,
       officialArtwork.data?.backdrop_url,
@@ -195,6 +277,31 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
       englishFallback.data?.poster_path,
     ]
   );
+
+  // Once a backdrop exists for a title, keep that candidate list stable. Async
+  // artwork responses may enrich the page, but must not blank/swap the Hero that
+  // was already visible to the user.
+  const stableBackdropRef = useRef({ key: "", urls: [] as string[] });
+  const visualKey = `${typeSlug}:${mediaId}`;
+  if (stableBackdropRef.current.key !== visualKey) {
+    stableBackdropRef.current = { key: visualKey, urls: [] };
+  }
+  if (!stableBackdropRef.current.urls.length && preferredBackdropUrls.length) {
+    stableBackdropRef.current = { key: visualKey, urls: preferredBackdropUrls };
+  }
+  const backdropUrls = stableBackdropRef.current.urls.length
+    ? stableBackdropRef.current.urls
+    : preferredBackdropUrls;
+
+  useEffect(() => {
+    if (typeof Image === "undefined") return;
+    [backdropUrls[0], existingLogoUrl].filter(Boolean).forEach((src, index) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.fetchPriority = index === 0 ? "high" : "auto";
+      image.src = String(src);
+    });
+  }, [visualKey, backdropUrls[0], existingLogoUrl]);
 
   const { items: continueWatchingItems } = useContinueWatching();
   const progressItem = useMemo(
