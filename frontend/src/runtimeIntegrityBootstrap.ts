@@ -2,22 +2,25 @@
 /**
  * Runtime integrity guard installed before React/router code.
  *
- * v13 invalidates empty/legacy episode payloads and accepts only the current
- * fast per-episode Italian verdicts.
+ * v14 keeps guest/account cleanup and rejects cacheable player failures, but the
+ * backend is now authoritative for TV-season visibility.  The browser must not
+ * filter a season down to only already-verified positives: unknown episodes are
+ * intentionally visible while Italian-audio validation runs in the background.
  */
 
-const FLAG = "__flixitRuntimeIntegrityV13";
-const POLICY = "strict-it-v13-fast-episode-lang-it";
+const FLAG = "__flixitRuntimeIntegrityV14";
 const EPISODE_SCHEMA_KEY = "flixit-episode-audio-schema";
-const EPISODE_SCHEMA = "13";
+const EPISODE_SCHEMA = "14";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
 const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
 const OLD_EPISODE_PREFIXES = [
   "flixit:it-episodes-v2:",
   "flixit:it-episodes-v3-audio-evidence:",
+  "flixit:it-episodes-v12:",
+  "flixit:it-episodes-v13:",
+  "flixit:it-episodes-v14:",
 ];
-const SEASON_RE = /^\/api\/public\/tv\/\d+\/season\/\d+\/?$/;
 const PLAYER_RE = /^\/api\/player\/(?:movie\/\d+|tv\/\d+\/\d+\/\d+)\/?$/;
 
 function purgeLegacyAndGuestState() {
@@ -30,11 +33,7 @@ function purgeLegacyAndGuestState() {
           const remove: string[] = [];
           for (let index = 0; index < storage.length; index += 1) {
             const key = storage.key(index) || "";
-            if (
-              OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
-              key.startsWith("flixit:it-episodes-v12:") ||
-              key.startsWith("flixit:it-episodes-v13:")
-            ) remove.push(key);
+            if (OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix))) remove.push(key);
           }
           remove.forEach((key) => storage.removeItem(key));
         } catch {}
@@ -70,16 +69,6 @@ function purgeLegacyAndGuestState() {
       removeSession.forEach((key) => window.sessionStorage.removeItem(key));
     }
   } catch {}
-}
-
-function confirmedItalianEpisode(episode: any) {
-  return !!(
-    episode &&
-    episode.italian_available === true &&
-    String(episode.italian_audio_status || "") === "italian" &&
-    episode.italian_audio_evidence_explicit === true &&
-    String(episode.italian_audio_policy_version || "") === POLICY
-  );
 }
 
 function jsonResponse(payload: any, source: Response, status = source.status) {
@@ -124,31 +113,12 @@ if (typeof window !== "undefined" && !(window as any)[FLAG]) {
       } catch {
         return jsonResponse({ detail: "Risposta player non valida" }, response, 502);
       }
-      return response;
     }
 
-    if (!response.ok || !SEASON_RE.test(url.pathname)) return response;
-
-    try {
-      const payload = await response.clone().json();
-      if (!Array.isArray(payload?.episodes)) return response;
-      return jsonResponse({
-        ...payload,
-        episodes: payload.episodes.filter(confirmedItalianEpisode),
-        italian_audio_policy: "fast_episode_lang_it_then_hls_background",
-        italian_audio_policy_version: POLICY,
-      }, response);
-    } catch {
-      return new Response(JSON.stringify({
-        episodes: [],
-        italian_audio_policy: "fast_episode_lang_it_then_hls_background",
-        italian_audio_policy_version: POLICY,
-        pending_recheck_seconds: 1,
-      }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
+    // TV-season responses pass through unchanged.  The v14 backend route already
+    // hides definitive negatives and deliberately keeps validation-pending rows
+    // visible so the episode panel is never empty just because VixSrc is slow.
+    return response;
   };
 }
 

@@ -76,9 +76,19 @@ def _install_ads_registration_hook():
         except Exception as exc:
             print(f"[player-hot-warm] registration skipped: {exc}")
 
+        # Install the final season route synchronously while server_core is still
+        # registering services. This guarantees that requests cannot arrive before
+        # v14 has replaced the older positive-only route.
+        episode_route_installed = False
+        try:
+            from services.episode_availability_v12 import install_episode_availability_v12
+            episode_route_installed = bool(install_episode_availability_v12(app, db))
+        except Exception as exc:
+            print(f"[episode-availability-v14] direct registration skipped: {exc}")
+
         async def install_post_registration_guards():
-            # Player resolver itself now requests VixSrc with lang=it. Keep the
-            # playlist-level guard as an additional last-mile protection.
+            # Player resolver itself requests VixSrc with lang=it. Keep the
+            # playlist-level guard as a final protection.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -91,17 +101,20 @@ def _install_ads_registration_hook():
             except Exception as exc:
                 print(f"[logo-integrity] registration skipped: {exc}")
 
-            # v12 is deliberately installed as the final TV-season route. Do not
-            # warm the global VixSrc episode feed here: that feed is not a complete
-            # historical archive and was the cause of whole seasons being hidden.
+            # The route is already live. Startup is used only to warm other
+            # seasons/titles in the background; user requests never wait for it.
             try:
-                from services.episode_availability_v12 import install_episode_availability_v12
-                installed = install_episode_availability_v12(app, db)
+                installed = episode_route_installed or bool(
+                    getattr(app.state, "flixit_episode_availability_v14", False)
+                )
+                if not installed:
+                    from services.episode_availability_v12 import install_episode_availability_v12
+                    installed = bool(install_episode_availability_v12(app, db))
                 if installed:
                     from services.episode_prewarm_launcher import launch_episode_prewarm
                     launch_episode_prewarm(app, db)
             except Exception as exc:
-                print(f"[episode-availability-v12] registration skipped: {exc}")
+                print(f"[episode-availability-v14] prewarm skipped: {exc}")
 
         app.add_event_handler("startup", install_post_registration_guards)
         return result

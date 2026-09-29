@@ -1,10 +1,11 @@
-"""Regression checks for v13 fast per-episode Italian playback policy."""
+"""Regression checks for v14 metadata-first Italian episode visibility."""
 import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "backend" / "services"
 FRONTEND = ROOT / "frontend" / "src"
+STARTUP = ROOT / "backend" / "sitecustomize.py"
 
 
 def load(name, path):
@@ -22,10 +23,10 @@ def check(condition, message):
 
 
 def run():
-    policy = load("episode_availability_v13_test", SERVICES / "episode_availability_v12.py")
-    vix = load("vixsrc_v13_test", SERVICES / "vixsrc.py")
+    policy = load("episode_availability_v14_test", SERVICES / "episode_availability_v12.py")
+    vix = load("vixsrc_v14_test", SERVICES / "vixsrc.py")
 
-    check(policy.POLICY_VERSION == "strict-it-v13-fast-episode-lang-it", "wrong v13 policy")
+    check(policy.POLICY_VERSION == "strict-it-v14-visible-while-validating", "wrong v14 policy")
 
     it_manifest = '''#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="it",NAME="Italiano",DEFAULT=YES\n'''
     en_manifest = '''#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="en",NAME="English",DEFAULT=YES\n'''
@@ -33,7 +34,7 @@ def run():
 
     check(policy._audio_tag_verdict(it_manifest) is True, "Italian HLS audio rejected")
     check(policy._audio_tag_verdict(en_manifest) is False, "English-only HLS audio accepted")
-    check(policy._audio_tag_verdict(muxed_manifest) is None, "Muxed audio should be unknown, not rejected")
+    check(policy._audio_tag_verdict(muxed_manifest) is None, "Muxed audio should remain unknown")
 
     check(policy._payload_language_verdict({"src": "https://x/embed?lang=it"}) is None, "lang=it candidate rejected")
     check(policy._payload_language_verdict({"src": "https://x/embed?lang=en"}) is False, "explicit English candidate accepted")
@@ -46,20 +47,49 @@ def run():
     for episode in (19, 20, 21):
         check((65334, 6, episode) in policy._BOOTSTRAP_NEGATIVE_OVERRIDES, f"S6E{episode} override missing")
 
+    # Unknown/transient states must remain visible. Only real negative evidence may
+    # remove an episode from a season.
+    check(policy._is_definitive_negative(None) is False, "missing verdict hides episode")
+    check(policy._is_definitive_negative({
+        "italian_available": False,
+        "italian_audio_status": "provider_unavailable",
+    }) is False, "provider outage hides episode")
+    check(policy._is_definitive_negative({
+        "italian_available": False,
+        "italian_audio_status": "language_unconfirmed",
+    }) is False, "unconfirmed language hides episode")
+    check(policy._is_definitive_negative({
+        "italian_available": False,
+        "italian_audio_status": "english_or_original_audio",
+    }) is True, "explicit English/original verdict is not hidden")
+    check(policy._is_definitive_negative({
+        "italian_available": False,
+        "italian_audio_status": "user_confirmed_original_audio",
+    }) is True, "manual negative is not hidden")
+
     source = (SERVICES / "episode_availability_v12.py").read_text(encoding="utf-8")
-    check("_background_tasks" in source and "_season_tasks" in source, "background tasks are not strongly retained")
-    check("await asyncio.wait({warm_task}" in source, "season warm-up must not be cancelled by a request timeout")
-    check("vixsrc_episode_api_lang_it" in source, "fast lang=it API evidence missing")
+    check("_background_tasks" in source and "_season_tasks" in source, "background tasks are not retained")
+    check("_start_season_warm(db, tmdb_id, season_number, missing)" in source, "background season validation missing")
+    check("Never wait for the provider in the user's request path" in source, "route may block on provider validation")
+    check("provider_unavailable" not in policy._DEFINITIVE_NEGATIVE_STATUSES, "provider outage became a definitive negative")
+
+    startup = STARTUP.read_text(encoding="utf-8")
+    install_pos = startup.find("episode_route_installed = bool(install_episode_availability_v12(app, db))")
+    startup_handler_pos = startup.find("async def install_post_registration_guards")
+    check(install_pos >= 0, "v14 route is not installed synchronously")
+    check(startup_handler_pos > install_pos, "v14 route is still installed only during startup")
 
     use_episodes = (FRONTEND / "pages" / "detail" / "useEpisodes.ts").read_text(encoding="utf-8")
-    check('flixit:it-episodes-v13:' in use_episodes, "frontend still uses an old episode cache namespace")
-    check("if (!hasVerifiedEpisodes(value))" in use_episodes, "empty season responses can still be persisted")
+    check('flixit:it-episodes-v14:' in use_episodes, "frontend still uses an old episode cache namespace")
+    check("episode?.italian_available !== false" in use_episodes, "frontend still requires positive verification before rendering")
+    check("episode?.italian_available === true" not in use_episodes, "positive-only frontend filter survived")
 
     runtime = (FRONTEND / "runtimeIntegrityBootstrap.ts").read_text(encoding="utf-8")
-    check('EPISODE_SCHEMA = "13"' in runtime, "runtime did not invalidate v12 episode cache")
-    check('strict-it-v13-fast-episode-lang-it' in runtime, "runtime policy does not match backend v13")
+    check('EPISODE_SCHEMA = "14"' in runtime, "runtime did not invalidate v13 episode cache")
+    check("confirmedItalianEpisode" not in runtime, "runtime still filters season rows to positive-only verdicts")
+    check("TV-season responses pass through unchanged" in runtime, "backend is not authoritative for season visibility")
 
-    print("episode-availability-v13: PASS")
+    print("episode-availability-v14: PASS")
 
 
 if __name__ == "__main__":
