@@ -66,27 +66,29 @@ def _install_ads_registration_hook():
         except Exception as exc:
             print(f"[admin-permissions] registration skipped: {exc}")
 
-        # Player stream URLs can still request Italian as the preferred track,
-        # but availability itself is no longer inferred here or during a request.
         try:
             from services.player_hot_warm import install_player_hot_warm
             install_player_hot_warm(app, db)
         except Exception as exc:
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # v16 is installed synchronously before FastAPI starts accepting requests.
-        # It hydrates the last complete Mongo generation immediately and replaces
-        # every older v10-v15 request-time season filter with one index-only route.
+        # v16 remains the only Italian availability authority, but its Mongo
+        # hydration is scheduled after startup so a slow Atlas read can never
+        # prevent FastAPI (and therefore the website shell) from becoming ready.
         italian_index_installed = False
         try:
-            from services.italian_media_index_v16 import install_italian_media_index_v16
-            italian_index_installed = bool(install_italian_media_index_v16(app, db))
+            from services.italian_media_index_v16_fastboot import (
+                install_italian_media_index_v16_fastboot,
+            )
+            italian_index_installed = bool(
+                install_italian_media_index_v16_fastboot(app, db)
+            )
         except Exception as exc:
-            print(f"[italian-index-v16] direct registration skipped: {exc}")
+            print(f"[italian-index-v16] fastboot registration skipped: {exc}")
 
         async def install_post_registration_guards():
-            # This only influences which audio track the provider selects after an
-            # already-indexed title reaches the player. It is not availability proof.
+            # Track selection stays separate from availability. Availability comes
+            # only from the prebuilt v16 index once its persisted generation loads.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -99,16 +101,16 @@ def _install_ads_registration_hook():
             except Exception as exc:
                 print(f"[logo-integrity] registration skipped: {exc}")
 
-            # Normally install_italian_media_index_v16 already registered its
-            # startup worker. This fallback exists only if registration ordering
-            # changes in a future backend refactor.
+            # Fallback only if registration ordering changes in a future refactor.
             try:
                 installed = italian_index_installed or bool(
-                    getattr(app.state, "flixit_italian_media_index_v16", False)
+                    getattr(app.state, "flixit_italian_media_index_v16_fastboot", False)
                 )
                 if not installed:
-                    from services.italian_media_index_v16 import install_italian_media_index_v16
-                    install_italian_media_index_v16(app, db)
+                    from services.italian_media_index_v16_fastboot import (
+                        install_italian_media_index_v16_fastboot,
+                    )
+                    install_italian_media_index_v16_fastboot(app, db)
             except Exception as exc:
                 print(f"[italian-index-v16] startup fallback skipped: {exc}")
 
