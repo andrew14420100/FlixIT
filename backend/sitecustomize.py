@@ -76,19 +76,26 @@ def _install_ads_registration_hook():
         except Exception as exc:
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # Install the final season route synchronously while server_core is still
-        # registering services. This guarantees that requests cannot arrive before
-        # v14 has replaced the older positive-only route.
+        # Install v14 first so its helpers/caches stay available, then immediately
+        # replace its public season route with v15. v15 is therefore the final
+        # route before FastAPI starts accepting user requests.
         episode_route_installed = False
         try:
             from services.episode_availability_v12 import install_episode_availability_v12
-            episode_route_installed = bool(install_episode_availability_v12(app, db))
+            install_episode_availability_v12(app, db)
+            from services.strict_italian_episode_catalog_v15 import (
+                install_strict_italian_episode_catalog_v15,
+            )
+            episode_route_installed = bool(
+                install_strict_italian_episode_catalog_v15(app, db)
+            )
         except Exception as exc:
-            print(f"[episode-availability-v14] direct registration skipped: {exc}")
+            print(f"[episode-availability-v15] direct registration skipped: {exc}")
 
         async def install_post_registration_guards():
             # Player resolver itself requests VixSrc with lang=it. Keep the
-            # playlist-level guard as a final protection.
+            # playlist-level guard as a final preference, but v15 does not treat
+            # that preference alone as proof of an Italian dub.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -101,20 +108,27 @@ def _install_ads_registration_hook():
             except Exception as exc:
                 print(f"[logo-integrity] registration skipped: {exc}")
 
-            # The route is already live. Startup is used only to warm other
-            # seasons/titles in the background; user requests never wait for it.
+            # Refresh the complete Italian episode catalogue at startup. The
+            # persisted Mongo snapshot remains available immediately while this
+            # refresh runs, so user requests do not wait on the provider.
             try:
+                from services.strict_italian_episode_catalog_v15 import (
+                    ensure_catalog_warm,
+                    install_strict_italian_episode_catalog_v15,
+                )
                 installed = episode_route_installed or bool(
-                    getattr(app.state, "flixit_episode_availability_v14", False)
+                    getattr(app.state, "flixit_episode_availability_v15", False)
                 )
                 if not installed:
-                    from services.episode_availability_v12 import install_episode_availability_v12
-                    installed = bool(install_episode_availability_v12(app, db))
+                    installed = bool(
+                        install_strict_italian_episode_catalog_v15(app, db)
+                    )
                 if installed:
+                    await ensure_catalog_warm(force=False)
                     from services.episode_prewarm_launcher import launch_episode_prewarm
                     launch_episode_prewarm(app, db)
             except Exception as exc:
-                print(f"[episode-availability-v14] prewarm skipped: {exc}")
+                print(f"[episode-availability-v15] prewarm skipped: {exc}")
 
         app.add_event_handler("startup", install_post_registration_guards)
         return result
