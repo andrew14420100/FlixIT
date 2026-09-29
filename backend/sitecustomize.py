@@ -15,14 +15,10 @@ import asyncio
 import os
 
 
-# Do not depend on SUPERVISOR_PROCESS_NAME: some Emergent/Supervisor launches do
-# not expose it to Python early enough for sitecustomize. The migration is
-# idempotent, so running it whenever this backend runtime starts is safe.
 if os.environ.get("FLIXIT_SKIP_PREMIUM_PRICE_MIGRATION") != "1":
     try:
         import migrate_premium_monthly_prices  # noqa: F401
     except Exception as exc:
-        # A maintenance migration must never prevent the API from starting.
         print(f"[premium-price-migration] skipped: {exc}")
 
 
@@ -92,8 +88,6 @@ def _install_ads_registration_hook():
             print(f"[player-hot-warm] registration skipped: {exc}")
 
         async def install_post_registration_guards():
-            # Direct VixSrc playback bypasses the iframe player, so preserve its
-            # documented Italian audio preference on the resolved master URL.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -101,23 +95,23 @@ def _install_ads_registration_hook():
                 print(f"[vixsrc-italian-audio] registration skipped: {exc}")
 
             try:
-                from services.strict_audio_evidence import (
-                    install_strict_audio_evidence,
-                    warm_italian_episode_catalog,
-                )
-                install_strict_audio_evidence(app)
-                # Load the provider's Italian episode catalogue before season
-                # snapshots begin their prewarm. A persisted catalogue is used
-                # immediately if the network refresh is temporarily slow.
+                import services.strict_audio_evidence as strict_audio
+                from services.vixsrc_episode_catalog_paged import install_paged_episode_catalog
+
+                strict_audio.install_strict_audio_evidence(app)
+                # Patch the policy with the complete paginated loader before any
+                # season snapshot asks for a verdict.
+                install_paged_episode_catalog(strict_audio)
                 try:
                     await asyncio.wait_for(
-                        warm_italian_episode_catalog(),
+                        strict_audio.warm_italian_episode_catalog(),
                         timeout=float(os.environ.get("VIXSRC_EPISODE_STARTUP_WARM_TIMEOUT", "40")),
                     )
                 except Exception as exc:
                     print(f"[strict-audio-evidence] catalog warm fallback: {exc}")
             except Exception as exc:
                 print(f"[strict-audio-evidence] registration skipped: {exc}")
+
             try:
                 from services.logo_integrity import install_logo_integrity
                 install_logo_integrity(app)
