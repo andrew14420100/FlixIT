@@ -1,10 +1,9 @@
-"""Regression checks for v14 metadata-first Italian episode visibility."""
+"""Regression checks for the v14 metadata-first helper retained under v15."""
 import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "backend" / "services"
-FRONTEND = ROOT / "frontend" / "src"
 STARTUP = ROOT / "backend" / "sitecustomize.py"
 
 
@@ -26,7 +25,7 @@ def run():
     policy = load("episode_availability_v14_test", SERVICES / "episode_availability_v12.py")
     vix = load("vixsrc_v14_test", SERVICES / "vixsrc.py")
 
-    check(policy.POLICY_VERSION == "strict-it-v14-visible-while-validating", "wrong v14 policy")
+    check(policy.POLICY_VERSION == "strict-it-v14-visible-while-validating", "wrong v14 helper policy")
 
     it_manifest = '''#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="it",NAME="Italiano",DEFAULT=YES\n'''
     en_manifest = '''#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",LANGUAGE="en",NAME="English",DEFAULT=YES\n'''
@@ -47,8 +46,8 @@ def run():
     for episode in (19, 20, 21):
         check((65334, 6, episode) in policy._BOOTSTRAP_NEGATIVE_OVERRIDES, f"S6E{episode} override missing")
 
-    # Unknown/transient states must remain visible. Only real negative evidence may
-    # remove an episode from a season.
+    # v14 remains the non-blocking per-episode/HLS helper used by v15 for seasons
+    # that are absent from the global Italian catalogue.
     check(policy._is_definitive_negative(None) is False, "missing verdict hides episode")
     check(policy._is_definitive_negative({
         "italian_available": False,
@@ -70,26 +69,18 @@ def run():
     source = (SERVICES / "episode_availability_v12.py").read_text(encoding="utf-8")
     check("_background_tasks" in source and "_season_tasks" in source, "background tasks are not retained")
     check("_start_season_warm(db, tmdb_id, season_number, missing)" in source, "background season validation missing")
-    check("Never wait for the provider in the user's request path" in source, "route may block on provider validation")
+    check("Never wait for the provider in the user's request path" in source, "helper may block on provider validation")
     check("provider_unavailable" not in policy._DEFINITIVE_NEGATIVE_STATUSES, "provider outage became a definitive negative")
 
     startup = STARTUP.read_text(encoding="utf-8")
-    install_pos = startup.find("episode_route_installed = bool(install_episode_availability_v12(app, db))")
+    v14_pos = startup.find("install_episode_availability_v12(app, db)")
+    v15_pos = startup.find("install_strict_italian_episode_catalog_v15(app, db)")
     startup_handler_pos = startup.find("async def install_post_registration_guards")
-    check(install_pos >= 0, "v14 route is not installed synchronously")
-    check(startup_handler_pos > install_pos, "v14 route is still installed only during startup")
+    check(v14_pos >= 0, "v14 helper route is not installed synchronously")
+    check(v15_pos > v14_pos, "v15 final route is not installed after the v14 helper")
+    check(startup_handler_pos > v15_pos, "final episode route is still installed only during startup")
 
-    use_episodes = (FRONTEND / "pages" / "detail" / "useEpisodes.ts").read_text(encoding="utf-8")
-    check('flixit:it-episodes-v14:' in use_episodes, "frontend still uses an old episode cache namespace")
-    check("episode?.italian_available !== false" in use_episodes, "frontend still requires positive verification before rendering")
-    check("episode?.italian_available === true" not in use_episodes, "positive-only frontend filter survived")
-
-    runtime = (FRONTEND / "runtimeIntegrityBootstrap.ts").read_text(encoding="utf-8")
-    check('EPISODE_SCHEMA = "14"' in runtime, "runtime did not invalidate v13 episode cache")
-    check("confirmedItalianEpisode" not in runtime, "runtime still filters season rows to positive-only verdicts")
-    check("TV-season responses pass through unchanged" in runtime, "backend is not authoritative for season visibility")
-
-    print("episode-availability-v14: PASS")
+    print("episode-availability-v14-helper: PASS")
 
 
 if __name__ == "__main__":
