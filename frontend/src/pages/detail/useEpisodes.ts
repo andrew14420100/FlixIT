@@ -124,7 +124,8 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     refetchOnMount: !seasonsCached,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    retry: 1,
+    refetchInterval: (query) => isScSeasonSnapshot(query?.state?.data) ? false : 2000,
+    retry: 2,
   });
 
   useEffect(() => {
@@ -170,7 +171,8 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     refetchOnMount: !episodeCached,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    retry: 1,
+    refetchInterval: (query) => isScEpisodeSnapshot(query?.state?.data) ? false : 1500,
+    retry: 2,
   });
 
   useEffect(() => {
@@ -236,13 +238,15 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     };
   }, [enabled, mediaId, selected, seasons.map((season) => season?.season_number).join(",")]);
 
+  const waitingForScSnapshot = !!enabled && !!mediaId && !episodeCached?.data && !isScEpisodeSnapshot(episodesQuery.data);
+
   return {
     seasons,
     selected,
     setSelected,
     episodes,
-    loadingSeasons: seasonsQuery.isLoading && !seasonsCached?.data,
-    loadingEpisodes: episodesQuery.isLoading && !episodeCached?.data,
+    loadingSeasons: !!enabled && !!mediaId && !seasonsCached?.data && !isScSeasonSnapshot(seasonsQuery.data),
+    loadingEpisodes: waitingForScSnapshot && !episodesQuery.isError,
     checkingItalian: false,
     seasonsError: seasonsQuery.isError,
   };
