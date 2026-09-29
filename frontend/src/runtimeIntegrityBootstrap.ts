@@ -2,14 +2,14 @@
 /**
  * Runtime integrity guard installed before React/router code.
  *
- * v15 invalidates every pre-v15 episode cache because v14 intentionally allowed
- * validation-pending rows to remain visible. The backend is authoritative for TV
- * season membership; the browser only guards player failures and account state.
+ * v16 invalidates all request-time-validation episode caches. From this version
+ * onward the browser stores only final snapshots produced by the persistent
+ * backend Italian media index.
  */
 
-const FLAG = "__flixitRuntimeIntegrityV15";
+const FLAG = "__flixitRuntimeIntegrityV16";
 const EPISODE_SCHEMA_KEY = "flixit-episode-audio-schema";
-const EPISODE_SCHEMA = "15";
+const EPISODE_SCHEMA = "16";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
 const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
@@ -20,6 +20,7 @@ const OLD_EPISODE_PREFIXES = [
   "flixit:it-episodes-v13:",
   "flixit:it-episodes-v14:",
   "flixit:it-episodes-v15:",
+  "flixit:it-episodes-v16:",
 ];
 const PLAYER_RE = /^\/api\/player\/(?:movie\/\d+|tv\/\d+\/\d+\/\d+)\/?$/;
 
@@ -115,8 +116,8 @@ if (typeof window !== "undefined" && !(window as any)[FLAG]) {
       }
     }
 
-    // TV-season responses pass through unchanged. v15 already applies the
-    // season-level Italian catalogue and explicit-audio policy server-side.
+    // Season membership is final before this request is made. The browser never
+    // performs, repeats or overrides Italian-language validation.
     return response;
   };
 }
