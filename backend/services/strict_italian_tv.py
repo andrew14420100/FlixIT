@@ -243,6 +243,17 @@ def install_strict_italian_tv_policy(app) -> bool:
     except Exception:
         pass
 
+    # Guaranteed runtime registration path for the SC-direct Detail routes.
+    # services.__init__ always calls this policy from premium registration, while
+    # sitecustomize is not guaranteed to execute in every Emergent launch mode.
+    # Install v18 LAST so its /seasons and /season/{n} handlers replace the older
+    # language-probe routes and /api/public/sc-direct/status always exists.
+    try:
+        from services.sc_direct_detail_v18 import install_sc_direct_detail_v18
+        install_sc_direct_detail_v18(app, core.db)
+    except Exception as exc:
+        print(f"[sc-direct-detail-v18] guaranteed registration skipped: {exc}")
+
     try:
         app.state.flixit_strict_italian_tv_policy = {
             "installed": True,
@@ -251,6 +262,9 @@ def install_strict_italian_tv_policy(app) -> bool:
             "mode": "explicit_italian_only_fail_closed_persistent",
             "catalog_rendering": "cached_lang_it_no_live_probe",
             "english_episode_metadata_fallback": False,
+            "sc_direct_detail_v18_registered": bool(
+                getattr(app.state, "flixit_sc_direct_detail_v18", False)
+            ),
         }
     except Exception:
         pass
