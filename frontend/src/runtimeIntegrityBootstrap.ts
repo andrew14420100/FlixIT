@@ -2,14 +2,14 @@
 /**
  * Runtime integrity guard installed before React/router code.
  *
- * v12 invalidates episode payloads produced by the global-feed v10/v11 policy
- * and accepts only per-episode Italian playback verdicts.
+ * v13 invalidates empty/legacy episode payloads and accepts only the current
+ * fast per-episode Italian verdicts.
  */
 
-const FLAG = "__flixitRuntimeIntegrityV12";
-const POLICY = "strict-it-v12-direct-episode-lang-it";
+const FLAG = "__flixitRuntimeIntegrityV13";
+const POLICY = "strict-it-v13-fast-episode-lang-it";
 const EPISODE_SCHEMA_KEY = "flixit-episode-audio-schema";
-const EPISODE_SCHEMA = "12";
+const EPISODE_SCHEMA = "13";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
 const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
@@ -30,7 +30,11 @@ function purgeLegacyAndGuestState() {
           const remove: string[] = [];
           for (let index = 0; index < storage.length; index += 1) {
             const key = storage.key(index) || "";
-            if (OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix))) remove.push(key);
+            if (
+              OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
+              key.startsWith("flixit:it-episodes-v12:") ||
+              key.startsWith("flixit:it-episodes-v13:")
+            ) remove.push(key);
           }
           remove.forEach((key) => storage.removeItem(key));
         } catch {}
@@ -131,13 +135,13 @@ if (typeof window !== "undefined" && !(window as any)[FLAG]) {
       return jsonResponse({
         ...payload,
         episodes: payload.episodes.filter(confirmedItalianEpisode),
-        italian_audio_policy: "direct_episode_lang_it_and_hls_audio",
+        italian_audio_policy: "fast_episode_lang_it_then_hls_background",
         italian_audio_policy_version: POLICY,
       }, response);
     } catch {
       return new Response(JSON.stringify({
         episodes: [],
-        italian_audio_policy: "direct_episode_lang_it_and_hls_audio",
+        italian_audio_policy: "fast_episode_lang_it_then_hls_background",
         italian_audio_policy_version: POLICY,
         pending_recheck_seconds: 1,
       }), {
