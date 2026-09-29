@@ -1,11 +1,16 @@
 """Regression checks for v15 strict Italian TV episode visibility."""
 import importlib.util
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SERVICES = ROOT / "backend" / "services"
+BACKEND = ROOT / "backend"
+SERVICES = BACKEND / "services"
 FRONTEND = ROOT / "frontend" / "src"
-STARTUP = ROOT / "backend" / "sitecustomize.py"
+STARTUP = BACKEND / "sitecustomize.py"
+
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
 
 
 def load(name, path):
