@@ -1,10 +1,10 @@
 // @ts-nocheck
 /**
- * FlixIT Detail Page - persistent seasons/episodes cache.
+ * FlixIT Detail Page - persistent strict Italian seasons/episodes cache.
  *
- * A refresh must render the last verified Italian catalogue immediately. Fresh
- * checks happen after paint and every season is warmed in the background, so
- * switching seasons does not create a loading state after the first visit.
+ * A refresh renders only episodes verified by the current strict Italian-audio
+ * policy. Old pre-policy browser caches are deliberately ignored so an English
+ * or original-only episode can never survive a backend policy upgrade.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -14,6 +14,7 @@ const SEASONS_STALE_MS = 30 * 60 * 1000;
 const EPISODES_STALE_MS = 10 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BACKGROUND_SEASON_CONCURRENCY = 2;
+const CACHE_VERSION = "strict-it-v8";
 const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
@@ -32,11 +33,11 @@ function readPersistent(key) {
       const raw = storage.getItem(key);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
+      if (parsed?.version !== CACHE_VERSION) return null;
       if (parsed?.data && Number(parsed?.savedAt || 0) > 0) {
         if (Date.now() - Number(parsed.savedAt) > CACHE_MAX_AGE_MS) return null;
         return { data: parsed.data, savedAt: Number(parsed.savedAt) };
       }
-      if (parsed && typeof parsed === "object") return { data: parsed, savedAt: Date.now() - EPISODES_STALE_MS };
     } catch {}
     return null;
   };
@@ -48,7 +49,9 @@ function readPersistent(key) {
 
 function hasVerifiedEpisodes(value) {
   return Array.isArray(value?.episodes) && value.episodes.some(
-    (episode) => episode?.italian_available === true && String(episode?.italian_audio_status || "italian") === "italian"
+    (episode) =>
+      episode?.italian_available === true &&
+      String(episode?.italian_audio_status || "") === "italian"
   );
 }
 
@@ -59,14 +62,10 @@ function isShortCheckingResponse(value) {
 
 function writePersistent(key, value) {
   if (typeof window === "undefined" || !value) return;
-
-  // Never let a temporary cold-backend "checking" response erase a previously
-  // verified season. The old verified list stays authoritative until a new
-  // verified response is ready, so opening the Episodi tab cannot flash empty.
   const previous = readPersistent(key)?.data;
   if (isShortCheckingResponse(value) && hasVerifiedEpisodes(previous)) return;
 
-  const payload = JSON.stringify({ savedAt: Date.now(), data: value });
+  const payload = JSON.stringify({ version: CACHE_VERSION, savedAt: Date.now(), data: value });
   try { window.localStorage.setItem(key, payload); } catch {
     try { window.sessionStorage.setItem(key, payload); } catch {}
   }
@@ -82,12 +81,16 @@ function scheduleIdle(callback, timeout = 1800) {
   return () => window.clearTimeout(id);
 }
 
+function episodeStorageKey(mediaId, seasonNumber) {
+  return `flixit:it-episodes:${CACHE_VERSION}:${mediaId}:${seasonNumber}`;
+}
+
 async function warmSeason(mediaId, seasonNumber) {
   const key = `${mediaId}:${seasonNumber}`;
   if (seasonWarmInflight.has(key)) return seasonWarmInflight.get(key);
 
   const promise = (async () => {
-    const storageKey = `flixit:it-episodes:${mediaId}:${seasonNumber}`;
+    const storageKey = episodeStorageKey(mediaId, seasonNumber);
     const cached = readPersistent(storageKey);
     if (cached && Date.now() - cached.savedAt < EPISODES_STALE_MS) return cached.data;
 
@@ -125,11 +128,11 @@ export function episodeStillUrl(value) {
 export default function useEpisodes(mediaId, enabled, preferredSeason, active, preferredEpisode = 1) {
   const preferred = Math.max(1, Number(preferredSeason || 1));
   const preferredEpisodeNumber = Math.max(1, Number(preferredEpisode || 1));
-  const seasonsCacheKey = `flixit:it-seasons:${mediaId}`;
+  const seasonsCacheKey = `flixit:it-seasons:${CACHE_VERSION}:${mediaId}`;
   const seasonsCached = useMemo(() => readPersistent(seasonsCacheKey), [seasonsCacheKey]);
 
   const seasonsQuery = useQuery({
-    queryKey: ["dp-seasons-it-v3-persistent", mediaId],
+    queryKey: ["dp-seasons", CACHE_VERSION, mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
     initialData: seasonsCached?.data,
@@ -175,10 +178,10 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     });
   }, [seasons, preferredSeason]);
 
-  const episodeCacheKey = `flixit:it-episodes:${mediaId}:${selected}`;
+  const episodeCacheKey = episodeStorageKey(mediaId, selected);
   const episodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-it-v5-never-blank", mediaId, selected],
+    queryKey: ["dp-season-episodes", CACHE_VERSION, mediaId, selected],
     queryFn: async ({ signal }) => {
       const fresh = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal);
       if (isShortCheckingResponse(fresh) && hasVerifiedEpisodes(episodeCached?.data)) {
@@ -228,14 +231,14 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
       (episode) =>
         episode?.vixsrc_available !== false &&
         episode?.italian_available === true &&
-        String(episode?.italian_audio_status || "italian") === "italian"
+        String(episode?.italian_audio_status || "") === "italian"
     ),
     [episodeSource]
   );
 
   useEffect(() => {
     if (typeof Image === "undefined" || !episodes.length) return;
-    episodes.slice(0, 40).forEach((episode) => {
+    episodes.slice(0, 12).forEach((episode) => {
       const src = episodeStillUrl(episode?.still_path);
       if (!src) return;
       const image = new Image();
@@ -252,14 +255,14 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
       : Number(episodes[0]?.episode_number || 1);
     let index = episodes.findIndex((episode) => Number(episode?.episode_number) === wanted);
     if (index < 0) index = 0;
-    const targets = episodes.slice(index, index + 2)
+    const targets = episodes.slice(index, index + 3)
       .map((episode) => Number(episode?.episode_number || 0))
       .filter(Boolean);
     return scheduleIdle(() => {
       targets.forEach((episodeNumber) => {
         void warmPlayback("tv", Number(mediaId), Number(selected), episodeNumber);
       });
-    }, active ? 350 : 900);
+    }, active ? 120 : 450);
   }, [enabled, mediaId, selected, preferred, preferredEpisodeNumber, active, episodes]);
 
   useEffect(() => {
@@ -274,7 +277,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
         const batch = pending.slice(index, index + BACKGROUND_SEASON_CONCURRENCY);
         await Promise.allSettled(batch.map((number) => warmSeason(mediaId, number)));
       }
-    }, 2200);
+    }, 1600);
 
     return () => {
       cancelled = true;
