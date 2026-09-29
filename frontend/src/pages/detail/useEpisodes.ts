@@ -36,7 +36,6 @@ function readPersistent(key) {
         if (Date.now() - Number(parsed.savedAt) > CACHE_MAX_AGE_MS) return null;
         return { data: parsed.data, savedAt: Number(parsed.savedAt) };
       }
-      // Migration from the old sessionStorage format that stored raw payloads.
       if (parsed && typeof parsed === "object") return { data: parsed, savedAt: Date.now() - EPISODES_STALE_MS };
     } catch {}
     return null;
@@ -77,9 +76,6 @@ async function warmSeason(mediaId, seasonNumber) {
     let data = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
     if (data) writePersistent(storageKey, data);
 
-    // On a cold backend the strict Italian policy can return a short "checking"
-    // response while its resolver fills the server cache. Retry once outside the
-    // UI critical path so the persistent browser cache receives the real list.
     const pending = Number(data?.pending_recheck_seconds || 0);
     if (pending > 0 && pending <= 10) {
       await new Promise((resolve) => setTimeout(resolve, Math.max(900, pending * 1000)));
@@ -127,8 +123,6 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     if (seasonsQuery.data?.seasons) writePersistent(seasonsCacheKey, seasonsQuery.data);
   }, [seasonsCacheKey, seasonsQuery.data]);
 
-  // Stale data is still rendered instantly. Revalidation is intentionally idle
-  // work and therefore cannot hold the Detail first frame hostage.
   useEffect(() => {
     if (!enabled || !seasonsCached?.data) return undefined;
     if (Date.now() - Number(seasonsCached.savedAt || 0) < SEASONS_STALE_MS) return undefined;
@@ -215,9 +209,6 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
     });
   }, [episodes]);
 
-  // Warm every other season with a tiny concurrency budget. This is deliberately
-  // deferred: the selected season and Hero keep network priority, but once the
-  // page is idle all season switches are backed by persistent local data.
   useEffect(() => {
     if (!enabled || !mediaId || seasons.length < 2) return undefined;
     let cancelled = false;
@@ -225,12 +216,17 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
       .map((season) => Number(season?.season_number || 0))
       .filter((number) => number > 0 && number !== Number(selected));
 
-    return scheduleIdle(async () => {
+    const cancelIdle = scheduleIdle(async () => {
       for (let index = 0; index < pending.length && !cancelled; index += BACKGROUND_SEASON_CONCURRENCY) {
         const batch = pending.slice(index, index + BACKGROUND_SEASON_CONCURRENCY);
         await Promise.allSettled(batch.map((number) => warmSeason(mediaId, number)));
       }
-    }, 3200) || (() => { cancelled = true; });
+    }, 3200);
+
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
   }, [enabled, mediaId, selected, seasons.map((season) => season?.season_number).join(",")]);
 
   const pendingItalianCheck = Number(episodesQuery.data?.pending_recheck_seconds || 0);
