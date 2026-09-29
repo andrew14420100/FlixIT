@@ -56,3 +56,5 @@ jobs:
         run: python backend/tests/test_strict_audio_evidence_v10.py
       - name: Verify final v16 preindexed Italian media architecture
         run: python backend/tests/test_italian_media_index_v16.py
+      - name: Verify v16 cannot block backend startup
+        run: python backend/tests/test_v16_fast_start.py
