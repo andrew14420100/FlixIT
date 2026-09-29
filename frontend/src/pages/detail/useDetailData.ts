@@ -4,7 +4,7 @@
  * Priority: Italian detail -> SC title logo -> artwork/media assets ->
  * direct image fallback -> progress -> verified Italian non-YouTube trailer.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useGetAppendedVideosQuery, useGetTVSeasonDetailsQuery } from "src/store/slices/discover";
 import { MEDIA_TYPE } from "src/types/Common";
@@ -17,6 +17,34 @@ import { API_URL, artUrl, directTrailerUrl, formatCertification, yearFrom } from
 const EMPTY = [];
 const TMDB_ORIGINAL_IMAGE_BASE = "https://image.tmdb.org/t/p/original";
 const TMDB_EPISODE_IMAGE_BASE = "https://image.tmdb.org/t/p/w780";
+const DETAIL_CACHE_PREFIX = "flixit:detail:v1:";
+const DETAIL_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function detailCacheKey(typeSlug: string, mediaId: number) {
+  return `${DETAIL_CACHE_PREFIX}${typeSlug}:${mediaId}`;
+}
+
+function readDetailCache(typeSlug: string, mediaId: number) {
+  if (typeof window === "undefined" || !mediaId) return null;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(detailCacheKey(typeSlug, mediaId)) || "null");
+    if (!parsed?.data || !parsed?.savedAt) return null;
+    if (Date.now() - Number(parsed.savedAt) > DETAIL_CACHE_MAX_AGE_MS) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeDetailCache(typeSlug: string, mediaId: number, data: any) {
+  if (typeof window === "undefined" || !mediaId || !data) return;
+  try {
+    localStorage.setItem(
+      detailCacheKey(typeSlug, mediaId),
+      JSON.stringify({ savedAt: Date.now(), data })
+    );
+  } catch {}
+}
 
 function tmdbOriginalArtUrl(value: any) {
   const raw = typeof value === "string" ? value : value?.url;
@@ -56,10 +84,15 @@ function isStreamingCommunityLogo(source: any) {
 export default function useDetailData(typeSlug: string, mediaId: number) {
   const isTV = typeSlug === "tv";
   const type = isTV ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
+  const cachedDetail = useMemo(() => readDetailCache(typeSlug, mediaId), [typeSlug, mediaId]);
 
   const detailQuery = useGetAppendedVideosQuery({ mediaType: type, id: mediaId }, { skip: !mediaId });
-  const detail = detailQuery.data || null;
-  const detailError = !!detailQuery.isError;
+  const detail = detailQuery.data || cachedDetail || null;
+  const detailError = !!detailQuery.isError && !detail;
+
+  useEffect(() => {
+    if (detailQuery.data) writeDetailCache(typeSlug, mediaId, detailQuery.data);
+  }, [detailQuery.data, typeSlug, mediaId]);
 
   const englishFallback = useQuery({
     queryKey: ["dp-detail-en-fallback", typeSlug, mediaId],
@@ -83,9 +116,6 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
   );
   const assets = useAutomaticMediaAssets(assetItem, type, !!mediaId);
 
-  // Logos are intentionally SC-only. The backend resolver may still use other
-  // providers for covers/backdrops, but its logo policy returns a logo only when
-  // StreamingCommunity supplied a strict identity match.
   const officialArtwork = useQuery({
     queryKey: ["dp-sc-logo-only-v3", typeSlug, mediaId],
     queryFn: async ({ signal }) => {
@@ -99,7 +129,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     enabled: !!mediaId,
     staleTime: 60 * 60 * 1000,
     gcTime: 24 * 60 * 60 * 1000,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -117,6 +147,7 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     enabled: !!mediaId,
     staleTime: 6 * 60 * 60 * 1000,
     gcTime: 24 * 60 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     retry: 1,
   });
@@ -177,9 +208,6 @@ export default function useDetailData(typeSlug: string, mediaId: number) {
     && Number(progressItem?.progress || 0) > 0
     && Number(progressItem?.duration || 0) > 0;
 
-  // Keep the TV cursor even when the selected episode starts at 0/10 seconds.
-  // This lets a deliberate jump to E05 immediately mark E01-E04 as previous
-  // episodes without forcing WatchPage to resume at an artificial position.
   const season = isTV && progressItem ? Math.max(1, Number(progressItem?.season || 1)) : 1;
   const episode = isTV && progressItem ? Math.max(1, Number(progressItem?.episode || 1)) : 1;
 
