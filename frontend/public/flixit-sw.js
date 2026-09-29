@@ -1,4 +1,4 @@
-const VISUAL_CACHE = "flixit-visual-cache-v1";
+const VISUAL_CACHE = "flixit-visual-cache-v2-swr";
 const MAX_ENTRIES = 1400;
 
 self.addEventListener("install", () => {
@@ -37,6 +37,19 @@ function shouldCache(request) {
   }
 }
 
+async function refresh(cache, request) {
+  try {
+    const response = await fetch(request);
+    if (response && (response.ok || response.type === "opaque")) {
+      await cache.put(request, response.clone()).catch(() => {});
+      await trim(cache).catch(() => {});
+    }
+    return response;
+  } catch {
+    return null;
+  }
+}
+
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET" || !shouldCache(request)) return;
@@ -44,21 +57,17 @@ self.addEventListener("fetch", (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(VISUAL_CACHE);
     const cached = await cache.match(request, { ignoreVary: true });
-    if (cached) return cached;
 
-    try {
-      const response = await fetch(request);
-      if (response && (response.ok || response.type === "opaque")) {
-        event.waitUntil(
-          cache.put(request, response.clone())
-            .then(() => trim(cache))
-            .catch(() => {})
-        );
-      }
-      return response;
-    } catch (error) {
-      if (cached) return cached;
-      throw error;
+    if (cached) {
+      // Fast first paint, but always revalidate in the background. A temporary
+      // broken/old Hero or logo can therefore heal without asking the user to
+      // clear site data manually.
+      event.waitUntil(refresh(cache, request));
+      return cached;
     }
+
+    const network = await refresh(cache, request);
+    if (network) return network;
+    return new Response("", { status: 504, statusText: "Visual asset unavailable" });
   })());
 });

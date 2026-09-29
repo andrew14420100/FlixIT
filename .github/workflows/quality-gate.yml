@@ -50,3 +50,5 @@ jobs:
           python-version: '3.12'
       - name: Compile backend Python
         run: python -m compileall -q backend
+      - name: Verify fail-closed Italian audio policy
+        run: python backend/tests/test_strict_audio_evidence_v9.py

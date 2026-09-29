@@ -1,7 +1,7 @@
 // @ts-nocheck
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 
@@ -13,47 +13,30 @@ import { MEDIA_TYPE } from "src/types/Common";
 
 const HOME_BOOTSTRAP_FAST_URL = "/api/public/home-bootstrap-fast";
 const HOME_BOOTSTRAP_FULL_URL = "/api/public/home-bootstrap";
-const HOME_QUERY_KEY = ["home-bootstrap-v8-sc-logo-home-fixes"];
-const HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
+const HOME_QUERY_KEY = ["home-bootstrap-v9-atomic-full-home"];
+const HOME_CACHE_KEY = "flix-home-bootstrap-v9-atomic-full-home";
 const HOME_STALE_MS = 10 * 60 * 1000;
 const HOME_GC_MS = 24 * 60 * 60 * 1000;
-const FIRST_PAINT_ROWS = 6;
-const FIRST_PAINT_ITEMS_PER_ROW = 18;
-const ROW_REVEAL_CHUNK = 4;
 
 function readHomeCache() {
   if (typeof window === "undefined") return null;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(HOME_CACHE_KEY) || "null");
-    if (!parsed?.savedAt || !parsed?.data) return null;
+    if (!parsed?.savedAt || !parsed?.data || !Array.isArray(parsed.data?.rows)) return null;
     return parsed;
   } catch {
     return null;
   }
 }
 
-function firstPaintSnapshot(data: any) {
-  if (!data) return null;
-  const sourceRows = Array.isArray(data.rows) ? data.rows : [];
-  return {
-    ...data,
-    compact: true,
-    total_row_count: Number(data.total_row_count || data.row_count || sourceRows.length),
-    rows: sourceRows.slice(0, FIRST_PAINT_ROWS).map((row: any) => ({
-      ...row,
-      items: (row?.items || []).slice(0, FIRST_PAINT_ITEMS_PER_ROW),
-    })),
-    row_count: Math.min(sourceRows.length, FIRST_PAINT_ROWS),
-  };
-}
-
 function writeHomeCache(data) {
   if (typeof window === "undefined" || !data?.rows?.length) return;
   try {
-    const fast = firstPaintSnapshot(data);
+    // Store exactly what the page renders. Never truncate rows/items in the
+    // persistence layer: refresh must start from the complete accepted snapshot.
     window.localStorage.setItem(
       HOME_CACHE_KEY,
-      JSON.stringify({ savedAt: Date.now(), data: fast })
+      JSON.stringify({ savedAt: Date.now(), data })
     );
   } catch {}
 }
@@ -79,9 +62,7 @@ function warmCriticalHero(hero: any) {
     warmImage(assets?.logo_path || assets?.logo_url, "high");
   }
   warmImage(
-    hero?.customBackdrop ||
-      assets?.hero_backdrop_path ||
-      assets?.backdrop_path,
+    hero?.customBackdrop || assets?.hero_backdrop_path || assets?.backdrop_path,
     "high"
   );
 }
@@ -115,9 +96,7 @@ function normalizeRows(rows = [], filterMediaType, initialClaimed = new Set()) {
 
       const limit = type === "top10" ? 10 : 50;
       const visible = items.slice(0, limit);
-      if (!filteredPage) {
-        visible.forEach((item) => claimed.add(itemKey(item)));
-      }
+      if (!filteredPage) visible.forEach((item) => claimed.add(itemKey(item)));
       return {
         ...row,
         key: row?.key || `${type || "row"}-${rowIndex}`,
@@ -140,46 +119,6 @@ async function fetchBootstrapUrl(url: string, signal?: AbortSignal) {
   return data;
 }
 
-let sharedFastPromise: Promise<any> | null = null;
-function fetchFastHomeBootstrap(signal?: AbortSignal) {
-  if (sharedFastPromise) return sharedFastPromise;
-
-  const headPromise = typeof window !== "undefined"
-    ? (window as any).__FLIXIT_HOME_FAST_PROMISE__
-    : null;
-
-  const firstRequest = headPromise
-    ? Promise.resolve(headPromise).then(async (data: any) => {
-        try { (window as any).__FLIXIT_HOME_FAST_PROMISE__ = null; } catch {}
-        if (data?.rows) {
-          warmCriticalHero(data?.hero);
-          return data;
-        }
-        const full = await fetchBootstrapUrl(HOME_BOOTSTRAP_FULL_URL, signal);
-        return { ...full, compact: false };
-      })
-    : fetchBootstrapUrl(HOME_BOOTSTRAP_FAST_URL, signal);
-
-  let shared: Promise<any>;
-  shared = firstRequest
-    .catch(async (error) => {
-      if (signal?.aborted) throw error;
-      const full = await fetchBootstrapUrl(HOME_BOOTSTRAP_FULL_URL, signal);
-      return { ...full, compact: false };
-    })
-    .finally(() => {
-      if (typeof window !== "undefined") {
-        window.setTimeout(() => {
-          if (sharedFastPromise === shared) sharedFastPromise = null;
-        }, 1500);
-      } else if (sharedFastPromise === shared) {
-        sharedFastPromise = null;
-      }
-    });
-  sharedFastPromise = shared;
-  return shared;
-}
-
 let sharedFullPromise: Promise<any> | null = null;
 function fetchFullHomeBootstrap(signal?: AbortSignal) {
   if (sharedFullPromise) return sharedFullPromise;
@@ -199,13 +138,56 @@ function fetchFullHomeBootstrap(signal?: AbortSignal) {
   return shared;
 }
 
+let sharedFastPromise: Promise<any> | null = null;
+function fetchFastHomeBootstrap(signal?: AbortSignal) {
+  if (sharedFastPromise) return sharedFastPromise;
+
+  const headPromise = typeof window !== "undefined"
+    ? (window as any).__FLIXIT_HOME_FAST_PROMISE__
+    : null;
+
+  const firstRequest = headPromise
+    ? Promise.resolve(headPromise).then(async (data: any) => {
+        try { (window as any).__FLIXIT_HOME_FAST_PROMISE__ = null; } catch {}
+        if (data?.rows) {
+          warmCriticalHero(data?.hero);
+          return data;
+        }
+        return fetchFullHomeBootstrap(signal);
+      })
+    : fetchBootstrapUrl(HOME_BOOTSTRAP_FAST_URL, signal);
+
+  let shared: Promise<any>;
+  shared = firstRequest
+    .then(async (data) => {
+      // Never publish a partial/compact Home and append sections later. If the
+      // fast endpoint says its snapshot is incomplete, resolve the complete one
+      // before React accepts the new value.
+      if (data?.compact === true) return fetchFullHomeBootstrap(signal);
+      return data;
+    })
+    .catch(async (error) => {
+      if (signal?.aborted) throw error;
+      return fetchFullHomeBootstrap(signal);
+    })
+    .finally(() => {
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          if (sharedFastPromise === shared) sharedFastPromise = null;
+        }, 1500);
+      } else if (sharedFastPromise === shared) {
+        sharedFastPromise = null;
+      }
+    });
+  sharedFastPromise = shared;
+  return shared;
+}
+
 const MODULE_HOME_CACHE = typeof window !== "undefined" ? readHomeCache() : null;
 if (MODULE_HOME_CACHE?.data?.hero) warmCriticalHero(MODULE_HOME_CACHE.data.hero);
 
 const EARLY_HOME_BOOTSTRAP_PROMISE =
-  typeof window !== "undefined"
-    ? fetchFastHomeBootstrap().catch(() => null)
-    : null;
+  typeof window !== "undefined" ? fetchFastHomeBootstrap().catch(() => null) : null;
 let earlyHomeBootstrapConsumed = false;
 
 export async function loader() {
@@ -215,11 +197,8 @@ export async function loader() {
 export function Component() {
   const { mediaType: filterMediaType } = useParams();
   const filteredPage = filterMediaType === "movie" || filterMediaType === "tv";
-  const queryClient = useQueryClient();
   const currentMediaType = filterMediaType === "tv" ? MEDIA_TYPE.Tv : MEDIA_TYPE.Movie;
   const { items: progressItems, username, removeItem } = useContinueWatching();
-  const loadMoreRowsRef = useRef<HTMLDivElement | null>(null);
-  const [visibleRowCount, setVisibleRowCount] = useState(FIRST_PAINT_ROWS);
 
   const continueItems = useMemo(() => {
     if (filteredPage) return [];
@@ -283,52 +262,6 @@ export function Component() {
     if (bootstrap?.rows?.length) writeHomeCache(bootstrap);
   }, [bootstrap]);
 
-  useEffect(() => {
-    if (!bootstrap || bootstrap?.compact === false) return;
-    let cancelled = false;
-    let timer = 0;
-    let idleId: any = null;
-    let hydrationStarted = false;
-    const controller = new AbortController();
-
-    const hydrate = () => {
-      if (cancelled || hydrationStarted) return;
-      if (document.visibilityState === "hidden") return;
-      hydrationStarted = true;
-      fetchFullHomeBootstrap(controller.signal)
-        .then((full) => {
-          if (!cancelled && full?.rows?.length) {
-            queryClient.setQueryData(HOME_QUERY_KEY, full);
-            writeHomeCache(full);
-          }
-        })
-        .catch(() => {
-          hydrationStarted = false;
-        });
-    };
-
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") hydrate();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
-    if ("requestIdleCallback" in window) {
-      idleId = (window as any).requestIdleCallback(hydrate, { timeout: 7000 });
-    } else {
-      timer = window.setTimeout(hydrate, 4000);
-    }
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-      document.removeEventListener("visibilitychange", onVisibility);
-      if (timer) window.clearTimeout(timer);
-      if (idleId != null && "cancelIdleCallback" in window) {
-        (window as any).cancelIdleCallback(idleId);
-      }
-    };
-  }, [bootstrap?.compact, bootstrap?.generated_at, queryClient]);
-
   const heroLogoUrl = isScSource(bootstrap?.hero?.assets?.logo_source)
     ? (bootstrap?.hero?.assets?.logo_path || bootstrap?.hero?.assets?.logo_url || null)
     : null;
@@ -348,33 +281,6 @@ export function Component() {
     [bootstrap?.rows, filterMediaType, continueKeys]
   );
 
-  useEffect(() => {
-    setVisibleRowCount(FIRST_PAINT_ROWS);
-  }, [filterMediaType]);
-
-  useEffect(() => {
-    if (visibleRowCount >= rows.length) return;
-    const sentinel = loadMoreRowsRef.current;
-    if (!sentinel || typeof IntersectionObserver === "undefined") {
-      setVisibleRowCount(rows.length);
-      return;
-    }
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        setVisibleRowCount((current) => Math.min(rows.length, current + ROW_REVEAL_CHUNK));
-      },
-      { rootMargin: "900px 0px 900px 0px" }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [rows.length, visibleRowCount]);
-
-  const mountedRows = useMemo(
-    () => rows.slice(0, Math.max(FIRST_PAINT_ROWS, visibleRowCount)),
-    [rows, visibleRowCount]
-  );
   const hasHero = !!bootstrap?.hero?.contentId;
   const hasReadyRows = rows.length > 0 || continueItems.length > 0;
   const hasReadyHome = hasHero || hasReadyRows;
@@ -424,35 +330,16 @@ export function Component() {
           data-testid="home-rows"
         >
           {!filteredPage && continueItems.length > 0 ? (
-            <HomepageSlider
-              rowId="continua"
-              title={continueTitle}
-              items={continueItems}
-              compactSpacing
-            />
+            <HomepageSlider rowId="continua" title={continueTitle} items={continueItems} compactSpacing />
           ) : null}
 
-          {mountedRows.map((row) =>
+          {rows.map((row) =>
             row.section_type === "top10" ? (
               <Top10Slider key={row.key} title={row.name} items={row.items} />
             ) : (
-              <HomepageSlider
-                key={row.key}
-                rowId={row.key}
-                title={row.name}
-                items={row.items}
-              />
+              <HomepageSlider key={row.key} rowId={row.key} title={row.name} items={row.items} />
             )
           )}
-
-          {mountedRows.length < rows.length ? (
-            <Box
-              ref={loadMoreRowsRef}
-              aria-hidden="true"
-              data-testid="home-row-loader-sentinel"
-              sx={{ width: "100%", height: 1, pointerEvents: "none" }}
-            />
-          ) : null}
         </Stack>
       )}
     </Box>
