@@ -2,7 +2,7 @@
 
 The public VixSrc player documents ``lang=it`` as the preferred audio-track
 selector. FlixIT bypasses the iframe and resolves the master playlist directly,
-so the preference must be carried onto that final playlist URL as well.
+so the preference is carried on both the source API request and final playlist.
 """
 from __future__ import annotations
 
@@ -32,6 +32,15 @@ def install_vixsrc_italian_audio() -> bool:
 
     try:
         import services.resolvers.vixsrc as resolver
+
+        current_api_url = resolver._api_url
+        if not getattr(current_api_url, "_flixit_force_it", False):
+            def api_url_it(tmdb_id, season, episode):
+                return _with_italian_lang(current_api_url(tmdb_id, season, episode))
+            api_url_it._flixit_force_it = True
+            api_url_it._original = current_api_url
+            resolver._api_url = api_url_it
+
         current_build = resolver._build_playlist_url
         if not getattr(current_build, "_flixit_force_it", False):
             def build_it(raw_url, token, expires, can_fhd):
