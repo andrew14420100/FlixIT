@@ -1,9 +1,9 @@
 """Per-app runtime registrar for StreamingCommunity direct Detail routes.
 
-This deliberately avoids the process-global `_INSTALLED` guard used by the
-legacy v18 installer. Emergent/reload setups can import modules against more than
-one FastAPI instance in the same process; catalogue routes must be attached to
-the actual app instance being served.
+This deliberately avoids process-global and app-state early-return guards.
+Emergent/reload setups can import modules against more than one FastAPI instance
+in the same process, so every call removes any previous SC-direct handlers from
+the supplied app and rebinds them to that exact instance.
 
 The data flow itself is unchanged and remains the SC-public flow implemented in
 `sc_direct_detail_v18`: title data-page -> props.title.seasons -> season-N ->
@@ -19,12 +19,10 @@ from services import sc_native_catalog_v17 as sc
 
 
 def install_sc_direct_detail_runtime(app, db) -> bool:
-    if getattr(app.state, "flixit_sc_direct_detail_runtime", False):
-        return True
-
     direct._db = db
 
-    # Make these handlers the final authority for seasons/episodes on this app.
+    # Always rebind these routes on the supplied app. This makes the operation
+    # truly idempotent per FastAPI instance and immune to stale module/app flags.
     kept = []
     for route in app.router.routes:
         if isinstance(route, APIRoute) and "GET" in (route.methods or set()):
@@ -95,7 +93,7 @@ def install_sc_direct_detail_runtime(app, db) -> bool:
             "cached_seasons": len(direct._season_cache),
             "vixsrc_role": "playback_only",
             "tmdb_role": "identity_metadata_only",
-            "registration": "per_app_runtime",
+            "registration": "per_app_runtime_rebind",
         }
 
     app.include_router(router)
