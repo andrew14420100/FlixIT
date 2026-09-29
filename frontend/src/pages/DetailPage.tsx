@@ -3,7 +3,7 @@
  * FlixIT Detail Page v2 - router entry point (`/browse/:mediaType/:id`).
  * Pure declarative React; the whole page is styled by pages/detail/detail-page.css (prefix dp-).
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import Box from "@mui/material/Box";
 import { MAIN_PATH } from "src/constant";
@@ -138,25 +138,86 @@ export function Component() {
   );
   const tabs = detailTabsFor(data.isTV);
 
-  const warm = useCallback(
-    () => warmPlayback(typeSlug, mediaId, data.season, data.episode),
-    [typeSlug, mediaId, data.season, data.episode]
-  );
+  // Continue Watching can contain an old cursor that points at an episode which
+  // later turns out to be original/English only. Never let that stale cursor
+  // bypass the verified Italian episode list and open the player directly.
+  const playbackTarget = useMemo(() => {
+    if (!data.isTV) {
+      return {
+        ready: true,
+        season: Number(data.season || 1),
+        episode: Number(data.episode || 1),
+        resumeValid: !!data.hasRealProgress,
+      };
+    }
 
-  // Resolve the exact target while the user reads the Detail page, not after
-  // Play is clicked. The global player coalescer lets Watch reuse this request.
+    const selectedSeason = Math.max(1, Number(episodesState.selected || data.season || 1));
+    const verified = Array.isArray(episodesState.episodes) ? episodesState.episodes : [];
+    const requestedSeason = Math.max(1, Number(data.season || 1));
+    const requestedEpisode = Math.max(1, Number(data.episode || 1));
+    const requestedIsVerified = selectedSeason === requestedSeason && verified.some(
+      (item) => Number(item?.episode_number || 0) === requestedEpisode
+    );
+    const fallbackEpisode = Number(verified[0]?.episode_number || 0);
+
+    return {
+      ready: verified.length > 0 && fallbackEpisode > 0,
+      season: selectedSeason,
+      episode: requestedIsVerified ? requestedEpisode : fallbackEpisode,
+      resumeValid: !!data.hasRealProgress && requestedIsVerified,
+    };
+  }, [
+    data.isTV,
+    data.season,
+    data.episode,
+    data.hasRealProgress,
+    episodesState.selected,
+    episodesState.episodes,
+  ]);
+
+  const safeData = useMemo(() => {
+    if (!data.isTV) return data;
+    return {
+      ...data,
+      season: playbackTarget.season,
+      episode: playbackTarget.episode || 1,
+      hasRealProgress: playbackTarget.resumeValid,
+    };
+  }, [data, playbackTarget]);
+
+  const warm = useCallback(() => {
+    if (data.isTV && !playbackTarget.ready) return Promise.resolve(null);
+    return warmPlayback(typeSlug, mediaId, playbackTarget.season, playbackTarget.episode);
+  }, [data.isTV, typeSlug, mediaId, playbackTarget]);
+
+  // Resolve the exact verified target while the user reads the Detail page, not
+  // after Play is clicked. The global player coalescer lets Watch reuse it.
   useEffect(() => {
     if (!validType || !mediaId || !data.detail || italianAvailability !== "available") return;
+    if (data.isTV && !playbackTarget.ready) return;
     const timer = window.setTimeout(() => { void warm(); }, 80);
     return () => window.clearTimeout(timer);
-  }, [validType, mediaId, data.detail, italianAvailability, warm]);
+  }, [validType, mediaId, data.detail, data.isTV, italianAvailability, playbackTarget.ready, warm]);
 
   const goPlay = useCallback(() => {
     if (italianAvailability !== "available") return;
-    warm();
+    if (data.isTV && !playbackTarget.ready) return;
+    void warm();
     window.scrollTo(0, 0);
-    navigate(`/${MAIN_PATH.watch}/${typeSlug}/${mediaId}${data.isTV ? `?s=${data.season}&e=${data.episode}` : ""}`);
-  }, [data.episode, data.isTV, data.season, italianAvailability, mediaId, navigate, typeSlug, warm]);
+    navigate(
+      `/${MAIN_PATH.watch}/${typeSlug}/${mediaId}${
+        data.isTV ? `?s=${playbackTarget.season}&e=${playbackTarget.episode}` : ""
+      }`
+    );
+  }, [
+    data.isTV,
+    italianAvailability,
+    mediaId,
+    navigate,
+    playbackTarget,
+    typeSlug,
+    warm,
+  ]);
 
   const showMoreInfo = useCallback(() => {
     setActiveTab("overview");
@@ -208,22 +269,22 @@ export function Component() {
   return (
     <Box component="main" className="dp-page" data-testid="detail-page" data-media-type={typeSlug} sx={{ pt: { xs: 0, md: "80px" } }}>
       <DetailAmbientExact />
-      <DetailHero data={data} mediaId={mediaId} onPlay={goPlay} onWarm={warm} onMoreInfo={showMoreInfo} />
+      <DetailHero data={safeData} mediaId={mediaId} onPlay={goPlay} onWarm={warm} onMoreInfo={showMoreInfo} />
       <DetailTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
       <div className="dp-content">
         <section className="dp-panel" role="tabpanel" id="dp-panel-overview" aria-labelledby="dp-tab-overview" data-testid="detail-panel-overview" hidden={activeTab !== "overview"}>
-          <DetailOverview data={data} onPlay={goPlay} onWarm={warm} />
+          <DetailOverview data={safeData} onPlay={goPlay} onWarm={warm} />
         </section>
 
         {data.isTV ? (
           <section className="dp-panel" role="tabpanel" id="dp-panel-episodes" aria-labelledby="dp-tab-episodes" data-testid="detail-panel-episodes" hidden={activeTab !== "episodes"}>
-            <DetailEpisodes mediaId={mediaId} data={data} episodesState={episodesState} />
+            <DetailEpisodes mediaId={mediaId} data={safeData} episodesState={episodesState} />
           </section>
         ) : null}
 
         {activeTab === "trailers" ? (
           <section className="dp-panel" role="tabpanel" id="dp-panel-trailers" aria-labelledby="dp-tab-trailers" data-testid="detail-panel-trailers">
-            <DetailTrailers data={data} />
+            <DetailTrailers data={safeData} />
           </section>
         ) : null}
 
