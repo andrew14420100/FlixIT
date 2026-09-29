@@ -22,39 +22,55 @@ function warmUrl(value: any, high = false) {
   if (!src || warmedUrls.has(src)) return;
   warmedUrls.add(src);
   const image = new Image();
-  image.decoding = "async";
+  image.decoding = high ? "sync" : "async";
   (image as any).fetchPriority = high ? "high" : "auto";
   image.src = src;
   bootImageWarmers.push(image);
-  if (bootImageWarmers.length > 80) bootImageWarmers.splice(0, bootImageWarmers.length - 80);
+  if (bootImageWarmers.length > 24) bootImageWarmers.splice(0, bootImageWarmers.length - 24);
+}
+
+function scheduleCardWarm(data: any) {
+  if (!data || typeof window === "undefined") return;
+  const mobile = window.innerWidth < 900;
+  const run = () => {
+    // Only warm what can actually appear above the fold. The previous version
+    // started dozens of eager image downloads and made the Hero itself compete
+    // for bandwidth on a cold refresh.
+    const rows = Array.isArray(data?.rows) ? data.rows.slice(0, 2) : [];
+    let warmed = 0;
+    for (const row of rows) {
+      const items = Array.isArray(row?.items) ? row.items : [];
+      for (const item of items.slice(0, mobile ? 3 : 7)) {
+        const art = item?.__artwork || {};
+        const url = mobile
+          ? (art?.poster_url || item?.poster_path)
+          : (art?.backdrop_url || art?.titled_backdrop_url || item?.titled_backdrop_path || item?.backdrop_path);
+        warmUrl(url, warmed < (mobile ? 3 : 6));
+        warmed += 1;
+      }
+    }
+  };
+
+  // Give the Hero/logo the network first. Visible cards are warmed on the next
+  // paint; everything else stays browser-lazy until it approaches the viewport.
+  if ("requestIdleCallback" in window) {
+    (window as any).requestIdleCallback(run, { timeout: 650 });
+  } else {
+    window.setTimeout(run, 120);
+  }
 }
 
 function warmHomePayload(data: any) {
   if (!data || typeof window === "undefined") return;
-  const mobile = window.innerWidth < 900;
   const hero = data?.hero || {};
   const assets = hero?.assets || {};
   warmUrl(hero?.customBackdrop || assets?.hero_backdrop_path || assets?.backdrop_path, true);
   warmUrl(assets?.logo_path || assets?.logo_url, true);
-
-  const rows = Array.isArray(data?.rows) ? data.rows.slice(0, 7) : [];
-  let warmed = 0;
-  for (const row of rows) {
-    const items = Array.isArray(row?.items) ? row.items : [];
-    for (const item of items.slice(0, mobile ? 5 : 9)) {
-      const art = item?.__artwork || {};
-      const url = mobile
-        ? (art?.poster_url || item?.poster_path)
-        : (art?.backdrop_url || art?.titled_backdrop_url || item?.titled_backdrop_path || item?.backdrop_path);
-      warmUrl(url, warmed < (mobile ? 8 : 14));
-      warmed += 1;
-    }
-  }
+  scheduleCardWarm(data);
 }
 
 // MainHeader imports this module during bundle evaluation, before React paints.
-// Prime visual bytes from the last Home snapshot immediately, and also adopt the
-// bootstrap promise that index.html started while the JS bundle was downloading.
+// Prime only the critical visual bytes first, then warm the visible card strip.
 if (typeof window !== "undefined") {
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/flixit-sw.js", { scope: "/" }).catch(() => {});
