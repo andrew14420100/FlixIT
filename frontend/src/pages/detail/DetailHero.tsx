@@ -11,14 +11,19 @@ import { remainingText, runtimeText, seasonsText } from "./detailUtils";
 import "../../components/NetflixHeroExact.css";
 
 const HERO_TRAILER_DELAY_MS = 2000;
+const TMDB_ORIGINAL = "https://image.tmdb.org/t/p/original";
+
+function tmdbFallback(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  if (/^https?:\/\//i.test(text)) return text;
+  return text.startsWith("/") ? `${TMDB_ORIGINAL}${text}` : null;
+}
 
 function PlayIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M6.2 3.2a1 1 0 0 1 1.51-.86l12.1 8.1a1.86 1.86 0 0 1 0 3.12l-12.1 8.1A1 1 0 0 1 6.2 20.8z"
-      />
+      <path fill="currentColor" d="M6.2 3.2a1 1 0 0 1 1.51-.86l12.1 8.1a1.86 1.86 0 0 1 0 3.12l-12.1 8.1A1 1 0 0 1 6.2 20.8z" />
     </svg>
   );
 }
@@ -56,16 +61,23 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     remainingSeconds,
     season,
     episode,
+    detail,
   } = data;
+
+  const directFallback = useMemo(
+    () => tmdbFallback(detail?.backdrop_path) || tmdbFallback(detail?.poster_path),
+    [detail?.backdrop_path, detail?.poster_path]
+  );
 
   const backdropCandidates = useMemo(() => {
     const values = Array.isArray(backdropUrls) && backdropUrls.length
-      ? backdropUrls
+      ? [...backdropUrls]
       : backdropUrl
       ? [backdropUrl]
       : [];
+    if (directFallback) values.push(directFallback);
     return [...new Set(values.filter(Boolean))];
-  }, [backdropUrl, backdropUrls]);
+  }, [backdropUrl, backdropUrls, directFallback]);
 
   const [muted, setMuted] = useState(true);
   const [trailerGateOpen, setTrailerGateOpen] = useState(false);
@@ -80,9 +92,6 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     typeof window !== "undefined" ? window.innerHeight * 0.6 : 600
   );
 
-  // Visual state belongs to the title, not to late-arriving artwork/logo queries.
-  // Never blank a backdrop that is already painted merely because a logo or
-  // trailer finished loading after the first frame.
   useEffect(() => {
     setImageLoaded(false);
     setBackdropIndex(0);
@@ -94,7 +103,6 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     setLogoFailed(false);
   }, [mediaId, logoUrl]);
 
-  // Trailer lifecycle is independent from the static Hero image.
   useEffect(() => {
     setMuted(true);
     setTrailerGateOpen(false);
@@ -102,10 +110,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     setVideoEnded(false);
 
     if (!trailerUrl) return undefined;
-    const timer = window.setTimeout(() => {
-      setTrailerGateOpen(true);
-    }, HERO_TRAILER_DELAY_MS);
-
+    const timer = window.setTimeout(() => setTrailerGateOpen(true), HERO_TRAILER_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [mediaId, trailerUrl]);
 
@@ -121,15 +126,40 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     window.setTimeout(() => setTrailerGateOpen(true), 60);
   }, []);
 
-  const handleBackdropError = useCallback(() => {
+  const advanceBackdrop = useCallback(() => {
     setImageLoaded(false);
     setBackdropIndex((current) => {
       const next = current + 1;
-      if (next < backdropCandidates.length) return next;
+      if (next < backdropCandidates.length) {
+        setBackdropFailed(false);
+        return next;
+      }
       setBackdropFailed(true);
       return current;
     });
   }, [backdropCandidates.length]);
+
+  const handleBackdropLoad = useCallback((event) => {
+    const image = event?.currentTarget;
+    // Reject transparent pixels/placeholders/thumbnails that technically return
+    // HTTP 200 but cannot be a real Hero background.
+    if (!image || image.naturalWidth < 640 || image.naturalHeight < 240) {
+      advanceBackdrop();
+      return;
+    }
+    setBackdropFailed(false);
+    setImageLoaded(true);
+  }, [advanceBackdrop]);
+
+  // If an async detail fallback arrives after all early candidates failed, retry
+  // immediately instead of leaving the Hero black until navigation/reload.
+  useEffect(() => {
+    if (!backdropFailed) return;
+    if (backdropIndex + 1 < backdropCandidates.length) {
+      setBackdropFailed(false);
+      setBackdropIndex((current) => Math.min(current + 1, backdropCandidates.length - 1));
+    }
+  }, [backdropCandidates.length, backdropFailed, backdropIndex]);
 
   const videoMounted = !!trailerUrl && !videoEnded;
   const videoShouldPlay = trailerGateOpen && !!trailerUrl && !videoEnded && !isOffset;
@@ -200,6 +230,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     >
       {showBackdrop ? (
         <Box
+          key={activeBackdropUrl}
           component="img"
           src={activeBackdropUrl}
           alt=""
@@ -207,14 +238,14 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
           data-uia="billboard-background-media+image"
           data-testid="detail-hero-backdrop"
           className="netflix-home-backdrop"
-          onLoad={() => setImageLoaded(true)}
-          onError={handleBackdropError}
+          onLoad={handleBackdropLoad}
+          onError={advanceBackdrop}
           fetchPriority="high"
           loading="eager"
           decoding="async"
           sx={{
             opacity: imageLoaded ? (videoActive ? 0 : 1) : 0,
-            transition: "opacity 220ms ease-out",
+            transition: "opacity 180ms ease-out",
           }}
         />
       ) : null}
@@ -245,23 +276,12 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
       ) : null}
 
       <Box aria-hidden="true" className="netflix-home-shade" />
-
-      <Box aria-hidden="true" className="netflix-home-brand-mark">
-        <NetflixNMark />
-      </Box>
+      <Box aria-hidden="true" className="netflix-home-brand-mark"><NetflixNMark /></Box>
 
       {trailerUrl ? (
-        <Box
-          className="netflix-home-volume-wrap"
-          data-uia="billboard-controls"
-          data-testid="detail-hero-controls"
-        >
+        <Box className="netflix-home-volume-wrap" data-uia="billboard-controls" data-testid="detail-hero-controls">
           {videoEnded ? (
-            <IconButton
-              aria-label="Riproduci di nuovo il trailer"
-              onClick={handleReplay}
-              className="netflix-home-replay-button"
-            >
+            <IconButton aria-label="Riproduci di nuovo il trailer" onClick={handleReplay} className="netflix-home-replay-button">
               <ReplayIcon />
             </IconButton>
           ) : (
@@ -293,9 +313,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
               onError={() => setLogoFailed(true)}
             />
           ) : (
-            <Box className="netflix-home-title-fallback" data-testid="detail-hero-title">
-              {title}
-            </Box>
+            <Box className="netflix-home-title-fallback" data-testid="detail-hero-title">{title}</Box>
           )}
         </Box>
 
@@ -331,14 +349,8 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
 
           <Box className="netflix-home-callouts" data-uia="billboard-callouts">
             {callouts.map((text, index) => (
-              <Box
-                className="netflix-home-callout"
-                data-uia="billboard-callout"
-                key={`${text}-${index}`}
-              >
-                <span className="netflix-home-callout-mark">
-                  {index === 0 ? "F" : isTV ? "EP" : "★"}
-                </span>
+              <Box className="netflix-home-callout" data-uia="billboard-callout" key={`${text}-${index}`}>
+                <span className="netflix-home-callout-mark">{index === 0 ? "F" : isTV ? "EP" : "★"}</span>
                 <span>{text}</span>
               </Box>
             ))}
