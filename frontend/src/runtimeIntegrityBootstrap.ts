@@ -2,7 +2,7 @@
 /**
  * Runtime integrity guard installed before React/router code.
  *
- * - invalidates season payloads produced by old language policies;
+ * - invalidates season payloads produced by old language policies once;
  * - accepts only v10 VixSrc Italian-episode-catalog verdicts;
  * - removes account playback residue for guest sessions;
  * - invalidates fabricated legacy episode-completion history;
@@ -13,6 +13,8 @@
 
 const FLAG = "__flixitRuntimeIntegrityV10";
 const POLICY = "strict-it-v10-vixsrc-episode-catalog";
+const EPISODE_SCHEMA_KEY = "flixit-episode-audio-schema";
+const EPISODE_SCHEMA = "10";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
 const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
@@ -25,18 +27,22 @@ const PLAYER_RE = /^\/api\/player\/(?:movie\/\d+|tv\/\d+\/\d+\/\d+)\/?$/;
 
 function purgeLegacyAndGuestState() {
   if (typeof window === "undefined") return;
-  for (const storage of [window.localStorage, window.sessionStorage]) {
-    try {
-      const remove: string[] = [];
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index) || "";
-        if (OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix))) remove.push(key);
-      }
-      remove.forEach((key) => storage.removeItem(key));
-    } catch {}
-  }
 
   try {
+    if (window.localStorage.getItem(EPISODE_SCHEMA_KEY) !== EPISODE_SCHEMA) {
+      for (const storage of [window.localStorage, window.sessionStorage]) {
+        try {
+          const remove: string[] = [];
+          for (let index = 0; index < storage.length; index += 1) {
+            const key = storage.key(index) || "";
+            if (OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix))) remove.push(key);
+          }
+          remove.forEach((key) => storage.removeItem(key));
+        } catch {}
+      }
+      window.localStorage.setItem(EPISODE_SCHEMA_KEY, EPISODE_SCHEMA);
+    }
+
     window.localStorage.removeItem(LEGACY_HOME_CACHE_KEY);
 
     if (window.localStorage.getItem(COMPLETION_SCHEMA_KEY) !== COMPLETION_SCHEMA) {
