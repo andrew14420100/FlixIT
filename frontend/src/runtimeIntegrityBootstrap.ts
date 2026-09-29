@@ -2,8 +2,8 @@
 /**
  * Runtime integrity guard installed before React/router code.
  *
- * - invalidates season payloads produced by old permissive language policies;
- * - accepts only v9 explicit Italian-audio evidence from season APIs;
+ * - invalidates season payloads produced by old language policies;
+ * - accepts only v10 VixSrc Italian-episode-catalog verdicts;
  * - removes account playback residue for guest sessions;
  * - invalidates fabricated legacy episode-completion history;
  * - removes the old truncated Home-v8 cache after the first upgraded bundle;
@@ -11,8 +11,8 @@
  *   player coalescer cannot pin a temporary source failure for two minutes.
  */
 
-const FLAG = "__flixitRuntimeIntegrityV9";
-const POLICY = "strict-explicit-it-v9-confirmed-audio-track-only";
+const FLAG = "__flixitRuntimeIntegrityV10";
+const POLICY = "strict-it-v10-vixsrc-episode-catalog";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
 const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
@@ -130,13 +130,13 @@ if (typeof window !== "undefined" && !(window as any)[FLAG]) {
       return jsonResponse({
         ...payload,
         episodes: payload.episodes.filter(confirmedItalianEpisode),
-        italian_audio_policy: "strict_confirmed_italian_only",
+        italian_audio_policy: "vixsrc_italian_episode_catalog",
         italian_audio_policy_version: POLICY,
       }, response);
     } catch {
       return new Response(JSON.stringify({
         episodes: [],
-        italian_audio_policy: "strict_confirmed_italian_only",
+        italian_audio_policy: "vixsrc_italian_episode_catalog",
         italian_audio_policy_version: POLICY,
       }), {
         status: 200,
