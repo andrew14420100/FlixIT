@@ -20,15 +20,15 @@ def run():
         "sitecustomize does not use the non-blocking v16 installer",
     )
     check(
-        "install_italian_media_index_v16(app, db)" not in startup,
-        "blocking v16 installer is still called directly during service registration",
+        "from services.italian_media_index_v16 import install_italian_media_index_v16" not in startup,
+        "blocking v16 installer is still imported directly during service registration",
     )
     check(
         "base.hydrate_index = lambda _db: None" in wrapper,
         "fastboot wrapper no longer removes synchronous Mongo hydration",
     )
     check(
-        "asyncio.to_thread(original_hydrate, db)" in wrapper,
+        "await asyncio.to_thread(original_hydrate, db)" in wrapper,
         "persisted index is not hydrated in a background thread",
     )
     check(
