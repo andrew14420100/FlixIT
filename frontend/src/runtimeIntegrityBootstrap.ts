@@ -6,6 +6,8 @@
  *    policies.
  * 2) Fails closed on the public season endpoint as a final client-side defence:
  *    only v9 rows carrying explicit Italian-audio evidence reach any consumer.
+ * 3) Removes account playback residue when the browser has no authenticated
+ *    token, so guest sessions cannot resume another user's local state.
  */
 
 const FLAG = "__flixitRuntimeIntegrityV9";
@@ -16,7 +18,7 @@ const OLD_EPISODE_PREFIXES = [
 ];
 const SEASON_RE = /^\/api\/public\/tv\/\d+\/season\/\d+\/?$/;
 
-function purgeOldEpisodeCaches() {
+function purgeLegacyAndGuestState() {
   if (typeof window === "undefined") return;
   for (const storage of [window.localStorage, window.sessionStorage]) {
     try {
@@ -30,6 +32,28 @@ function purgeOldEpisodeCaches() {
       remove.forEach((key) => storage.removeItem(key));
     } catch {}
   }
+
+  try {
+    if (!window.localStorage.getItem("user_token")) {
+      window.localStorage.removeItem("netflix_continue_watching");
+      window.localStorage.removeItem("netflix_username");
+      // Stream URLs may have been resolved under a previous signed-in session.
+      // They are cheap to warm again and should not leak into a guest session.
+      const removeSession: string[] = [];
+      for (let index = 0; index < window.sessionStorage.length; index += 1) {
+        const key = window.sessionStorage.key(index) || "";
+        if (
+          key.startsWith("watch_stream_cache:") ||
+          key.startsWith("stream:") ||
+          key.startsWith("stream_") ||
+          key.startsWith("stream-")
+        ) {
+          removeSession.push(key);
+        }
+      }
+      removeSession.forEach((key) => window.sessionStorage.removeItem(key));
+    }
+  } catch {}
 }
 
 function confirmedItalianEpisode(episode: any) {
@@ -44,7 +68,7 @@ function confirmedItalianEpisode(episode: any) {
 
 if (typeof window !== "undefined" && !(window as any)[FLAG]) {
   (window as any)[FLAG] = true;
-  purgeOldEpisodeCaches();
+  purgeLegacyAndGuestState();
 
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (input: any, init?: RequestInit) => {
@@ -86,8 +110,6 @@ if (typeof window !== "undefined" && !(window as any)[FLAG]) {
         headers,
       });
     } catch {
-      // If the guard cannot prove the payload, fail closed instead of letting a
-      // permissive season list leak through.
       return new Response(JSON.stringify({
         episodes: [],
         italian_audio_policy: "strict_confirmed_italian_only",
