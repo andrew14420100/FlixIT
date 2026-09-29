@@ -1,10 +1,10 @@
-"""Fast per-episode Italian availability for FlixIT v13.
+"""Immediate TV-season route with background Italian-audio validation (v14).
 
-The public season route must never depend on the global VixSrc episode feed: it
-is not a complete historical archive. v13 checks the real episode endpoint with
-``lang=it`` first (fast), persists that verdict, and validates HLS audio metadata
-in the background when available. Background work is strongly referenced so it
-cannot disappear before completing.
+User-facing season rendering must never wait for a provider probe.  Episode
+metadata is returned immediately from Mongo/TMDB, while only *definitive*
+negative Italian-audio verdicts are hidden. Unknown/transient provider states
+remain visible and are validated asynchronously, with results persisted in
+MongoDB for subsequent requests.
 """
 from __future__ import annotations
 
@@ -19,10 +19,9 @@ from fastapi import APIRouter
 from fastapi.routing import APIRoute
 
 ROUTE_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
-POLICY_VERSION = "strict-it-v13-fast-episode-lang-it"
+POLICY_VERSION = "strict-it-v14-visible-while-validating"
 POSITIVE_TTL = timedelta(hours=12)
-NEGATIVE_TTL = timedelta(minutes=10)
-API_CHECK_TIMEOUT_SECONDS = 2.2
+NEGATIVE_TTL = timedelta(minutes=15)
 _INSTALLED = False
 
 _client: httpx.AsyncClient | None = None
@@ -31,10 +30,22 @@ _season_tasks: dict[tuple[int, int], asyncio.Task] = {}
 _background_tasks: set[asyncio.Task] = set()
 _validation_tasks: dict[tuple[int, int, int], asyncio.Task] = {}
 
+# Confirmed exceptions can also be overridden in Mongo collection
+# italian_audio_overrides. These three were explicitly reported as original/
+# English audio and therefore stay hidden immediately.
 _BOOTSTRAP_NEGATIVE_OVERRIDES = {
     (65334, 6, 19): "user_confirmed_original_audio",
     (65334, 6, 20): "user_confirmed_original_audio",
     (65334, 6, 21): "user_confirmed_original_audio",
+}
+
+_DEFINITIVE_NEGATIVE_STATUSES = {
+    "english_or_original_audio",
+    "original_only",
+    "user_confirmed_original_audio",
+    "manual_original_audio",
+    "not_published_or_not_italian",
+    "source_missing",
 }
 
 
@@ -112,6 +123,11 @@ def _override(db, key: tuple[int, int, int]):
 
 
 def _cached_results(db, tmdb_id: int, season_number: int) -> dict[int, dict]:
+    """Read only current-policy, non-expired verdicts.
+
+    Old provider-unavailable negatives from earlier policies are deliberately not
+    reused, because they caused entire seasons to disappear.
+    """
     now = _now()
     try:
         rows = list(db["italian_episode_audio_cache"].find(
@@ -142,7 +158,28 @@ def _result(available: bool, reason: str, evidence: str) -> dict:
         "italian_audio_evidence_explicit": bool(available),
         "italian_audio_evidence_source": evidence,
         "italian_audio_policy_version": POLICY_VERSION,
+        "language_validation_pending": False,
     }
+
+
+def _unknown_result() -> dict:
+    return {
+        "italian_available": None,
+        "italian_audio_status": "validation_pending",
+        "source_available": None,
+        "detected_languages": [],
+        "italian_audio_evidence_explicit": False,
+        "italian_audio_evidence_source": "background_validation_pending",
+        "italian_audio_policy_version": POLICY_VERSION,
+        "language_validation_pending": True,
+    }
+
+
+def _is_definitive_negative(result: dict | None) -> bool:
+    if not isinstance(result, dict):
+        return False
+    status = str(result.get("italian_audio_status") or "").strip().lower()
+    return result.get("italian_available") is False and status in _DEFINITIVE_NEGATIVE_STATUSES
 
 
 async def _persist_result(db, key: tuple[int, int, int], result: dict) -> None:
@@ -153,7 +190,9 @@ async def _persist_result(db, key: tuple[int, int, int], result: dict) -> None:
             db["italian_episode_audio_cache"].update_one,
             {"tmdbId": key[0], "season": key[1], "episode": key[2]},
             {"$set": {
-                "tmdbId": key[0], "season": key[1], "episode": key[2],
+                "tmdbId": key[0],
+                "season": key[1],
+                "episode": key[2],
                 "result": result,
                 "policy": POLICY_VERSION,
                 "checked_at": now.isoformat(),
@@ -182,7 +221,6 @@ def _audio_tag_verdict(text: str):
 
 
 def _payload_language_verdict(payload: dict):
-    """Reject only explicit original/English hints in the API response."""
     values: list[str] = []
     for key, value in payload.items():
         lower = str(key).lower()
@@ -219,8 +257,8 @@ async def _validate_hls_background(db, key: tuple[int, int, int]) -> None:
             await _persist_result(db, key, _result(True, "italian", "hls_audio_language"))
         elif verdict is False:
             await _persist_result(db, key, _result(False, "english_or_original_audio", "hls_audio_language"))
+        # Muxed audio without EXT-X-MEDIA remains the fast lang=it positive.
     except Exception:
-        # A validator failure must not erase a fast positive lang=it verdict.
         return
     finally:
         _validation_tasks.pop(key, None)
@@ -235,7 +273,8 @@ def _schedule_validation(db, key: tuple[int, int, int]) -> None:
     _keep_task(task)
 
 
-async def _probe_episode(db, tmdb_id: int, season: int, episode: int) -> dict:
+async def _probe_episode(db, tmdb_id: int, season: int, episode: int) -> dict | None:
+    """Validate one episode without turning transient upstream failures into negatives."""
     key = (int(tmdb_id), int(season), int(episode))
     lock = _locks.setdefault(key, asyncio.Lock())
     async with lock:
@@ -256,23 +295,20 @@ async def _probe_episode(db, tmdb_id: int, season: int, episode: int) -> dict:
                 params={"lang": "it"},
             )
         except Exception:
-            result = _result(False, "provider_unavailable", "vixsrc_episode_api_lang_it")
-            await _persist_result(db, key, result)
-            return result
+            return None
 
         if response.status_code in {404, 410, 422}:
             result = _result(False, "not_published_or_not_italian", "vixsrc_episode_api_lang_it")
             await _persist_result(db, key, result)
             return result
         if response.status_code != 200:
-            result = _result(False, "provider_unavailable", "vixsrc_episode_api_lang_it")
-            await _persist_result(db, key, result)
-            return result
+            # 403/429/5xx are transport/provider state, not evidence of language.
+            return None
 
         try:
             payload = response.json()
         except Exception:
-            payload = {}
+            return None
         src = str(payload.get("src") or "").strip() if isinstance(payload, dict) else ""
         if not src:
             result = _result(False, "source_missing", "vixsrc_episode_api_lang_it")
@@ -330,33 +366,41 @@ def _decorate(row: dict, tmdb_id: int, season_number: int, number: int, result: 
     }
 
 
-def _start_season_warm(db, tmdb_id: int, season_number: int, missing: list[int]) -> asyncio.Task:
+def _start_season_warm(db, tmdb_id: int, season_number: int, missing: list[int]) -> asyncio.Task | None:
+    if not missing:
+        return None
     key = (int(tmdb_id), int(season_number))
     current = _season_tasks.get(key)
     if current is not None and not current.done():
         return current
 
     async def run():
-        semaphore = asyncio.Semaphore(18)
+        semaphore = asyncio.Semaphore(10)
+
         async def one(number: int):
             async with semaphore:
                 await _probe_episode(db, key[0], key[1], number)
+
         await asyncio.gather(*(one(number) for number in missing), return_exceptions=True)
 
     task = asyncio.create_task(run())
     _season_tasks[key] = task
     _keep_task(task)
+
     def cleanup(done: asyncio.Task) -> None:
         if _season_tasks.get(key) is done:
             _season_tasks.pop(key, None)
+
     task.add_done_callback(cleanup)
     return task
 
 
 def install_episode_availability_v12(app, db) -> bool:
+    """Install v14 as the final public TV-season route."""
     global _INSTALLED
-    if _INSTALLED or getattr(app.state, "flixit_episode_availability_v13", False):
+    if _INSTALLED or getattr(app.state, "flixit_episode_availability_v14", False):
         return True
+
     try:
         import server_core as core
     except Exception:
@@ -376,7 +420,7 @@ def install_episode_availability_v12(app, db) -> bool:
     router = APIRouter()
 
     @router.get(ROUTE_PATH)
-    async def italian_season_v13(tmdb_id: int, season_number: int):
+    async def italian_season_v14(tmdb_id: int, season_number: int):
         tmdb_id = int(tmdb_id)
         season_number = int(season_number)
         rows = await _ensure_metadata(core, db, tmdb_id, season_number)
@@ -385,48 +429,63 @@ def install_episode_availability_v12(app, db) -> bool:
                 "tmdbId": tmdb_id,
                 "season_number": season_number,
                 "episodes": [],
+                "italian_audio_policy": "metadata_missing",
                 "italian_audio_policy_version": POLICY_VERSION,
                 "pending_recheck_seconds": 1,
+                "validation_pending_count": 0,
+                "hidden_negative_count": 0,
+                "instant_snapshot": True,
             }
 
-        numbers = [_episode_number(row, index) for index, row in enumerate(rows, 1) if isinstance(row, dict)]
         cached = await asyncio.to_thread(_cached_results, db, tmdb_id, season_number)
-        missing = [number for number in numbers if number > 0 and number not in cached]
-        if missing:
-            warm_task = _start_season_warm(db, tmdb_id, season_number, missing)
-            # Wait briefly for the cheap API checks, but never cancel the warm-up.
-            try:
-                await asyncio.wait({warm_task}, timeout=API_CHECK_TIMEOUT_SECONDS)
-            except Exception:
-                pass
-            cached = await asyncio.to_thread(_cached_results, db, tmdb_id, season_number)
-
         visible: list[dict] = []
+        missing: list[int] = []
+        hidden_negative_count = 0
+
         for index, row in enumerate(rows, 1):
             if not isinstance(row, dict):
                 continue
             number = _episode_number(row, index)
-            result = cached.get(number) or {}
-            if result.get("italian_available") is True:
-                visible.append(_decorate(row, tmdb_id, season_number, number, result))
+            if number <= 0:
+                continue
+            key = (tmdb_id, season_number, number)
+            manual = await asyncio.to_thread(_override, db, key)
+            if manual is not None and manual[0] is False:
+                hidden_negative_count += 1
+                continue
+
+            result = cached.get(number)
+            if _is_definitive_negative(result):
+                hidden_negative_count += 1
+                continue
+            if not result:
+                missing.append(number)
+                result = _unknown_result()
+            visible.append(_decorate(row, tmdb_id, season_number, number, result))
+
+        # Never wait for the provider in the user's request path.
+        _start_season_warm(db, tmdb_id, season_number, missing)
 
         return {
             "tmdbId": tmdb_id,
             "season_number": season_number,
             "episodes": visible,
-            "italian_audio_policy": "fast_episode_lang_it_then_hls_background",
+            "italian_audio_policy": "display_metadata_hide_definitive_negatives_validate_background",
             "italian_audio_policy_version": POLICY_VERSION,
-            "pending_recheck_seconds": 0 if len(cached) >= len([n for n in numbers if n > 0]) else 1,
+            "pending_recheck_seconds": 0,
+            "validation_pending_count": len(missing),
+            "hidden_negative_count": hidden_negative_count,
             "instant_snapshot": True,
-            "snapshot_source": "v13_persisted_episode_verdicts",
+            "snapshot_source": "v14_metadata_first_background_language_validation",
         }
 
     app.include_router(router)
-    app.state.flixit_episode_availability_v13 = {
+    app.state.flixit_episode_availability_v14 = {
         "installed": True,
         "policy": POLICY_VERSION,
-        "source": "fast_per_episode_lang_it_plus_background_hls_validation",
-        "global_episode_feed_is_authoritative": False,
+        "source": "metadata_first_background_language_validation",
+        "unknown_provider_state_hides_episode": False,
+        "definitive_negative_hides_episode": True,
     }
     _INSTALLED = True
     return True
@@ -438,4 +497,5 @@ __all__ = [
     "_audio_tag_verdict",
     "_payload_language_verdict",
     "_BOOTSTRAP_NEGATIVE_OVERRIDES",
+    "_is_definitive_negative",
 ]
