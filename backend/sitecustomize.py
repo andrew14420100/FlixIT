@@ -117,12 +117,20 @@ def _install_ads_registration_hook():
                 install_logo_integrity(app)
             except Exception as exc:
                 print(f"[logo-integrity] registration skipped: {exc}")
+
             try:
                 from services.instant_episode_snapshots import install_instant_episode_snapshots
                 installed = install_instant_episode_snapshots(app, db)
                 if installed:
-                    from services.episode_prewarm_launcher import launch_episode_prewarm
-                    launch_episode_prewarm(app, db)
+                    # The v11 route becomes the final route before the prewarmer
+                    # discovers the endpoint. This makes prewarm populate the
+                    # direct catalogue snapshots instead of the legacy empty
+                    # snapshot layer.
+                    from services.direct_italian_episode_route_v11 import install_direct_italian_episode_route
+                    direct_installed = install_direct_italian_episode_route(app, db)
+                    if direct_installed:
+                        from services.episode_prewarm_launcher import launch_episode_prewarm
+                        launch_episode_prewarm(app, db)
             except Exception as exc:
                 print(f"[instant-episode-snapshots] registration skipped: {exc}")
 
