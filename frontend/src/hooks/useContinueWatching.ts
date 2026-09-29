@@ -17,23 +17,42 @@ export interface ContinueWatchingItem {
 export type { ContinueWatchingItem as WatchProgressItem };
 
 const API_URL = '';
-const LOCAL_STORAGE_KEY = 'netflix_continue_watching';
-const USERNAME_KEY = 'netflix_username';
+const LOCAL_STORAGE_PREFIX = 'netflix_continue_watching';
+const USERNAME_PREFIX = 'netflix_username';
+const USER_ID_KEY = 'netflix_user_id';
 const TOKEN_KEY = 'user_token';
 const LIVE_REFRESH_MS = 2 * 60 * 1000;
-const TOKEN_CHECK_MS = 10_000;
+const TOKEN_CHECK_MS = 2_000;
 const PROGRESS_EVENT = 'flix-watch-progress-changed';
 
 function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+function getProfileId(): string | null {
+  if (!getToken()) return null;
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const value = String(localStorage.getItem(USER_ID_KEY) || '').trim();
+    return value || null;
   } catch {
     return null;
   }
 }
 
-async function apiFetch(path: string, options?: RequestInit) {
-  const token = getToken();
+function profileStorageKey(prefix: string, profileId = getProfileId()) {
+  return profileId ? `${prefix}:${profileId}` : null;
+}
+
+function sessionIdentity(token = getToken()) {
+  if (!token) return '';
+  const profile = getProfileId();
+  // The token is used only as an in-memory discriminator when a profile id has
+  // not been populated yet. It is never persisted in a storage key.
+  return profile ? `profile:${profile}` : `token:${token}`;
+}
+
+async function apiFetch(path: string, options?: RequestInit, tokenOverride?: string | null) {
+  const token = tokenOverride === undefined ? getToken() : tokenOverride;
   if (!token) return null;
   try {
     const isGet = !options?.method || options.method.toUpperCase() === 'GET';
@@ -53,57 +72,76 @@ async function apiFetch(path: string, options?: RequestInit) {
   }
 }
 
-let progressMemo: { at: number; promise: Promise<any> } | null = null;
+let progressMemo: { at: number; identity: string; promise: Promise<any> } | null = null;
 const PROGRESS_MEMO_MS = 20 * 1000;
-function fetchProgressShared(force = false) {
+function fetchProgressShared(force = false, token = getToken()) {
+  if (!token) return Promise.resolve(null);
+  const identity = sessionIdentity(token);
   const now = Date.now();
-  if (!force && progressMemo && now - progressMemo.at < PROGRESS_MEMO_MS) {
+  if (
+    !force &&
+    progressMemo &&
+    progressMemo.identity === identity &&
+    now - progressMemo.at < PROGRESS_MEMO_MS
+  ) {
     return progressMemo.promise;
   }
-  const promise = apiFetch('/api/auth/watch-progress');
-  progressMemo = { at: now, promise };
+  const promise = apiFetch('/api/auth/watch-progress', undefined, token);
+  progressMemo = { at: now, identity, promise };
   return promise;
 }
+
 export function invalidateProgressMemo() {
   progressMemo = null;
 }
 
 function broadcastProgressChanged() {
-  try {
-    window.dispatchEvent(new CustomEvent(PROGRESS_EVENT));
-  } catch {}
+  try { window.dispatchEvent(new CustomEvent(PROGRESS_EVENT)); } catch {}
 }
 
-function readLocalStorage(): ContinueWatchingItem[] {
-  if (!getToken()) return [];
+function readLocalStorage(profileId = getProfileId()): ContinueWatchingItem[] {
+  const key = profileStorageKey(LOCAL_STORAGE_PREFIX, profileId);
+  if (!key) return [];
   try {
-    const parsed = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
+    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-function saveToLocalStorage(items: ContinueWatchingItem[]) {
-  if (!getToken()) return;
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items));
-  } catch {}
+function saveToLocalStorage(items: ContinueWatchingItem[], profileId = getProfileId()) {
+  const key = profileStorageKey(LOCAL_STORAGE_PREFIX, profileId);
+  if (!key) return;
+  try { localStorage.setItem(key, JSON.stringify(items)); } catch {}
 }
 
-type ProgressWriteState = { latest: any; running: Promise<any> | null };
+function readUsername(profileId = getProfileId()) {
+  const key = profileStorageKey(USERNAME_PREFIX, profileId);
+  if (!key) return '';
+  try { return localStorage.getItem(key) || 'Utente'; } catch { return 'Utente'; }
+}
+
+function saveUsername(name: string, profileId = getProfileId()) {
+  const key = profileStorageKey(USERNAME_PREFIX, profileId);
+  if (!key) return;
+  try { localStorage.setItem(key, name); } catch {}
+}
+
+type ProgressWriteState = { latest: any; running: Promise<any> | null; token: string };
 const progressWrites = new Map<string, ProgressWriteState>();
 
-function progressWriteKey(item: any) {
-  return `${item?.media_type || 'movie'}:${item?.tmdb_id || 0}:${item?.season || 0}:${item?.episode || 0}`;
+function progressWriteKey(item: any, identity: string) {
+  return `${identity}:${item?.media_type || 'movie'}:${item?.tmdb_id || 0}:${item?.season || 0}:${item?.episode || 0}`;
 }
 
-function enqueueProgressWrite(item: any) {
-  if (!getToken()) return Promise.resolve(null);
-  const key = progressWriteKey(item);
+function enqueueProgressWrite(item: any, token: string) {
+  if (!token) return Promise.resolve(null);
+  const identity = sessionIdentity(token);
+  const key = progressWriteKey(item, identity);
   let state = progressWrites.get(key);
   if (!state) {
-    state = { latest: null, running: null };
+    state = { latest: null, running: null, token };
     progressWrites.set(key, state);
   }
   state.latest = item;
@@ -113,11 +151,14 @@ function enqueueProgressWrite(item: any) {
     while (state?.latest) {
       const next = state.latest;
       state.latest = null;
+      // Keep the token captured for the account that generated this write. A
+      // logout/login while a keepalive write is queued must never send A's
+      // progress using B's new bearer token.
       await apiFetch('/api/auth/watch-progress', {
         method: 'POST',
         body: JSON.stringify(next),
         keepalive: true,
-      });
+      }, state.token);
     }
   })().finally(() => {
     const current = progressWrites.get(key);
@@ -129,7 +170,7 @@ function enqueueProgressWrite(item: any) {
 
 const passiveSubscribers = new Set<() => void>();
 let passiveCleanup: (() => void) | null = null;
-let lastObservedToken: string | null = null;
+let lastObservedIdentity = '';
 
 function notifyPassiveSubscribers() {
   passiveSubscribers.forEach((callback) => {
@@ -139,24 +180,31 @@ function notifyPassiveSubscribers() {
 
 function ensurePassiveRuntime() {
   if (passiveCleanup || typeof window === 'undefined') return;
-  lastObservedToken = getToken();
+  lastObservedIdentity = sessionIdentity();
 
   const sync = () => notifyPassiveSubscribers();
   const onVisibility = () => {
     if (document.visibilityState === 'visible') sync();
   };
   const onStorage = (event: StorageEvent) => {
-    if (!event.key || event.key === TOKEN_KEY || event.key === LOCAL_STORAGE_KEY || event.key === USERNAME_KEY) {
-      if (event.key === TOKEN_KEY) invalidateProgressMemo();
+    const key = String(event.key || '');
+    if (
+      !key ||
+      key === TOKEN_KEY ||
+      key === USER_ID_KEY ||
+      key.startsWith(`${LOCAL_STORAGE_PREFIX}:`) ||
+      key.startsWith(`${USERNAME_PREFIX}:`)
+    ) {
+      if (key === TOKEN_KEY || key === USER_ID_KEY) invalidateProgressMemo();
       sync();
     }
   };
 
   const refreshInterval = window.setInterval(sync, LIVE_REFRESH_MS);
-  const tokenInterval = window.setInterval(() => {
-    const nextToken = getToken();
-    if (nextToken !== lastObservedToken) {
-      lastObservedToken = nextToken;
+  const identityInterval = window.setInterval(() => {
+    const nextIdentity = sessionIdentity();
+    if (nextIdentity !== lastObservedIdentity) {
+      lastObservedIdentity = nextIdentity;
       invalidateProgressMemo();
       sync();
     }
@@ -170,7 +218,7 @@ function ensurePassiveRuntime() {
 
   passiveCleanup = () => {
     window.clearInterval(refreshInterval);
-    window.clearInterval(tokenInterval);
+    window.clearInterval(identityInterval);
     window.removeEventListener('focus', sync);
     window.removeEventListener('online', sync);
     window.removeEventListener('storage', onStorage);
@@ -190,34 +238,25 @@ function subscribePassiveSync(callback: () => void) {
 }
 
 export function useContinueWatching() {
-  const [items, setItems] = useState<ContinueWatchingItem[]>(() => (
-    getToken() ? readLocalStorage() : []
-  ));
-  const [username, setUsername] = useState<string>(() => {
-    if (!getToken()) return '';
-    try { return localStorage.getItem(USERNAME_KEY) || 'Utente'; } catch { return 'Utente'; }
-  });
+  const [items, setItems] = useState<ContinueWatchingItem[]>(() => readLocalStorage());
+  const [username, setUsername] = useState<string>(() => readUsername());
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(!!getToken());
 
-  const applyPayload = useCallback((data: any) => {
-    if (!getToken()) {
-      setItems([]);
-      setUsername('');
-      setIsLoggedIn(false);
-      return;
-    }
+  const applyPayload = useCallback((data: any, expectedToken: string, expectedProfile: string | null) => {
+    if (!expectedToken || getToken() !== expectedToken || getProfileId() !== expectedProfile) return;
     if (data?.items) {
       setItems(data.items);
-      saveToLocalStorage(data.items);
+      saveToLocalStorage(data.items, expectedProfile);
     }
     if (data?.username) {
       setUsername(data.username);
-      try { localStorage.setItem(USERNAME_KEY, data.username); } catch {}
+      saveUsername(data.username, expectedProfile);
     }
   }, []);
 
   const refresh = useCallback(async (force = true) => {
     const token = getToken();
+    const profileId = getProfileId();
     if (!token) {
       setIsLoggedIn(false);
       setItems([]);
@@ -227,9 +266,14 @@ export function useContinueWatching() {
     }
 
     setIsLoggedIn(true);
+    // Switch visible state to the current profile's own local snapshot before
+    // any network response. This prevents cross-account first-paint leakage.
+    setItems(readLocalStorage(profileId));
+    setUsername(readUsername(profileId));
+
     if (force) invalidateProgressMemo();
-    const data = await fetchProgressShared(force);
-    applyPayload(data);
+    const data = await fetchProgressShared(force, token);
+    applyPayload(data, token, profileId);
     return data;
   }, [applyPayload]);
 
@@ -244,9 +288,9 @@ export function useContinueWatching() {
     let idleId: any = null;
     const run = () => { if (!cancelled) refresh(false); };
     if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
-      idleId = (window as any).requestIdleCallback(run, { timeout: 1600 });
+      idleId = (window as any).requestIdleCallback(run, { timeout: 900 });
     } else if (typeof window !== 'undefined') {
-      timer = window.setTimeout(run, 450);
+      timer = window.setTimeout(run, 250);
     }
     return () => {
       cancelled = true;
@@ -259,7 +303,9 @@ export function useContinueWatching() {
 
   const saveProgress = useCallback(
     async (item: Omit<ContinueWatchingItem, 'updated_at'>) => {
-      if (!getToken()) {
+      const token = getToken();
+      const profileId = getProfileId();
+      if (!token || !profileId) {
         setItems([]);
         return;
       }
@@ -268,21 +314,22 @@ export function useContinueWatching() {
       const fullItem: ContinueWatchingItem = { ...item, updated_at: now };
 
       setItems((prev) => {
-        const base = prev.length ? prev : readLocalStorage();
+        if (getToken() !== token || getProfileId() !== profileId) return prev;
+        const base = prev.length ? prev : readLocalStorage(profileId);
         const filtered = base.filter((i) => i.tmdb_id !== item.tmdb_id);
 
         if (item.duration > 0 && item.progress / item.duration >= 0.95) {
-          saveToLocalStorage(filtered);
+          saveToLocalStorage(filtered, profileId);
           return filtered;
         }
         if (item.progress < 10) return prev;
 
         const updated = [fullItem, ...filtered].slice(0, 20);
-        saveToLocalStorage(updated);
+        saveToLocalStorage(updated, profileId);
         return updated;
       });
 
-      await enqueueProgressWrite(item);
+      await enqueueProgressWrite(item, token);
       invalidateProgressMemo();
     },
     []
@@ -290,36 +337,40 @@ export function useContinueWatching() {
 
   const getProgress = useCallback(
     (tmdbId: number): ContinueWatchingItem | undefined => {
-      if (!getToken()) return undefined;
+      if (!getToken() || !getProfileId()) return undefined;
       return items.find((i) => i.tmdb_id === tmdbId);
     },
     [items]
   );
 
   const removeItem = useCallback(async (tmdbId: number) => {
-    if (!getToken()) {
+    const token = getToken();
+    const profileId = getProfileId();
+    if (!token || !profileId) {
       setItems([]);
       return;
     }
 
     setItems((prev) => {
+      if (getToken() !== token || getProfileId() !== profileId) return prev;
       const updated = prev.filter((i) => i.tmdb_id !== tmdbId);
-      saveToLocalStorage(updated);
+      saveToLocalStorage(updated, profileId);
       return updated;
     });
 
-    await apiFetch(`/api/auth/watch-progress/${tmdbId}`, { method: 'DELETE' });
+    await apiFetch(`/api/auth/watch-progress/${tmdbId}`, { method: 'DELETE' }, token);
     invalidateProgressMemo();
     broadcastProgressChanged();
   }, []);
 
   const updateUsername = useCallback((name: string) => {
-    if (!getToken()) {
+    const profileId = getProfileId();
+    if (!getToken() || !profileId) {
       setUsername('');
       return;
     }
     setUsername(name);
-    try { localStorage.setItem(USERNAME_KEY, name); } catch {}
+    saveUsername(name, profileId);
   }, []);
 
   return {
