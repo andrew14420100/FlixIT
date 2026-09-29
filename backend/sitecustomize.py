@@ -96,9 +96,8 @@ def _install_ads_registration_hook():
             # Playback warming is best effort only and never blocks API boot.
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # These guards must be installed after all service/package registration
-        # has finished.  A startup callback guarantees strict_italian_tv and the
-        # final public season route already exist before we wrap them.
+        # These guards run after package/service registration has finished, so
+        # strict_italian_tv and the final public season route already exist.
         async def install_post_registration_guards():
             try:
                 from services.strict_audio_evidence import install_strict_audio_evidence
@@ -112,7 +111,10 @@ def _install_ads_registration_hook():
                 print(f"[logo-integrity] registration skipped: {exc}")
             try:
                 from services.instant_episode_snapshots import install_instant_episode_snapshots
-                install_instant_episode_snapshots(app, db)
+                installed = install_instant_episode_snapshots(app, db)
+                if installed:
+                    from services.episode_prewarm_launcher import launch_episode_prewarm
+                    launch_episode_prewarm(app, db)
             except Exception as exc:
                 print(f"[instant-episode-snapshots] registration skipped: {exc}")
 
