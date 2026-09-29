@@ -54,3 +54,5 @@ jobs:
         run: python backend/tests/test_strict_audio_evidence_v10.py
       - name: Verify direct v11 episode route
         run: python backend/tests/test_episode_route_v11_static.py
+      - name: Verify v12 per-episode Italian playback policy
+        run: python backend/tests/test_episode_availability_v12.py
