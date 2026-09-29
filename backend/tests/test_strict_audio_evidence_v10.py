@@ -46,6 +46,14 @@ def check(condition, message):
 def run():
     check(policy.POLICY_VERSION == "strict-it-v10-vixsrc-episode-catalog", "wrong v10 policy")
 
+    # Real VixSrc episode-list shape uses tmdb_id + s + e.
+    real_shape = policy._episode_key_from_row({
+        "tmdb_id": 65334,
+        "s": 6,
+        "e": 18,
+    })
+    check(real_shape == (65334, 6, 18), f"VixSrc s/e row not parsed: {real_shape!r}")
+
     direct = policy._episode_key_from_row({
         "tmdb_id": 65334,
         "season": 6,
@@ -68,12 +76,10 @@ def run():
     composite = policy._episode_key_from_row({"media_key": "tv:65334:6:21"})
     check(composite == (65334, 6, 21), f"composite row not parsed: {composite!r}")
 
-    parsed = policy._parse_episode_catalog({
-        "episodes": [
-            {"tmdb_id": 65334, "season": 6, "episode": 1},
-            {"tmdb_id": 65334, "season": 6, "episode": 2},
-        ]
-    })
+    parsed = policy._parse_episode_catalog([
+        {"tmdb_id": 65334, "s": 6, "e": 1},
+        {"tmdb_id": 65334, "s": 6, "e": 2},
+    ])
     check((65334, 6, 1) in parsed and (65334, 6, 2) in parsed, "catalog rows missing")
 
     # A generic UI locale must still not qualify as audio-track evidence in the
