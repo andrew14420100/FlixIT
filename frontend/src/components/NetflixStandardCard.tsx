@@ -81,7 +81,8 @@ const NetflixStandardCard = forwardRef<HTMLDivElement, Props>(function NetflixSt
               alt=""
               width={portrait ? 500 : 342}
               height={portrait ? 750 : 192}
-              loading="lazy"
+              loading="eager"
+              fetchPriority="auto"
               decoding="async"
               draggable={false}
               onError={() => setCandidateIndex((index) => index + 1)}
