@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 def run() -> None:
     from services import sc_direct_detail_v18 as direct
+    from services import sc_direct_detail_runtime as runtime
     from services import sc_native_catalog_v17 as sc
 
     assert direct.POLICY_VERSION == "sc-direct-detail-v18"
@@ -58,21 +59,24 @@ def run() -> None:
     assert "sc-episodes-v18" in frontend
     assert "sc-seasons-v18" in frontend
 
-    # The installer must create the real FastAPI routes, including the diagnostic
-    # endpoint the deployment uses to verify v18 is active.
+    # The per-app runtime registrar must create the actual routes on the app
+    # instance being served, including the diagnostic endpoint.
     app = FastAPI()
-    direct._INSTALLED = False
-    direct._db = None
-    assert direct.install_sc_direct_detail_v18(app, object()) is True
+    assert runtime.install_sc_direct_detail_runtime(app, object()) is True
     paths = {getattr(route, "path", "") for route in app.router.routes}
     assert direct.SEASONS_PATH in paths
     assert direct.SEASON_PATH in paths
     assert direct.STATUS_PATH in paths
 
-    # Emergent's guaranteed service-registration path must also install v18;
-    # sitecustomize is only a fallback and cannot be the sole registration path.
+    # A second app in the same process must also receive the routes. This guards
+    # against the exact global-_INSTALLED bug that produced 404 on Emergent.
+    second_app = FastAPI()
+    assert runtime.install_sc_direct_detail_runtime(second_app, object()) is True
+    second_paths = {getattr(route, "path", "") for route in second_app.router.routes}
+    assert direct.STATUS_PATH in second_paths
+
     strict_source = (ROOT / "services/strict_italian_tv.py").read_text(encoding="utf-8")
-    assert "install_sc_direct_detail_v18(app, core.db)" in strict_source
+    assert "install_sc_direct_detail_runtime(app, core.db)" in strict_source
 
     print("sc-direct-detail-v18: PASS")
 
