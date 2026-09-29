@@ -99,8 +99,6 @@ def _install_ads_registration_hook():
                 from services.vixsrc_episode_catalog_paged import install_paged_episode_catalog
 
                 strict_audio.install_strict_audio_evidence(app)
-                # Patch the policy with the complete paginated loader before any
-                # season snapshot asks for a verdict.
                 install_paged_episode_catalog(strict_audio)
                 try:
                     await asyncio.wait_for(
@@ -119,13 +117,19 @@ def _install_ads_registration_hook():
                 print(f"[logo-integrity] registration skipped: {exc}")
 
             try:
-                from services.instant_episode_snapshots import install_instant_episode_snapshots
-                installed = install_instant_episode_snapshots(app, db)
+                # The legacy snapshot module accidentally contains JavaScript's
+                # Number(...) spelling in two runtime-only branches. Compileall
+                # cannot detect that NameError, so provide the intended Python
+                # conversion until the legacy layer is retired.
+                import services.instant_episode_snapshots as instant_snapshots
+                if not hasattr(instant_snapshots, "Number"):
+                    instant_snapshots.Number = int
+
+                installed = instant_snapshots.install_instant_episode_snapshots(app, db)
                 if installed:
-                    # The v11 route becomes the final route before the prewarmer
-                    # discovers the endpoint. This makes prewarm populate the
-                    # direct catalogue snapshots instead of the legacy empty
-                    # snapshot layer.
+                    # Install v11 as the final route *before* the prewarmer looks
+                    # up the endpoint. Old v10 empty Mongo snapshots are therefore
+                    # bypassed and can no longer pin a season to zero episodes.
                     from services.direct_italian_episode_route_v11 import install_direct_italian_episode_route
                     direct_installed = install_direct_italian_episode_route(app, db)
                     if direct_installed:
