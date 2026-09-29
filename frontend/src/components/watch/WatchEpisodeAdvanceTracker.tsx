@@ -1,29 +1,34 @@
 // @ts-nocheck
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import { useContinueWatching } from "src/hooks/useContinueWatching";
 
 const WATCH_TV_RE = /^\/watch\/tv\/(\d+)(?:\/|$)/i;
+const COMPLETION_RATIO = 0.95;
 
-function localUserId() {
-  let id = localStorage.getItem("netflix_user_id");
-  if (!id) {
-    id = `user_${Math.random().toString(36).slice(2, 11)}`;
-    localStorage.setItem("netflix_user_id", id);
+function authenticatedProfileId() {
+  try {
+    const token = localStorage.getItem("user_token");
+    const userId = localStorage.getItem("netflix_user_id");
+    return token && userId ? userId : null;
+  } catch {
+    return null;
   }
-  return id;
 }
 
 function completionStorageKey(mediaId: number) {
-  return `flixit-completed-episodes:${localUserId()}:${mediaId}`;
+  const profileId = authenticatedProfileId();
+  return profileId ? `flixit-completed-episodes:${profileId}:${mediaId}` : null;
 }
 
-function markEpisodeCompleted(mediaId: number, season: number, episode: number, source = "player-ended") {
+function markEpisodeCompleted(mediaId: number, season: number, episode: number, source = "player-complete") {
+  const key = completionStorageKey(mediaId);
+  if (!key) return;
   try {
-    const key = completionStorageKey(mediaId);
     const parsed = JSON.parse(localStorage.getItem(key) || "[]");
     const set = new Set<string>(Array.isArray(parsed) ? parsed.map(String) : []);
-    set.add(`${Math.max(1, season)}:${Math.max(1, episode)}`);
+    const value = `${Math.max(1, season)}:${Math.max(1, episode)}`;
+    if (set.has(value)) return;
+    set.add(value);
     localStorage.setItem(key, JSON.stringify(Array.from(set)));
     window.dispatchEvent(new CustomEvent("flixit-episode-completion-changed", {
       detail: { mediaId, season, episode, completed: true, source },
@@ -42,78 +47,52 @@ function parseWatchLocation(pathname: string, search: string) {
   };
 }
 
-function isForwardEpisode(previous: any, current: any) {
-  if (!previous || !current || previous.mediaId !== current.mediaId) return false;
-  if (current.season === previous.season && current.episode > previous.episode) return true;
-  if (current.season > previous.season) return true;
-  return false;
-}
-
 /**
- * A completed media event always completes the current episode. In addition,
- * deliberately moving forward to a later episode completes the outgoing one and
- * advances Continue Watching to the selected target. This mirrors the episode
- * list rule: everything before the chosen episode is considered completed.
+ * Completion comes only from actual media playback. Navigating forward, opening
+ * an episode card or auto-advancing the route is not completion evidence.
  */
 export default function WatchEpisodeAdvanceTracker() {
   const location = useLocation();
-  const { items, saveProgress } = useContinueWatching();
-  const previousRef = useRef<any>(null);
-  const itemsRef = useRef<any[]>(items || []);
   const locationRef = useRef({ pathname: location.pathname, search: location.search });
-
-  useEffect(() => {
-    itemsRef.current = items || [];
-  }, [items]);
+  const completedInSession = useRef(new Set<string>());
 
   useEffect(() => {
     locationRef.current = { pathname: location.pathname, search: location.search };
   }, [location.pathname, location.search]);
 
   useEffect(() => {
+    const completeCurrent = (target: HTMLMediaElement, source: string) => {
+      const current = parseWatchLocation(locationRef.current.pathname, locationRef.current.search);
+      if (!current?.mediaId || !authenticatedProfileId()) return;
+      const key = `${current.mediaId}:${current.season}:${current.episode}`;
+      if (completedInSession.current.has(key)) return;
+
+      const duration = Number(target.duration || 0);
+      const currentTime = Number(target.currentTime || 0);
+      const ratio = duration > 0 && Number.isFinite(duration) ? currentTime / duration : 0;
+      if (source !== "player-ended" && ratio < COMPLETION_RATIO) return;
+
+      completedInSession.current.add(key);
+      markEpisodeCompleted(current.mediaId, current.season, current.episode, source);
+    };
+
     const onEnded = (event: Event) => {
       const target = event.target;
-      if (!(target instanceof HTMLMediaElement)) return;
-      const current = parseWatchLocation(locationRef.current.pathname, locationRef.current.search);
-      if (!current?.mediaId) return;
-      markEpisodeCompleted(current.mediaId, current.season, current.episode, "player-ended");
+      if (target instanceof HTMLMediaElement) completeCurrent(target, "player-ended");
+    };
+
+    const onTimeUpdate = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLMediaElement) completeCurrent(target, "player-95-percent");
     };
 
     document.addEventListener("ended", onEnded, true);
-    return () => document.removeEventListener("ended", onEnded, true);
+    document.addEventListener("timeupdate", onTimeUpdate, true);
+    return () => {
+      document.removeEventListener("ended", onEnded, true);
+      document.removeEventListener("timeupdate", onTimeUpdate, true);
+    };
   }, []);
-
-  useEffect(() => {
-    const current = parseWatchLocation(location.pathname, location.search);
-    const previous = previousRef.current;
-    previousRef.current = current;
-
-    if (!isForwardEpisode(previous, current)) return;
-
-    markEpisodeCompleted(
-      previous.mediaId,
-      previous.season,
-      previous.episode,
-      "forward-episode-navigation"
-    );
-
-    const timer = window.setTimeout(() => {
-      const existing = (itemsRef.current || []).find((item: any) => Number(item?.tmdb_id || 0) === current.mediaId);
-      saveProgress({
-        tmdb_id: current.mediaId,
-        media_type: "tv",
-        progress: 10,
-        duration: Math.max(60, Number(existing?.duration || 2700)),
-        title: existing?.title || `Serie TV ${current.mediaId}`,
-        backdrop_path: existing?.backdrop_path || "",
-        poster_path: existing?.poster_path || "",
-        season: current.season,
-        episode: current.episode,
-      });
-    }, 140);
-
-    return () => window.clearTimeout(timer);
-  }, [location.pathname, location.search, saveProgress]);
 
   return null;
 }
