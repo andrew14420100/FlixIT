@@ -75,6 +75,7 @@ function broadcastProgressChanged() {
 }
 
 function readLocalStorage(): ContinueWatchingItem[] {
+  if (!getToken()) return [];
   try {
     const parsed = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY) || '[]');
     return Array.isArray(parsed) ? parsed : [];
@@ -84,6 +85,7 @@ function readLocalStorage(): ContinueWatchingItem[] {
 }
 
 function saveToLocalStorage(items: ContinueWatchingItem[]) {
+  if (!getToken()) return;
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(items));
   } catch {}
@@ -97,6 +99,7 @@ function progressWriteKey(item: any) {
 }
 
 function enqueueProgressWrite(item: any) {
+  if (!getToken()) return Promise.resolve(null);
   const key = progressWriteKey(item);
   let state = progressWrites.get(key);
   if (!state) {
@@ -187,13 +190,22 @@ function subscribePassiveSync(callback: () => void) {
 }
 
 export function useContinueWatching() {
-  const [items, setItems] = useState<ContinueWatchingItem[]>(() => readLocalStorage());
+  const [items, setItems] = useState<ContinueWatchingItem[]>(() => (
+    getToken() ? readLocalStorage() : []
+  ));
   const [username, setUsername] = useState<string>(() => {
+    if (!getToken()) return '';
     try { return localStorage.getItem(USERNAME_KEY) || 'Utente'; } catch { return 'Utente'; }
   });
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(!!getToken());
 
   const applyPayload = useCallback((data: any) => {
+    if (!getToken()) {
+      setItems([]);
+      setUsername('');
+      setIsLoggedIn(false);
+      return;
+    }
     if (data?.items) {
       setItems(data.items);
       saveToLocalStorage(data.items);
@@ -208,8 +220,9 @@ export function useContinueWatching() {
     const token = getToken();
     if (!token) {
       setIsLoggedIn(false);
-      setItems(readLocalStorage());
-      try { setUsername(localStorage.getItem(USERNAME_KEY) || 'Utente'); } catch { setUsername('Utente'); }
+      setItems([]);
+      setUsername('');
+      invalidateProgressMemo();
       return null;
     }
 
@@ -221,10 +234,11 @@ export function useContinueWatching() {
   }, [applyPayload]);
 
   useEffect(() => {
-    // Local storage already provides an instant first frame. Remote progress is
-    // synchronization work, not a first-paint dependency, so let Hero and card
-    // images win the initial network/main-thread budget.
-    if (!getToken()) return;
+    if (!getToken()) {
+      setItems([]);
+      setUsername('');
+      return;
+    }
     let cancelled = false;
     let timer = 0;
     let idleId: any = null;
@@ -245,6 +259,11 @@ export function useContinueWatching() {
 
   const saveProgress = useCallback(
     async (item: Omit<ContinueWatchingItem, 'updated_at'>) => {
+      if (!getToken()) {
+        setItems([]);
+        return;
+      }
+
       const now = new Date().toISOString();
       const fullItem: ContinueWatchingItem = { ...item, updated_at: now };
 
@@ -263,33 +282,42 @@ export function useContinueWatching() {
         return updated;
       });
 
-      if (getToken()) await enqueueProgressWrite(item);
+      await enqueueProgressWrite(item);
       invalidateProgressMemo();
     },
     []
   );
 
   const getProgress = useCallback(
-    (tmdbId: number): ContinueWatchingItem | undefined => items.find((i) => i.tmdb_id === tmdbId),
+    (tmdbId: number): ContinueWatchingItem | undefined => {
+      if (!getToken()) return undefined;
+      return items.find((i) => i.tmdb_id === tmdbId);
+    },
     [items]
   );
 
   const removeItem = useCallback(async (tmdbId: number) => {
+    if (!getToken()) {
+      setItems([]);
+      return;
+    }
+
     setItems((prev) => {
       const updated = prev.filter((i) => i.tmdb_id !== tmdbId);
       saveToLocalStorage(updated);
       return updated;
     });
 
-    if (getToken()) {
-      await apiFetch(`/api/auth/watch-progress/${tmdbId}`, { method: 'DELETE' });
-    }
-
+    await apiFetch(`/api/auth/watch-progress/${tmdbId}`, { method: 'DELETE' });
     invalidateProgressMemo();
     broadcastProgressChanged();
   }, []);
 
   const updateUsername = useCallback((name: string) => {
+    if (!getToken()) {
+      setUsername('');
+      return;
+    }
     setUsername(name);
     try { localStorage.setItem(USERNAME_KEY, name); } catch {}
   }, []);

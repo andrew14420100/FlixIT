@@ -66,7 +66,6 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
       : [];
     return [...new Set(values.filter(Boolean))];
   }, [backdropUrl, backdropUrls]);
-  const backdropKey = backdropCandidates.join("|");
 
   const [muted, setMuted] = useState(true);
   const [trailerGateOpen, setTrailerGateOpen] = useState(false);
@@ -81,22 +80,34 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
     typeof window !== "undefined" ? window.innerHeight * 0.6 : 600
   );
 
+  // Visual state belongs to the title, not to late-arriving artwork/logo queries.
+  // Never blank a backdrop that is already painted merely because a logo or
+  // trailer finished loading after the first frame.
+  useEffect(() => {
+    setImageLoaded(false);
+    setBackdropIndex(0);
+    setBackdropFailed(false);
+    setLogoFailed(false);
+  }, [mediaId]);
+
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [mediaId, logoUrl]);
+
+  // Trailer lifecycle is independent from the static Hero image.
   useEffect(() => {
     setMuted(true);
     setTrailerGateOpen(false);
     setVideoPlaying(false);
     setVideoEnded(false);
-    setImageLoaded(false);
-    setBackdropIndex(0);
-    setBackdropFailed(false);
-    setLogoFailed(false);
 
+    if (!trailerUrl) return undefined;
     const timer = window.setTimeout(() => {
-      if (trailerUrl) setTrailerGateOpen(true);
+      setTrailerGateOpen(true);
     }, HERO_TRAILER_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [mediaId, trailerUrl, backdropKey, logoUrl]);
+  }, [mediaId, trailerUrl]);
 
   const handleVideoEnded = useCallback(() => {
     setVideoEnded(true);
@@ -203,7 +214,7 @@ export default function DetailHero({ data, mediaId, onPlay, onWarm, onMoreInfo }
           decoding="async"
           sx={{
             opacity: imageLoaded ? (videoActive ? 0 : 1) : 0,
-            transition: "opacity 420ms ease-in-out",
+            transition: "opacity 220ms ease-out",
           }}
         />
       ) : null}

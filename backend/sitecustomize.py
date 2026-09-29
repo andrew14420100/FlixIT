@@ -95,6 +95,30 @@ def _install_ads_registration_hook():
         except Exception as exc:
             # Playback warming is best effort only and never blocks API boot.
             print(f"[player-hot-warm] registration skipped: {exc}")
+
+        # These guards run after package/service registration has finished, so
+        # strict_italian_tv and the final public season route already exist.
+        async def install_post_registration_guards():
+            try:
+                from services.strict_audio_evidence import install_strict_audio_evidence
+                install_strict_audio_evidence(app)
+            except Exception as exc:
+                print(f"[strict-audio-evidence] registration skipped: {exc}")
+            try:
+                from services.logo_integrity import install_logo_integrity
+                install_logo_integrity(app)
+            except Exception as exc:
+                print(f"[logo-integrity] registration skipped: {exc}")
+            try:
+                from services.instant_episode_snapshots import install_instant_episode_snapshots
+                installed = install_instant_episode_snapshots(app, db)
+                if installed:
+                    from services.episode_prewarm_launcher import launch_episode_prewarm
+                    launch_episode_prewarm(app, db)
+            except Exception as exc:
+                print(f"[instant-episode-snapshots] registration skipped: {exc}")
+
+        app.add_event_handler("startup", install_post_registration_guards)
         return result
 
     register_with_ads._flixit_ads_hook = True

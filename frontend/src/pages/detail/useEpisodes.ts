@@ -2,9 +2,9 @@
 /**
  * FlixIT Detail Page - persistent seasons/episodes cache.
  *
- * A refresh must render the last verified Italian catalogue immediately. Fresh
- * checks happen after paint and every season is warmed in the background, so
- * switching seasons does not create a loading state after the first visit.
+ * A refresh renders the last server-verified Italian season snapshot immediately.
+ * The backend keeps those snapshots warm, so switching seasons normally does not
+ * start a language scan in the user's request path.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -14,7 +14,9 @@ const SEASONS_STALE_MS = 30 * 60 * 1000;
 const EPISODES_STALE_MS = 10 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BACKGROUND_SEASON_CONCURRENCY = 2;
-const EPISODE_CACHE_PREFIX = "flixit:it-episodes-v2:";
+// v3 deliberately invalidates browser payloads created by the older policy that
+// could mistake a provider UI locale (lang=it) for proof of Italian audio.
+const EPISODE_CACHE_PREFIX = "flixit:it-episodes-v3-audio-evidence:";
 const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
@@ -61,9 +63,6 @@ function isShortCheckingResponse(value) {
 function writePersistent(key, value) {
   if (typeof window === "undefined" || !value) return;
 
-  // Never let a temporary cold-backend "checking" response erase a previously
-  // verified season. The old verified list stays authoritative until a new
-  // verified response is ready, so opening the Episodi tab cannot flash empty.
   const previous = readPersistent(key)?.data;
   if (isShortCheckingResponse(value) && hasVerifiedEpisodes(previous)) return;
 
@@ -179,7 +178,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const episodeCacheKey = `${EPISODE_CACHE_PREFIX}${mediaId}:${selected}`;
   const episodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-it-v6-strict-language", mediaId, selected],
+    queryKey: ["dp-season-episodes-it-v7-audio-evidence", mediaId, selected],
     queryFn: async ({ signal }) => {
       const fresh = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal);
       if (isShortCheckingResponse(fresh) && hasVerifiedEpisodes(episodeCached?.data)) {
