@@ -1,5 +1,13 @@
 /* Desktop Home Hero finishing layer. Header/background ambience is owned by
    NetflixHomeAmbientExact so this file does not fight that system. */
+
+/* The backdrop is now prewarmed before React paints. Do not add another 420ms
+   visual wait after the bytes are already decoded. Keep only a tiny transition
+   for trailer/backdrop hand-off. */
+[data-testid="home-page"] [data-testid="hero-backdrop"].netflix-home-backdrop {
+  transition: opacity 80ms linear !important;
+}
+
 @media (min-width: 900px) {
   [data-testid="home-page"] {
     position: relative !important;
