@@ -133,7 +133,8 @@ export function Component() {
     validType && data.isTV ? mediaId : 0,
     validType && data.isTV && italianAvailability !== "unavailable",
     data.season,
-    activeTab === "episodes"
+    activeTab === "episodes",
+    data.episode
   );
   const tabs = detailTabsFor(data.isTV);
 
