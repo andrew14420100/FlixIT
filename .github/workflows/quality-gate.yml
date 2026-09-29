@@ -56,3 +56,5 @@ jobs:
         run: python backend/tests/test_strict_audio_evidence_v10.py
       - name: Verify StreamingCommunity-native catalogue v17
         run: python backend/tests/test_sc_native_catalog_v17.py
+      - name: Verify SC direct Detail flow v18
+        run: python backend/tests/test_sc_direct_detail_v18.py
