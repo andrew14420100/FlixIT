@@ -66,10 +66,11 @@ def _install_ads_registration_hook():
         except Exception as exc:
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # v17 follows StreamingCommunity's own catalogue hierarchy. It registers
-        # routes synchronously but never reads Mongo or contacts SC in this path;
-        # hydration/crawling starts only after FastAPI startup.
+        # v17 keeps the broad SC catalogue warm in Mongo/background memory.
+        # v18 is the user-facing Detail path and mirrors SC itself directly:
+        # title data-page -> props.title.seasons -> season-N -> loadedSeason.episodes.
         sc_index_installed = False
+        sc_direct_installed = False
         try:
             from services.sc_native_catalog_v17_safety import install_sc_v17_safety
             install_sc_v17_safety()
@@ -78,9 +79,15 @@ def _install_ads_registration_hook():
         except Exception as exc:
             print(f"[sc-native-catalog-v17] registration skipped: {exc}")
 
+        try:
+            from services.sc_direct_detail_v18 import install_sc_direct_detail_v18
+            sc_direct_installed = bool(install_sc_direct_detail_v18(app, db))
+        except Exception as exc:
+            print(f"[sc-direct-detail-v18] registration skipped: {exc}")
+
         async def install_post_registration_guards():
             # Audio-track preference belongs only to playback. Catalogue
-            # membership comes from StreamingCommunity v17, never from VixSrc.
+            # membership comes from StreamingCommunity, never from VixSrc.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -104,6 +111,16 @@ def _install_ads_registration_hook():
                     install_sc_native_catalog_v17(app, db)
             except Exception as exc:
                 print(f"[sc-native-catalog-v17] startup fallback skipped: {exc}")
+
+            try:
+                direct_installed = sc_direct_installed or bool(
+                    getattr(app.state, "flixit_sc_direct_detail_v18", False)
+                )
+                if not direct_installed:
+                    from services.sc_direct_detail_v18 import install_sc_direct_detail_v18
+                    install_sc_direct_detail_v18(app, db)
+            except Exception as exc:
+                print(f"[sc-direct-detail-v18] startup fallback skipped: {exc}")
 
         app.add_event_handler("startup", install_post_registration_guards)
         return result
