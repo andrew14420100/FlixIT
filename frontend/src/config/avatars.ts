@@ -12,5 +12,12 @@ export const AVATARS = [
 
 export const DEFAULT_AVATAR = "/avatars/default.webp";
 
+// MainHeader imports this module on every normal app load, so register the
+// visual cache here without adding another startup dependency. Once installed,
+// covers, avatars and webfonts are served cache-first across F5/reopens.
+if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/flixit-sw.js", { scope: "/" }).catch(() => {});
+}
+
 export const avatarSrc = (profileImage?: string | null) =>
   AVATARS.find((a) => a.id === profileImage)?.src || DEFAULT_AVATAR;
