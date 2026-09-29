@@ -1,17 +1,16 @@
 """Per-app runtime registrar for StreamingCommunity direct Detail routes.
 
-This deliberately avoids process-global and app-state early-return guards.
-Emergent/reload setups can import modules against more than one FastAPI instance
-in the same process, so every call removes any previous SC-direct handlers from
-the supplied app and rebinds them to that exact instance.
+Every call removes the previous public TV seasons/episodes/status handlers from
+the supplied FastAPI app and binds the SC-direct handlers directly with
+``app.add_api_route``. This avoids process-global installer state and avoids an
+intermediate APIRouter while routes are being replaced dynamically.
 
-The data flow itself is unchanged and remains the SC-public flow implemented in
-`sc_direct_detail_v18`: title data-page -> props.title.seasons -> season-N ->
-props.loadedSeason.episodes. VixSrc is playback-only.
+Catalogue data uses the same public SC flow implemented in
+``sc_direct_detail_v18``: title data-page -> props.title.seasons -> season-N ->
+props.loadedSeason.episodes. VixSrc remains playback-only.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
 from fastapi.routing import APIRoute
 
 from services import sc_direct_detail_v18 as direct
@@ -21,8 +20,6 @@ from services import sc_native_catalog_v17 as sc
 def install_sc_direct_detail_runtime(app, db) -> bool:
     direct._db = db
 
-    # Always rebind these routes on the supplied app. This makes the operation
-    # truly idempotent per FastAPI instance and immune to stale module/app flags.
     kept = []
     for route in app.router.routes:
         if isinstance(route, APIRoute) and "GET" in (route.methods or set()):
@@ -31,9 +28,6 @@ def install_sc_direct_detail_runtime(app, db) -> bool:
         kept.append(route)
     app.router.routes[:] = kept
 
-    router = APIRouter()
-
-    @router.get(direct.SEASONS_PATH, tags=["catalog"])
     async def direct_sc_seasons(tmdb_id: int):
         hit = await direct._resolve_title(int(tmdb_id))
         if not hit:
@@ -55,7 +49,6 @@ def install_sc_direct_detail_runtime(app, db) -> bool:
             "source": "StreamingCommunity props.title.seasons",
         }
 
-    @router.get(direct.SEASON_PATH, tags=["catalog"])
     async def direct_sc_episodes(tmdb_id: int, season_number: int):
         loaded = await direct._resolve_season(int(tmdb_id), int(season_number))
         if loaded:
@@ -82,7 +75,6 @@ def install_sc_direct_detail_runtime(app, db) -> bool:
             "pending_recheck_seconds": 2,
         }
 
-    @router.get(direct.STATUS_PATH, tags=["catalog"])
     async def direct_status():
         return {
             "policy": direct.POLICY_VERSION,
@@ -93,10 +85,31 @@ def install_sc_direct_detail_runtime(app, db) -> bool:
             "cached_seasons": len(direct._season_cache),
             "vixsrc_role": "playback_only",
             "tmdb_role": "identity_metadata_only",
-            "registration": "per_app_runtime_rebind",
+            "registration": "per_app_add_api_route",
         }
 
-    app.include_router(router)
+    app.add_api_route(
+        direct.SEASONS_PATH,
+        direct_sc_seasons,
+        methods=["GET"],
+        tags=["catalog"],
+        name="sc_direct_tv_seasons_v18",
+    )
+    app.add_api_route(
+        direct.SEASON_PATH,
+        direct_sc_episodes,
+        methods=["GET"],
+        tags=["catalog"],
+        name="sc_direct_tv_episodes_v18",
+    )
+    app.add_api_route(
+        direct.STATUS_PATH,
+        direct_status,
+        methods=["GET"],
+        tags=["catalog"],
+        name="sc_direct_status_v18",
+    )
+
     app.state.flixit_sc_direct_detail_runtime = True
     app.state.flixit_sc_direct_detail_v18 = True
     return True
