@@ -11,17 +11,14 @@ package may wrap the same function afterwards for trailers/artwork; the wrappers
 compose cleanly.
 """
 
+import asyncio
 import os
 
 
-# Do not depend on SUPERVISOR_PROCESS_NAME: some Emergent/Supervisor launches do
-# not expose it to Python early enough for sitecustomize. The migration is
-# idempotent, so running it whenever this backend runtime starts is safe.
 if os.environ.get("FLIXIT_SKIP_PREMIUM_PRICE_MIGRATION") != "1":
     try:
         import migrate_premium_monthly_prices  # noqa: F401
     except Exception as exc:
-        # A maintenance migration must never prevent the API from starting.
         print(f"[premium-price-migration] skipped: {exc}")
 
 
@@ -62,7 +59,6 @@ def _install_ads_registration_hook():
             from services.ads import register_ad_service
             register_ad_service(app, db, get_current_admin, log_admin_action)
         except Exception as exc:
-            # Advertising must never prevent the main streaming API from booting.
             print(f"[ads] registration skipped: {exc}")
         try:
             from services.manual_users import register_manual_user_service
@@ -74,36 +70,48 @@ def _install_ads_registration_hook():
                 log_admin_action,
             )
         except Exception as exc:
-            # Manual account management is additive and must not block boot.
             print(f"[manual-users] registration skipped: {exc}")
         try:
             from services.admin_permissions import register_admin_permissions
             register_admin_permissions(app, db, get_current_admin, log_admin_action)
         except Exception as exc:
-            # Permission hardening is additive; never prevent the API booting.
             print(f"[admin-permissions] registration skipped: {exc}")
         try:
             from services.strict_italian_media import install_strict_italian_media
             install_strict_italian_media(app, db)
         except Exception as exc:
-            # Strict language filtering is fail-closed in its own service, but a
-            # registration failure must never make the whole API unavailable.
             print(f"[strict-italian-media] registration skipped: {exc}")
         try:
             from services.player_hot_warm import install_player_hot_warm
             install_player_hot_warm(app, db)
         except Exception as exc:
-            # Playback warming is best effort only and never blocks API boot.
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # These guards run after package/service registration has finished, so
-        # strict_italian_tv and the final public season route already exist.
         async def install_post_registration_guards():
             try:
-                from services.strict_audio_evidence import install_strict_audio_evidence
-                install_strict_audio_evidence(app)
+                from services.vixsrc_italian_audio import install_vixsrc_italian_audio
+                install_vixsrc_italian_audio()
+            except Exception as exc:
+                print(f"[vixsrc-italian-audio] registration skipped: {exc}")
+
+            try:
+                import services.strict_audio_evidence as strict_audio
+                from services.vixsrc_episode_catalog_paged import install_paged_episode_catalog
+
+                strict_audio.install_strict_audio_evidence(app)
+                # Patch the policy with the complete paginated loader before any
+                # season snapshot asks for a verdict.
+                install_paged_episode_catalog(strict_audio)
+                try:
+                    await asyncio.wait_for(
+                        strict_audio.warm_italian_episode_catalog(),
+                        timeout=float(os.environ.get("VIXSRC_EPISODE_STARTUP_WARM_TIMEOUT", "40")),
+                    )
+                except Exception as exc:
+                    print(f"[strict-audio-evidence] catalog warm fallback: {exc}")
             except Exception as exc:
                 print(f"[strict-audio-evidence] registration skipped: {exc}")
+
             try:
                 from services.logo_integrity import install_logo_integrity
                 install_logo_integrity(app)
