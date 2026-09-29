@@ -1,14 +1,23 @@
 """Standalone regression checks for the v10 Italian episode policy."""
 import importlib.util
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "services" / "strict_audio_evidence.py"
-spec = importlib.util.spec_from_file_location("strict_audio_evidence_v10_test", MODULE_PATH)
-if spec is None or spec.loader is None:
-    raise RuntimeError(f"Cannot load policy module: {MODULE_PATH}")
-policy = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(policy)
+SERVICES = Path(__file__).resolve().parents[1] / "services"
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+policy = load_module("strict_audio_evidence_v10_test", SERVICES / "strict_audio_evidence.py")
+vix_audio = load_module("vixsrc_italian_audio_test", SERVICES / "vixsrc_italian_audio.py")
 
 
 class FakeEpisodePolicy:
@@ -80,6 +89,13 @@ def run():
         "tracks": [{"type": "audio", "language": "it"}]
     })
     check(policy._explicit_italian(FakeEpisodePolicy, hints), "explicit Italian audio rejected")
+
+    # Direct HLS playback must carry the same Italian preference that the VixSrc
+    # iframe documents for its audio selector, replacing any old preference.
+    forced = vix_audio._with_italian_lang("https://cdn.invalid/master.m3u8?token=x&lang=en")
+    query = parse_qs(urlsplit(forced).query)
+    check(query.get("lang") == ["it"], f"player language not forced to Italian: {forced}")
+    check(query.get("token") == ["x"], "existing playlist query was lost")
 
     print("strict-audio-evidence-v10: PASS")
 
