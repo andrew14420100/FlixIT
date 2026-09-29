@@ -5,8 +5,9 @@
  * - invalidates season payloads produced by old permissive language policies;
  * - accepts only v9 explicit Italian-audio evidence from season APIs;
  * - removes account playback residue for guest sessions;
- * - invalidates the old episode-completion schema that could mark earlier
- *   episodes complete merely because the user selected a later one.
+ * - invalidates fabricated legacy episode-completion history;
+ * - converts HTTP-200 player failures into non-cacheable errors so the global
+ *   player coalescer cannot pin a temporary source failure for two minutes.
  */
 
 const FLAG = "__flixitRuntimeIntegrityV9";
@@ -18,6 +19,7 @@ const OLD_EPISODE_PREFIXES = [
   "flixit:it-episodes-v3-audio-evidence:",
 ];
 const SEASON_RE = /^\/api\/public\/tv\/\d+\/season\/\d+\/?$/;
+const PLAYER_RE = /^\/api\/player\/(?:movie\/\d+|tv\/\d+\/\d+\/\d+)\/?$/;
 
 function purgeLegacyAndGuestState() {
   if (typeof window === "undefined") return;
@@ -26,17 +28,13 @@ function purgeLegacyAndGuestState() {
       const remove: string[] = [];
       for (let index = 0; index < storage.length; index += 1) {
         const key = storage.key(index) || "";
-        if (OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix))) {
-          remove.push(key);
-        }
+        if (OLD_EPISODE_PREFIXES.some((prefix) => key.startsWith(prefix))) remove.push(key);
       }
       remove.forEach((key) => storage.removeItem(key));
     } catch {}
   }
 
   try {
-    // v1 completion history is not trustworthy: the old UI marked every
-    // previous episode complete when a later episode was merely selected.
     if (window.localStorage.getItem(COMPLETION_SCHEMA_KEY) !== COMPLETION_SCHEMA) {
       const removeCompletion: string[] = [];
       for (let index = 0; index < window.localStorage.length; index += 1) {
@@ -58,9 +56,7 @@ function purgeLegacyAndGuestState() {
           key.startsWith("stream:") ||
           key.startsWith("stream_") ||
           key.startsWith("stream-")
-        ) {
-          removeSession.push(key);
-        }
+        ) removeSession.push(key);
       }
       removeSession.forEach((key) => window.sessionStorage.removeItem(key));
     }
@@ -75,6 +71,17 @@ function confirmedItalianEpisode(episode: any) {
     episode.italian_audio_evidence_explicit === true &&
     String(episode.italian_audio_policy_version || "") === POLICY
   );
+}
+
+function jsonResponse(payload: any, source: Response, status = source.status) {
+  const headers = new Headers(source.headers);
+  headers.set("Content-Type", "application/json");
+  headers.delete("Content-Length");
+  return new Response(JSON.stringify(payload), {
+    status,
+    statusText: status === source.status ? source.statusText : "Temporary player failure",
+    headers,
+  });
 }
 
 if (typeof window !== "undefined" && !(window as any)[FLAG]) {
@@ -94,32 +101,34 @@ if (typeof window !== "undefined" && !(window as any)[FLAG]) {
     }
 
     const method = String(init?.method || (typeof input === "object" ? input?.method : "GET") || "GET").toUpperCase();
-    if (
-      method !== "GET" ||
-      !response.ok ||
-      url.origin !== window.location.origin ||
-      !SEASON_RE.test(url.pathname)
-    ) {
+    if (method !== "GET" || url.origin !== window.location.origin) return response;
+
+    if (PLAYER_RE.test(url.pathname) && response.ok) {
+      try {
+        const payload = await response.clone().json();
+        if (payload?.success !== true || !String(payload?.stream || "").trim()) {
+          return jsonResponse({
+            ...payload,
+            detail: payload?.detail || payload?.message || "Stream temporaneamente non disponibile",
+          }, response, 503);
+        }
+      } catch {
+        return jsonResponse({ detail: "Risposta player non valida" }, response, 502);
+      }
       return response;
     }
+
+    if (!response.ok || !SEASON_RE.test(url.pathname)) return response;
 
     try {
       const payload = await response.clone().json();
       if (!Array.isArray(payload?.episodes)) return response;
-      const normalized = {
+      return jsonResponse({
         ...payload,
         episodes: payload.episodes.filter(confirmedItalianEpisode),
         italian_audio_policy: "strict_confirmed_italian_only",
         italian_audio_policy_version: POLICY,
-      };
-      const headers = new Headers(response.headers);
-      headers.set("Content-Type", "application/json");
-      headers.delete("Content-Length");
-      return new Response(JSON.stringify(normalized), {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-      });
+      }, response);
     } catch {
       return new Response(JSON.stringify({
         episodes: [],
