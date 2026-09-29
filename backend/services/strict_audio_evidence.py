@@ -1,17 +1,12 @@
 """Harden TV episode language evidence.
 
 A provider request made with ``lang=it`` can echo locale/routing information in
-its JSON or embed URL even when the actual audio track is still original/English.
-Those generic hints must never be treated as proof of an Italian dub.
-
-This installer runs after the existing strict Italian policy.  It replaces only
-the language-hint extractor used by that policy, bumps the policy version so old
-false-positive Mongo verdicts are ignored, and clears in-process verdicts.
+its JSON or embed URL even when the actual audio track is original/English.
+Generic locale hints are therefore never proof of an Italian dub.
 """
 from __future__ import annotations
 
 from typing import Any
-
 
 POLICY_VERSION = "strict-explicit-it-v8-audio-evidence-only"
 AVAILABILITY_VERSION = "streamportal-live-v4-strict-audio-evidence"
@@ -45,12 +40,11 @@ def _leaf_strings(value: Any, limit: int = 40) -> list[str]:
 
 
 def _strict_language_hints_factory(policy_module):
-    """Collect only fields that describe audio/dubbing, never request locale.
+    """Collect only evidence tied to an audio/dub/voice track.
 
-    Generic top-level fields such as ``lang``, ``language`` and ``locale`` are
-    intentionally ignored because providers often echo the requested interface
-    locale there.  A language field is accepted only while walking inside an
-    audio/dub/voice/track object.
+    Top-level ``lang``, ``language`` and ``locale`` are ignored. A generic track
+    object is accepted only when it explicitly identifies itself as audio (for
+    example ``kind=audio`` or ``type=audio``).
     """
 
     def strict_language_hints(payload: dict) -> list[str]:
@@ -61,19 +55,26 @@ def _strict_language_hints_factory(policy_module):
                 if item not in hints:
                     hints.append(item)
 
+        def marker_is_audio(value: Any) -> bool:
+            text = policy_module._normal(value).replace("-", "")
+            return any(
+                marker in text
+                for marker in ("audio", "dub", "voice", "soundtrack", "audiotrack")
+            )
+
         def walk(node: Any, audio_context: bool = False) -> None:
             if isinstance(node, dict):
+                node_audio = audio_context or any(
+                    marker_is_audio(node.get(key))
+                    for key in ("type", "kind", "role", "stream_type", "content_type")
+                    if node.get(key) is not None
+                )
+
                 for raw_key, value in node.items():
                     key = policy_module._normal(raw_key).replace("-", "")
                     is_audio_key = any(
                         marker in key
-                        for marker in (
-                            "audio",
-                            "dub",
-                            "voice",
-                            "soundtrack",
-                            "audiotrack",
-                        )
+                        for marker in ("audio", "dub", "voice", "soundtrack", "audiotrack")
                     )
                     is_track_container = key in {
                         "tracks",
@@ -83,11 +84,11 @@ def _strict_language_hints_factory(policy_module):
                         "variants",
                         "renditions",
                     }
-                    next_context = audio_context or is_audio_key
+                    next_context = node_audio or is_audio_key
 
                     if is_audio_key:
                         add(value)
-                    elif audio_context and key in {
+                    elif node_audio and key in {
                         "lang",
                         "language",
                         "locale",
@@ -98,11 +99,10 @@ def _strict_language_hints_factory(policy_module):
                     }:
                         add(value)
 
-                    # A generic stream/track container is traversed but does not
-                    # become audio evidence until one of its children explicitly
-                    # identifies itself as audio/dub/voice.
-                    child_context = next_context if not is_track_container else audio_context
                     if isinstance(value, (dict, list, tuple)):
+                        # Containers themselves are neutral. Their child objects
+                        # can opt into audio context via type/kind/role markers.
+                        child_context = next_context if not is_track_container else node_audio
                         walk(value, child_context)
             elif isinstance(node, (list, tuple)):
                 for child in node:
@@ -133,6 +133,7 @@ def install_strict_audio_evidence(app=None) -> bool:
     strict_tv.STRICT_AVAILABILITY_POLICY_VERSION = AVAILABILITY_VERSION
     availability.POLICY_VERSION = AVAILABILITY_VERSION
 
+    # Old in-memory positives may have been produced from a generic lang=it echo.
     try:
         episode_policy._cache.clear()
     except Exception:
@@ -145,6 +146,7 @@ def install_strict_audio_evidence(app=None) -> bool:
                 "policy": POLICY_VERSION,
                 "mode": "explicit_audio_evidence_only_fail_closed",
                 "generic_lang_locale_is_not_audio_evidence": True,
+                "explicit_track_objects_supported": True,
             }
     except Exception:
         pass
