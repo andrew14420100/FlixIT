@@ -1,13 +1,8 @@
 """Persistent, instant Italian-season responses.
 
-The strict language verifier is intentionally expensive because it may need to
-inspect many episodes.  Users must not pay that cost when they open the Detail
-page.  This layer stores the *final filtered season payload* in MongoDB and
-returns it immediately; refresh/verification runs in the background.
-
-On startup all seasons already known in ``tv_seasons`` are progressively warmed,
-with titles present in the Home snapshot first.  A one-query DB seed built from
-``tv_episodes`` + the current strict audio verdicts is used when possible.
+Language verification happens before the user opens the episode list. The final
+filtered season payload is stored in MongoDB and served first; stale snapshots
+remain usable while a single background refresh recomputes them.
 """
 from __future__ import annotations
 
@@ -22,11 +17,9 @@ from fastapi.routing import APIRoute
 ROUTE_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
 FRESH_FOR = timedelta(minutes=15)
 MAX_STALE_AGE = timedelta(days=7)
-PREWARM_CONCURRENCY = 4
-PREWARM_BATCH = 20
 _INSTALLED = False
-
 _refresh_tasks: dict[tuple[int, int], asyncio.Task] = {}
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _now() -> datetime:
@@ -71,13 +64,10 @@ def _read_snapshot(collection, tmdb_id: int, season_number: int) -> tuple[dict |
         return None, None
     payload = doc.get("payload")
     generated = _parse_dt(doc.get("generated_at"))
-    if not isinstance(payload, dict):
-        return None, generated
-    return payload, generated
+    return (payload if isinstance(payload, dict) else None), generated
 
 
 def _persist_snapshot(collection, tmdb_id: int, season_number: int, payload: dict) -> None:
-    now = _now()
     try:
         collection.update_one(
             {"tmdbId": int(tmdb_id), "season": int(season_number)},
@@ -85,7 +75,7 @@ def _persist_snapshot(collection, tmdb_id: int, season_number: int, payload: dic
                 "tmdbId": int(tmdb_id),
                 "season": int(season_number),
                 "policy": _policy_version(),
-                "generated_at": now.isoformat(),
+                "generated_at": _now().isoformat(),
                 "payload": payload,
             }},
             upsert=True,
@@ -95,7 +85,7 @@ def _persist_snapshot(collection, tmdb_id: int, season_number: int, payload: dic
 
 
 def _db_seed(db, tmdb_id: int, season_number: int) -> dict | None:
-    """Build an instant season payload with one episode query + one verdict query."""
+    """Build a season instantly from locally cached metadata + current verdicts."""
     now = _now()
     try:
         episodes = list(
@@ -126,9 +116,9 @@ def _db_seed(db, tmdb_id: int, season_number: int) -> dict | None:
     verdicts: dict[int, dict] = {}
     for row in verdict_rows:
         expires_at = _parse_dt(row.get("expires_at"))
+        result = row.get("result") if isinstance(row.get("result"), dict) else {}
         if not expires_at or expires_at <= now:
             continue
-        result = row.get("result") if isinstance(row.get("result"), dict) else {}
         if result.get("italian_available") is not True:
             continue
         if str(result.get("italian_audio_status") or "") != "italian":
@@ -145,10 +135,8 @@ def _db_seed(db, tmdb_id: int, season_number: int) -> dict | None:
         except Exception:
             continue
         verdict = verdicts.get(number)
-        if not verdict:
-            continue
-        visible.append({**episode, **verdict})
-
+        if verdict:
+            visible.append({**episode, **verdict})
     if not visible:
         return None
 
@@ -189,8 +177,8 @@ def _home_tv_ids(db) -> list[int]:
     def add(item: Any) -> None:
         if not isinstance(item, dict):
             return
-        kind = "tv" if str(item.get("type") or item.get("media_type") or item.get("mediaType") or "").lower() == "tv" else "movie"
-        if kind != "tv":
+        raw_type = str(item.get("type") or item.get("media_type") or item.get("mediaType") or "").lower()
+        if raw_type != "tv":
             return
         try:
             tmdb_id = int(item.get("tmdbId") or item.get("tmdb_id") or item.get("contentId") or item.get("id") or 0)
@@ -232,7 +220,6 @@ def _season_targets(db) -> list[tuple[int, int]]:
             continue
         seen.add(key)
         targets.append(key)
-
     targets.sort(key=lambda pair: (priority_index.get(pair[0], 10**9), pair[0], pair[1]))
     return targets
 
@@ -274,14 +261,26 @@ def install_instant_episode_snapshots(app, db) -> bool:
 
         async def run():
             payload = await _invoke(current_endpoint, key[0], key[1])
+            pending = Number(payload.get("pending_recheck_seconds") or 0) if isinstance(payload, dict) else 0
+            if payload and 0 < pending <= 10:
+                # The underlying strict route is still filling episode verdicts.
+                # This wait happens only in background prewarm/refresh, not while
+                # a valid snapshot is being served to a user.
+                await asyncio.sleep(max(1.0, min(3.0, pending + 0.15)))
+                newer = await _invoke(current_endpoint, key[0], key[1])
+                if isinstance(newer, dict):
+                    payload = newer
+
             if isinstance(payload, dict):
-                payload = {
-                    **payload,
-                    "pending_recheck_seconds": 0,
-                    "instant_snapshot": True,
-                    "snapshot_source": "verified_route",
-                }
-                await asyncio.to_thread(_persist_snapshot, collection, key[0], key[1], payload)
+                pending = Number(payload.get("pending_recheck_seconds") or 0)
+                if not (0 < pending <= 10):
+                    payload = {
+                        **payload,
+                        "pending_recheck_seconds": 0,
+                        "instant_snapshot": True,
+                        "snapshot_source": "verified_route",
+                    }
+                    await asyncio.to_thread(_persist_snapshot, collection, key[0], key[1], payload)
             return payload
 
         task = asyncio.create_task(run())
@@ -297,14 +296,12 @@ def install_instant_episode_snapshots(app, db) -> bool:
         existing = _refresh_tasks.get(key)
         if existing is not None and not existing.done():
             return
+
+        # Do not insert this outer task into _refresh_tasks: refresh_snapshot owns
+        # that map. Otherwise it would discover itself and await itself.
         task = asyncio.create_task(refresh_snapshot(*key))
-        _refresh_tasks[key] = task
-
-        def cleanup(done):
-            if _refresh_tasks.get(key) is done:
-                _refresh_tasks.pop(key, None)
-
-        task.add_done_callback(cleanup)
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
     @router.get(ROUTE_PATH)
     async def instant_italian_season(tmdb_id: int, season_number: int):
@@ -326,10 +323,11 @@ def install_instant_episode_snapshots(app, db) -> bool:
             schedule_refresh(tmdb_id, season_number)
             return seed
 
-        # Cold-first request: start verification immediately.  This path should be
-        # rare because startup prewarming covers all seasons already in Mongo.
+        # Cold-first requests are rare after startup prewarm. Fail closed if the
+        # verifier cannot build a complete response.
         fresh = await refresh_snapshot(tmdb_id, season_number)
-        if fresh:
+        pending = Number(fresh.get("pending_recheck_seconds") or 0) if isinstance(fresh, dict) else 0
+        if fresh and not (0 < pending <= 10):
             return fresh
         return {
             "tmdbId": tmdb_id,
@@ -343,43 +341,20 @@ def install_instant_episode_snapshots(app, db) -> bool:
         }
 
     app.include_router(router)
-
-    async def prewarm_all_known_seasons() -> None:
-        targets = await asyncio.to_thread(_season_targets, db)
-        semaphore = asyncio.Semaphore(PREWARM_CONCURRENCY)
-
-        async def one(target: tuple[int, int]) -> None:
-            tmdb_id, season_number = target
-            payload, generated = await asyncio.to_thread(
-                _read_snapshot, collection, tmdb_id, season_number
-            )
-            if payload and generated and _now() - generated < FRESH_FOR:
-                return
-            seed = await asyncio.to_thread(_db_seed, db, tmdb_id, season_number)
-            if seed:
-                await asyncio.to_thread(_persist_snapshot, collection, tmdb_id, season_number, seed)
-            async with semaphore:
-                await refresh_snapshot(tmdb_id, season_number)
-
-        for start in range(0, len(targets), PREWARM_BATCH):
-            batch = targets[start : start + PREWARM_BATCH]
-            await asyncio.gather(*(one(target) for target in batch), return_exceptions=True)
-            await asyncio.sleep(0.15)
-
-    @app.on_event("startup")
-    async def _prewarm_episode_snapshots_on_startup():
-        asyncio.create_task(prewarm_all_known_seasons())
-
     app.state.flixit_instant_episode_snapshots_registered = True
     app.state.flixit_instant_episode_snapshots = {
         "installed": True,
         "policy": _policy_version(),
         "serve": "mongo_snapshot_first",
-        "refresh": "background",
-        "prewarm": "all_known_seasons_home_first",
+        "refresh": "single_flight_background",
+        "prewarm": "launcher_home_first",
     }
     _INSTALLED = True
     return True
 
 
-__all__ = ["install_instant_episode_snapshots"]
+__all__ = [
+    "install_instant_episode_snapshots",
+    "ROUTE_PATH",
+    "_season_targets",
+]
