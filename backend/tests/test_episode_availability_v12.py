@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "backend" / "services"
 FRONTEND = ROOT / "frontend" / "src"
+STARTUP = ROOT / "backend" / "sitecustomize.py"
 
 
 def load(name, path):
@@ -71,6 +72,12 @@ def run():
     check("_start_season_warm(db, tmdb_id, season_number, missing)" in source, "background season validation missing")
     check("Never wait for the provider in the user's request path" in source, "route may block on provider validation")
     check("provider_unavailable" not in policy._DEFINITIVE_NEGATIVE_STATUSES, "provider outage became a definitive negative")
+
+    startup = STARTUP.read_text(encoding="utf-8")
+    install_pos = startup.find("episode_route_installed = bool(install_episode_availability_v12(app, db))")
+    startup_handler_pos = startup.find("async def install_post_registration_guards")
+    check(install_pos >= 0, "v14 route is not installed synchronously")
+    check(startup_handler_pos > install_pos, "v14 route is still installed only during startup")
 
     use_episodes = (FRONTEND / "pages" / "detail" / "useEpisodes.ts").read_text(encoding="utf-8")
     check('flixit:it-episodes-v14:' in use_episodes, "frontend still uses an old episode cache namespace")
