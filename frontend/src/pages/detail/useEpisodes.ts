@@ -46,8 +46,26 @@ function readPersistent(key) {
   try { return read(window.sessionStorage); } catch { return null; }
 }
 
+function hasVerifiedEpisodes(value) {
+  return Array.isArray(value?.episodes) && value.episodes.some(
+    (episode) => episode?.italian_available === true && String(episode?.italian_audio_status || "italian") === "italian"
+  );
+}
+
+function isShortCheckingResponse(value) {
+  const pending = Number(value?.pending_recheck_seconds || 0);
+  return pending > 0 && pending <= 10 && !hasVerifiedEpisodes(value);
+}
+
 function writePersistent(key, value) {
   if (typeof window === "undefined" || !value) return;
+
+  // Never let a temporary cold-backend "checking" response erase a previously
+  // verified season. The old verified list stays authoritative until a new
+  // verified response is ready, so opening the Episodi tab cannot flash empty.
+  const previous = readPersistent(key)?.data;
+  if (isShortCheckingResponse(value) && hasVerifiedEpisodes(previous)) return;
+
   const payload = JSON.stringify({ savedAt: Date.now(), data: value });
   try { window.localStorage.setItem(key, payload); } catch {
     try { window.sessionStorage.setItem(key, payload); } catch {}
@@ -74,13 +92,17 @@ async function warmSeason(mediaId, seasonNumber) {
     if (cached && Date.now() - cached.savedAt < EPISODES_STALE_MS) return cached.data;
 
     let data = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
-    if (data) writePersistent(storageKey, data);
+    if (isShortCheckingResponse(data) && hasVerifiedEpisodes(cached?.data)) {
+      data = cached.data;
+    } else if (data) {
+      writePersistent(storageKey, data);
+    }
 
     const pending = Number(data?.pending_recheck_seconds || 0);
     if (pending > 0 && pending <= 10) {
       await new Promise((resolve) => setTimeout(resolve, Math.max(900, pending * 1000)));
       const refreshed = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
-      if (refreshed) {
+      if (refreshed && !isShortCheckingResponse(refreshed)) {
         data = refreshed;
         writePersistent(storageKey, refreshed);
       }
@@ -156,12 +178,18 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const episodeCacheKey = `flixit:it-episodes:${mediaId}:${selected}`;
   const episodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-it-v4-persistent", mediaId, selected],
-    queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
+    queryKey: ["dp-season-episodes-it-v5-never-blank", mediaId, selected],
+    queryFn: async ({ signal }) => {
+      const fresh = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal);
+      if (isShortCheckingResponse(fresh) && hasVerifiedEpisodes(episodeCached?.data)) {
+        return episodeCached.data;
+      }
+      return fresh;
+    },
     enabled: !!mediaId && !!selected && !!enabled,
     initialData: episodeCached?.data,
     initialDataUpdatedAt: episodeCached?.savedAt || 0,
-    placeholderData: (previous) => previous,
+    placeholderData: (previous) => previous || episodeCached?.data,
     staleTime: EPISODES_STALE_MS,
     gcTime: 24 * 60 * 60 * 1000,
     refetchOnMount: false,
@@ -171,7 +199,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     refetchInterval: (query) => {
       const data = query?.state?.data || {};
       const pending = Number(data?.pending_recheck_seconds || 0);
-      if (pending > 0 && pending <= 10) return 1000;
+      if (pending > 0 && pending <= 10 && !hasVerifiedEpisodes(data)) return 1000;
       return false;
     },
     refetchIntervalInBackground: true,
@@ -189,14 +217,20 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     return scheduleIdle(() => episodesQuery.refetch(), 1800);
   }, [enabled, episodeCached?.savedAt, mediaId, selected]);
 
+  const episodeSource = hasVerifiedEpisodes(episodesQuery.data)
+    ? episodesQuery.data
+    : hasVerifiedEpisodes(episodeCached?.data)
+      ? episodeCached.data
+      : episodesQuery.data;
+
   const episodes = useMemo(
-    () => (episodesQuery.data?.episodes || []).filter(
+    () => (episodeSource?.episodes || []).filter(
       (episode) =>
         episode?.vixsrc_available !== false &&
         episode?.italian_available === true &&
         String(episode?.italian_audio_status || "italian") === "italian"
     ),
-    [episodesQuery.data]
+    [episodeSource]
   );
 
   useEffect(() => {
@@ -206,13 +240,11 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
       if (!src) return;
       const image = new Image();
       image.decoding = "async";
+      image.fetchPriority = "auto";
       image.src = src;
     });
   }, [episodes]);
 
-  // Resolve only the episode the user is most likely to play and its successor.
-  // The global fetch coalescer and backend stream_cache make duplicate calls cheap,
-  // while limiting this to two streams avoids hammering the provider.
   useEffect(() => {
     if (!enabled || !mediaId || !selected || !episodes.length) return undefined;
     const wanted = Number(selected) === preferred
@@ -227,7 +259,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
       targets.forEach((episodeNumber) => {
         void warmPlayback("tv", Number(mediaId), Number(selected), episodeNumber);
       });
-    }, active ? 500 : 1400);
+    }, active ? 350 : 900);
   }, [enabled, mediaId, selected, preferred, preferredEpisodeNumber, active, episodes]);
 
   useEffect(() => {
@@ -242,7 +274,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
         const batch = pending.slice(index, index + BACKGROUND_SEASON_CONCURRENCY);
         await Promise.allSettled(batch.map((number) => warmSeason(mediaId, number)));
       }
-    }, 3200);
+    }, 2200);
 
     return () => {
       cancelled = true;
@@ -250,7 +282,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     };
   }, [enabled, mediaId, selected, seasons.map((season) => season?.season_number).join(",")]);
 
-  const pendingItalianCheck = Number(episodesQuery.data?.pending_recheck_seconds || 0);
+  const pendingItalianCheck = Number(episodeSource?.pending_recheck_seconds || 0);
 
   return {
     seasons,
@@ -258,8 +290,8 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     setSelected,
     episodes,
     loadingSeasons: seasonsQuery.isLoading && !seasonsQuery.data,
-    loadingEpisodes: episodesQuery.isLoading && !episodesQuery.data,
-    checkingItalian: pendingItalianCheck > 0 && pendingItalianCheck <= 10,
+    loadingEpisodes: episodes.length === 0 && episodesQuery.isLoading && !episodeCached?.data,
+    checkingItalian: episodes.length === 0 && pendingItalianCheck > 0 && pendingItalianCheck <= 10,
     seasonsError: seasonsQuery.isError,
   };
 }
