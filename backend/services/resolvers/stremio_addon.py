@@ -1,8 +1,8 @@
-"""
-Omni resolver: TMDB id -> IMDb id -> embedded/remote Omni -> best HTTP(S) stream.
+"""Omni resolver: optional fallback behind VixSrc.
 
-The stable resolver id remains `stremio_addon` for backward compatibility with
-existing Admin settings and saved resolver order.
+The stable resolver id remains ``stremio_addon`` for backward compatibility,
+but Omni is no longer forced active. FlixIT's normal playback path stays on the
+Italian VixSrc resolver; Omni can only be re-enabled explicitly in settings.
 """
 import asyncio
 import logging
@@ -13,16 +13,27 @@ from .. import stremio
 from .. import omni_embedded
 
 logger = logging.getLogger("player.omni")
+OMNI_ENABLED_KEY = "omni_enabled"
 
 
 class StremioAddonResolver(BaseResolver):
     id = "stremio_addon"
     label = "Omni"
-    always_active = True
+    always_active = False
     configurable = True
 
     def is_active(self) -> bool:
-        return stremio.get_config(self._get_setting)["enabled"]
+        if self._get_setting is None:
+            return False
+        try:
+            explicitly_enabled = self._get_setting(OMNI_ENABLED_KEY, False)
+            if isinstance(explicitly_enabled, str):
+                explicitly_enabled = explicitly_enabled.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+            if not bool(explicitly_enabled):
+                return False
+        except Exception:
+            return False
+        return bool(stremio.get_config(self._get_setting)["enabled"])
 
     async def resolve(
         self,
@@ -31,10 +42,10 @@ class StremioAddonResolver(BaseResolver):
         episode: Optional[int] = None,
         media_type: str = "movie",
     ) -> Optional[dict]:
-        cfg = stremio.get_config(self._get_setting)
-        if not cfg["enabled"]:
+        if not self.is_active():
             return None
 
+        cfg = stremio.get_config(self._get_setting)
         imdb_id = await stremio.fetch_imdb_id(
             media_type,
             tmdb_id,
@@ -44,9 +55,6 @@ class StremioAddonResolver(BaseResolver):
             return None
 
         if cfg.get("source") == "embedded":
-            # omni_embedded uses synchronous PyMongo. It is a very fast lookup,
-            # but running it in a worker keeps concurrent Home/player requests
-            # responsive even if Mongo briefly stalls.
             streams = await asyncio.to_thread(
                 omni_embedded.resolve_streams,
                 self._db,
