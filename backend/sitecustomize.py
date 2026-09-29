@@ -4,14 +4,8 @@ Premium 3/6/12-month prices are monthly rates in the admin UI. Legacy plans may
 still have that monthly value stored directly in ``price_cents``; the migration
 converts those old records to the one-off checkout total and stores the original
 monthly rate as metadata.
-
-Advertising, manual-user and admin-permission services are attached by wrapping
-``premium.register`` before server_core imports it. The existing services
-package may wrap the same function afterwards for trailers/artwork; the wrappers
-compose cleanly.
 """
 
-import asyncio
 import os
 
 
@@ -55,6 +49,7 @@ def _install_ads_registration_hook():
             enrich_items,
             notify,
         )
+
         try:
             from services.ads import register_ad_service
             register_ad_service(app, db, get_current_admin, log_admin_action)
@@ -62,13 +57,7 @@ def _install_ads_registration_hook():
             print(f"[ads] registration skipped: {exc}")
         try:
             from services.manual_users import register_manual_user_service
-            register_manual_user_service(
-                app,
-                db,
-                get_current_user,
-                get_current_admin,
-                log_admin_action,
-            )
+            register_manual_user_service(app, db, get_current_user, get_current_admin, log_admin_action)
         except Exception as exc:
             print(f"[manual-users] registration skipped: {exc}")
         try:
@@ -88,6 +77,8 @@ def _install_ads_registration_hook():
             print(f"[player-hot-warm] registration skipped: {exc}")
 
         async def install_post_registration_guards():
+            # Player resolver itself now requests VixSrc with lang=it. Keep the
+            # playlist-level guard as an additional last-mile protection.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -95,48 +86,22 @@ def _install_ads_registration_hook():
                 print(f"[vixsrc-italian-audio] registration skipped: {exc}")
 
             try:
-                import services.strict_audio_evidence as strict_audio
-                from services.vixsrc_episode_catalog_paged import install_paged_episode_catalog
-
-                strict_audio.install_strict_audio_evidence(app)
-                install_paged_episode_catalog(strict_audio)
-                try:
-                    await asyncio.wait_for(
-                        strict_audio.warm_italian_episode_catalog(),
-                        timeout=float(os.environ.get("VIXSRC_EPISODE_STARTUP_WARM_TIMEOUT", "40")),
-                    )
-                except Exception as exc:
-                    print(f"[strict-audio-evidence] catalog warm fallback: {exc}")
-            except Exception as exc:
-                print(f"[strict-audio-evidence] registration skipped: {exc}")
-
-            try:
                 from services.logo_integrity import install_logo_integrity
                 install_logo_integrity(app)
             except Exception as exc:
                 print(f"[logo-integrity] registration skipped: {exc}")
 
+            # v12 is deliberately installed as the final TV-season route. Do not
+            # warm the global VixSrc episode feed here: that feed is not a complete
+            # historical archive and was the cause of whole seasons being hidden.
             try:
-                # The legacy snapshot module accidentally contains JavaScript's
-                # Number(...) spelling in two runtime-only branches. Compileall
-                # cannot detect that NameError, so provide the intended Python
-                # conversion until the legacy layer is retired.
-                import services.instant_episode_snapshots as instant_snapshots
-                if not hasattr(instant_snapshots, "Number"):
-                    instant_snapshots.Number = int
-
-                installed = instant_snapshots.install_instant_episode_snapshots(app, db)
+                from services.episode_availability_v12 import install_episode_availability_v12
+                installed = install_episode_availability_v12(app, db)
                 if installed:
-                    # Install v11 as the final route *before* the prewarmer looks
-                    # up the endpoint. Old v10 empty Mongo snapshots are therefore
-                    # bypassed and can no longer pin a season to zero episodes.
-                    from services.direct_italian_episode_route_v11 import install_direct_italian_episode_route
-                    direct_installed = install_direct_italian_episode_route(app, db)
-                    if direct_installed:
-                        from services.episode_prewarm_launcher import launch_episode_prewarm
-                        launch_episode_prewarm(app, db)
+                    from services.episode_prewarm_launcher import launch_episode_prewarm
+                    launch_episode_prewarm(app, db)
             except Exception as exc:
-                print(f"[instant-episode-snapshots] registration skipped: {exc}")
+                print(f"[episode-availability-v12] registration skipped: {exc}")
 
         app.add_event_handler("startup", install_post_registration_guards)
         return result
