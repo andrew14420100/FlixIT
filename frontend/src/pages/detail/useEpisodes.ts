@@ -1,10 +1,10 @@
 // @ts-nocheck
 /**
- * FlixIT Detail Page - persistent seasons/episodes cache.
+ * FlixIT Detail Page - persistent Italian seasons/episodes cache.
  *
- * A refresh renders the last server-verified Italian season snapshot immediately.
- * The backend keeps those snapshots warm, so switching seasons normally does not
- * start a language scan in the user's request path.
+ * Verified non-empty episode snapshots render instantly. Empty/checking payloads
+ * are never persisted as fresh browser state, so a temporary provider delay can
+ * no longer pin a whole season to "no Italian episodes" for minutes.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -14,9 +14,7 @@ const SEASONS_STALE_MS = 30 * 60 * 1000;
 const EPISODES_STALE_MS = 10 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BACKGROUND_SEASON_CONCURRENCY = 2;
-// v3 deliberately invalidates browser payloads created by the older policy that
-// could mistake a provider UI locale (lang=it) for proof of Italian audio.
-const EPISODE_CACHE_PREFIX = "flixit:it-episodes-v3-audio-evidence:";
+const EPISODE_CACHE_PREFIX = "flixit:it-episodes-v13:";
 const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
@@ -55,16 +53,21 @@ function hasVerifiedEpisodes(value) {
   );
 }
 
-function isShortCheckingResponse(value) {
-  const pending = Number(value?.pending_recheck_seconds || 0);
-  return pending > 0 && pending <= 10 && !hasVerifiedEpisodes(value);
+function isCheckingResponse(value) {
+  return Number(value?.pending_recheck_seconds || 0) > 0 && !hasVerifiedEpisodes(value);
 }
 
 function writePersistent(key, value) {
   if (typeof window === "undefined" || !value) return;
 
-  const previous = readPersistent(key)?.data;
-  if (isShortCheckingResponse(value) && hasVerifiedEpisodes(previous)) return;
+  // Never turn a temporary empty/checking server answer into a fresh 10-minute
+  // browser cache entry. Keep the last verified non-empty snapshot instead.
+  if (!hasVerifiedEpisodes(value)) {
+    if (isCheckingResponse(value)) return;
+    try { window.localStorage.removeItem(key); } catch {}
+    try { window.sessionStorage.removeItem(key); } catch {}
+    return;
+  }
 
   const payload = JSON.stringify({ savedAt: Date.now(), data: value });
   try { window.localStorage.setItem(key, payload); } catch {
@@ -89,20 +92,18 @@ async function warmSeason(mediaId, seasonNumber) {
   const promise = (async () => {
     const storageKey = `${EPISODE_CACHE_PREFIX}${mediaId}:${seasonNumber}`;
     const cached = readPersistent(storageKey);
-    if (cached && Date.now() - cached.savedAt < EPISODES_STALE_MS) return cached.data;
-
-    let data = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
-    if (isShortCheckingResponse(data) && hasVerifiedEpisodes(cached?.data)) {
-      data = cached.data;
-    } else if (data) {
-      writePersistent(storageKey, data);
+    if (cached && hasVerifiedEpisodes(cached.data) && Date.now() - cached.savedAt < EPISODES_STALE_MS) {
+      return cached.data;
     }
 
+    let data = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
+    if (data) writePersistent(storageKey, data);
+
     const pending = Number(data?.pending_recheck_seconds || 0);
-    if (pending > 0 && pending <= 10) {
-      await new Promise((resolve) => setTimeout(resolve, Math.max(900, pending * 1000)));
+    if (pending > 0 && !hasVerifiedEpisodes(data)) {
+      await new Promise((resolve) => setTimeout(resolve, Math.max(650, Math.min(1600, pending * 700))));
       const refreshed = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
-      if (refreshed && !isShortCheckingResponse(refreshed)) {
+      if (refreshed) {
         data = refreshed;
         writePersistent(storageKey, refreshed);
       }
@@ -129,7 +130,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const seasonsCached = useMemo(() => readPersistent(seasonsCacheKey), [seasonsCacheKey]);
 
   const seasonsQuery = useQuery({
-    queryKey: ["dp-seasons-it-v3-persistent", mediaId],
+    queryKey: ["dp-seasons-it-v13", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
     initialData: seasonsCached?.data,
@@ -143,7 +144,10 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   });
 
   useEffect(() => {
-    if (seasonsQuery.data?.seasons) writePersistent(seasonsCacheKey, seasonsQuery.data);
+    if (seasonsQuery.data?.seasons) {
+      const payload = JSON.stringify({ savedAt: Date.now(), data: seasonsQuery.data });
+      try { window.localStorage.setItem(seasonsCacheKey, payload); } catch {}
+    }
   }, [seasonsCacheKey, seasonsQuery.data]);
 
   useEffect(() => {
@@ -176,30 +180,28 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   }, [seasons, preferredSeason]);
 
   const episodeCacheKey = `${EPISODE_CACHE_PREFIX}${mediaId}:${selected}`;
-  const episodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
+  const rawEpisodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
+  const episodeCached = hasVerifiedEpisodes(rawEpisodeCached?.data) ? rawEpisodeCached : null;
+
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-it-v7-audio-evidence", mediaId, selected],
-    queryFn: async ({ signal }) => {
-      const fresh = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal);
-      if (isShortCheckingResponse(fresh) && hasVerifiedEpisodes(episodeCached?.data)) {
-        return episodeCached.data;
-      }
-      return fresh;
-    },
+    queryKey: ["dp-season-episodes-it-v13", mediaId, selected],
+    queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
     enabled: !!mediaId && !!selected && !!enabled,
     initialData: episodeCached?.data,
     initialDataUpdatedAt: episodeCached?.savedAt || 0,
-    placeholderData: (previous) => previous || episodeCached?.data,
+    placeholderData: (previous) => hasVerifiedEpisodes(previous) ? previous : episodeCached?.data,
     staleTime: EPISODES_STALE_MS,
     gcTime: 24 * 60 * 60 * 1000,
-    refetchOnMount: false,
+    // Empty seasons must always ask the server again; only a verified snapshot is
+    // allowed to skip the mount fetch.
+    refetchOnMount: !episodeCached,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnReconnect: true,
     retry: 1,
     refetchInterval: (query) => {
       const data = query?.state?.data || {};
       const pending = Number(data?.pending_recheck_seconds || 0);
-      if (pending > 0 && pending <= 10 && !hasVerifiedEpisodes(data)) return 1000;
+      if (!hasVerifiedEpisodes(data) && pending > 0) return 750;
       return false;
     },
     refetchIntervalInBackground: true,
@@ -210,12 +212,6 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     if (!data || !Array.isArray(data.episodes)) return;
     writePersistent(episodeCacheKey, data);
   }, [episodeCacheKey, episodesQuery.data]);
-
-  useEffect(() => {
-    if (!enabled || !episodeCached?.data) return undefined;
-    if (Date.now() - Number(episodeCached.savedAt || 0) < EPISODES_STALE_MS) return undefined;
-    return scheduleIdle(() => episodesQuery.refetch(), 1800);
-  }, [enabled, episodeCached?.savedAt, mediaId, selected]);
 
   const episodeSource = hasVerifiedEpisodes(episodesQuery.data)
     ? episodesQuery.data
@@ -247,19 +243,15 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
 
   useEffect(() => {
     if (!enabled || !mediaId || !selected || !episodes.length) return undefined;
-    const wanted = Number(selected) === preferred
-      ? preferredEpisodeNumber
-      : Number(episodes[0]?.episode_number || 1);
+    const wanted = Number(selected) === preferred ? preferredEpisodeNumber : Number(episodes[0]?.episode_number || 1);
     let index = episodes.findIndex((episode) => Number(episode?.episode_number) === wanted);
     if (index < 0) index = 0;
     const targets = episodes.slice(index, index + 2)
       .map((episode) => Number(episode?.episode_number || 0))
       .filter(Boolean);
     return scheduleIdle(() => {
-      targets.forEach((episodeNumber) => {
-        void warmPlayback("tv", Number(mediaId), Number(selected), episodeNumber);
-      });
-    }, active ? 350 : 900);
+      targets.forEach((episodeNumber) => void warmPlayback("tv", Number(mediaId), Number(selected), episodeNumber));
+    }, active ? 250 : 700);
   }, [enabled, mediaId, selected, preferred, preferredEpisodeNumber, active, episodes]);
 
   useEffect(() => {
@@ -274,7 +266,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
         const batch = pending.slice(index, index + BACKGROUND_SEASON_CONCURRENCY);
         await Promise.allSettled(batch.map((number) => warmSeason(mediaId, number)));
       }
-    }, 2200);
+    }, 1400);
 
     return () => {
       cancelled = true;
@@ -291,7 +283,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     episodes,
     loadingSeasons: seasonsQuery.isLoading && !seasonsQuery.data,
     loadingEpisodes: episodes.length === 0 && episodesQuery.isLoading && !episodeCached?.data,
-    checkingItalian: episodes.length === 0 && pendingItalianCheck > 0 && pendingItalianCheck <= 10,
+    checkingItalian: episodes.length === 0 && pendingItalianCheck > 0,
     seasonsError: seasonsQuery.isError,
   };
 }
