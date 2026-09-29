@@ -12,8 +12,11 @@ import time
 
 from fastapi import APIRouter
 
-FAST_ROWS = 8
-FAST_ITEMS_PER_ROW = 18
+# Include every canonical Home row in the fast response. Items per horizontal
+# row are capped so the first JSON stays bounded and does not become slower than
+# the old multi-request hydration it replaces.
+FAST_ROWS = 24
+FAST_ITEMS_PER_ROW = 24
 HOT_RELOAD_SECONDS = 5 * 60
 HOT_REFRESH_SETTLE_SECONDS = 2.0
 
@@ -32,9 +35,15 @@ def _compact(payload: dict) -> dict:
         items = row.get("items") if isinstance(row.get("items"), list) else []
         rows.append({**row, "items": items[:FAST_ITEMS_PER_ROW]})
 
+    # `compact` now means rows are still missing, not simply that each carousel
+    # was payload-capped. With all rows present React must not call the expensive
+    # full bootstrap endpoint four seconds later and accidentally create a rebuild
+    # stampede after deploys.
+    rows_missing = len(rows) < len(source_rows)
     return {
         **payload,
-        "compact": True,
+        "compact": rows_missing,
+        "row_items_capped": True,
         "rows": rows,
         "row_count": len(rows),
         "total_row_count": int(payload.get("row_count") or len(source_rows)),
@@ -113,9 +122,6 @@ def install_home_bootstrap_fast(app) -> bool:
                 pass
             return _compact(payload)
 
-        # A brand-new database has no snapshot yet. Never make the first user
-        # build the catalogue; start the build and return immediately. Existing
-        # deployments normally never enter this branch because snapshots persist.
         try:
             home._schedule_refresh(app, core)
             _schedule_hot_reload(core, home)
