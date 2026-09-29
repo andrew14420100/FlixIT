@@ -21,6 +21,9 @@ import DetailSimilar from "./detail/DetailSimilar";
 import { API_URL, detailTabsFor, warmPlayback } from "./detail/detailUtils";
 import "./detail/detail-page.css";
 
+const AVAILABILITY_CACHE_PREFIX = "flixit:availability:v1:";
+const AVAILABILITY_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
 export async function loader() {
   return null;
 }
@@ -28,6 +31,32 @@ export async function loader() {
 function parseMediaId(raw) {
   const value = Number(raw);
   return Number.isInteger(value) && value > 0 ? value : 0;
+}
+
+function availabilityKey(typeSlug, mediaId) {
+  return `${AVAILABILITY_CACHE_PREFIX}${typeSlug}:${mediaId}`;
+}
+
+function readAvailability(typeSlug, mediaId) {
+  if (typeof window === "undefined" || !mediaId) return null;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(availabilityKey(typeSlug, mediaId)) || "null");
+    if (!parsed?.state || !parsed?.savedAt) return null;
+    if (Date.now() - Number(parsed.savedAt) > AVAILABILITY_CACHE_MAX_AGE_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeAvailability(typeSlug, mediaId, state) {
+  if (!mediaId || (state !== "available" && state !== "unavailable")) return;
+  try {
+    localStorage.setItem(
+      availabilityKey(typeSlug, mediaId),
+      JSON.stringify({ state, savedAt: Date.now() })
+    );
+  } catch {}
 }
 
 export function Component() {
@@ -39,7 +68,10 @@ export function Component() {
 
   const data = useDetailData(typeSlug, validType ? mediaId : 0);
   const [activeTab, setActiveTab] = useState("overview");
-  const [italianAvailability, setItalianAvailability] = useState("checking");
+  const [italianAvailability, setItalianAvailability] = useState(() => {
+    if (!validType || !mediaId) return "unavailable";
+    return readAvailability(typeSlug, mediaId)?.state || "available";
+  });
 
   useEffect(() => {
     setActiveTab("overview");
@@ -54,7 +86,8 @@ export function Component() {
 
     let alive = true;
     let running = false;
-    setItalianAvailability("checking");
+    const cached = readAvailability(typeSlug, mediaId);
+    setItalianAvailability(cached?.state || "available");
 
     const check = async () => {
       if (running) return;
@@ -65,25 +98,25 @@ export function Component() {
           headers: { Accept: "application/json" },
         });
         const payload = response.ok ? await response.json() : null;
-        if (!alive) return;
-        if (!payload?.catalog_loaded) {
-          setItalianAvailability("checking");
-        } else {
-          setItalianAvailability(payload.available === true ? "available" : "unavailable");
-        }
+        if (!alive || !payload?.catalog_loaded) return;
+        const next = payload.available === true ? "available" : "unavailable";
+        writeAvailability(typeSlug, mediaId, next);
+        setItalianAvailability(next);
       } catch {
-        if (alive) setItalianAvailability("checking");
+        // Availability is synchronization data, never a reason to replace an
+        // already-rendered Detail page with a loading state on transient errors.
       } finally {
         running = false;
       }
     };
 
-    check();
+    const firstCheck = window.setTimeout(check, cached ? 1200 : 0);
     const timer = window.setInterval(check, 90 * 1000);
     const onFocus = () => check();
     window.addEventListener("focus", onFocus);
     return () => {
       alive = false;
+      window.clearTimeout(firstCheck);
       window.clearInterval(timer);
       window.removeEventListener("focus", onFocus);
     };
@@ -96,15 +129,12 @@ export function Component() {
     enabled: !!data.detail && italianAvailability === "available",
   });
 
-  // Start the Italian episode request immediately from the URL identity, in
-  // parallel with Detail metadata and catalogue availability. The Episodes
-  // panel remains mounted while hidden, so clicking the tab performs no mount
-  // and no first network request.
   const episodesState = useEpisodes(
     validType && data.isTV ? mediaId : 0,
     validType && data.isTV && italianAvailability !== "unavailable",
     data.season,
-    activeTab === "episodes"
+    activeTab === "episodes",
+    data.episode
   );
   const tabs = detailTabsFor(data.isTV);
 
@@ -148,7 +178,7 @@ export function Component() {
     );
   }
 
-  if (italianAvailability === "checking" || !data.detail) {
+  if (!data.detail) {
     if (data.detailError) {
       return (
         <div className="dp-state" data-testid="detail-error">

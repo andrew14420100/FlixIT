@@ -1,13 +1,20 @@
 // @ts-nocheck
 /**
- * FlixIT Detail Page v2 - seasons/episodes data for TV titles.
- * Only explicitly confirmed Italian episodes are exposed. Data and thumbnails
- * are warmed before the Episodi tab opens and mirrored in sessionStorage so tab
- * switches/back navigation do not flash a fresh loading state.
+ * FlixIT Detail Page - persistent seasons/episodes cache.
+ *
+ * A refresh must render the last verified Italian catalogue immediately. Fresh
+ * checks happen after paint and every season is warmed in the background, so
+ * switching seasons does not create a loading state after the first visit.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { API_URL } from "./detailUtils";
+import { API_URL, warmPlayback } from "./detailUtils";
+
+const SEASONS_STALE_MS = 30 * 60 * 1000;
+const EPISODES_STALE_MS = 10 * 60 * 1000;
+const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const BACKGROUND_SEASON_CONCURRENCY = 2;
+const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
   const response = await fetch(path, {
@@ -18,23 +25,71 @@ async function getJson(path, signal) {
   return response.ok ? response.json() : null;
 }
 
-function readSession(key) {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = sessionStorage.getItem(key);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
+function readPersistent(key) {
+  if (typeof window === "undefined") return null;
+  const read = (storage) => {
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.data && Number(parsed?.savedAt || 0) > 0) {
+        if (Date.now() - Number(parsed.savedAt) > CACHE_MAX_AGE_MS) return null;
+        return { data: parsed.data, savedAt: Number(parsed.savedAt) };
+      }
+      if (parsed && typeof parsed === "object") return { data: parsed, savedAt: Date.now() - EPISODES_STALE_MS };
+    } catch {}
+    return null;
+  };
+
+  const persistent = read(window.localStorage);
+  if (persistent) return persistent;
+  try { return read(window.sessionStorage); } catch { return null; }
+}
+
+function writePersistent(key, value) {
+  if (typeof window === "undefined" || !value) return;
+  const payload = JSON.stringify({ savedAt: Date.now(), data: value });
+  try { window.localStorage.setItem(key, payload); } catch {
+    try { window.sessionStorage.setItem(key, payload); } catch {}
   }
 }
 
-function writeSession(key, value) {
-  if (typeof window === "undefined" || !value) return;
-  try {
-    sessionStorage.setItem(key, JSON.stringify(value));
-  } catch {}
+function scheduleIdle(callback, timeout = 1800) {
+  if (typeof window === "undefined") return () => {};
+  if ("requestIdleCallback" in window) {
+    const id = window.requestIdleCallback(callback, { timeout });
+    return () => window.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(callback, Math.min(450, timeout));
+  return () => window.clearTimeout(id);
+}
+
+async function warmSeason(mediaId, seasonNumber) {
+  const key = `${mediaId}:${seasonNumber}`;
+  if (seasonWarmInflight.has(key)) return seasonWarmInflight.get(key);
+
+  const promise = (async () => {
+    const storageKey = `flixit:it-episodes:${mediaId}:${seasonNumber}`;
+    const cached = readPersistent(storageKey);
+    if (cached && Date.now() - cached.savedAt < EPISODES_STALE_MS) return cached.data;
+
+    let data = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
+    if (data) writePersistent(storageKey, data);
+
+    const pending = Number(data?.pending_recheck_seconds || 0);
+    if (pending > 0 && pending <= 10) {
+      await new Promise((resolve) => setTimeout(resolve, Math.max(900, pending * 1000)));
+      const refreshed = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${seasonNumber}`);
+      if (refreshed) {
+        data = refreshed;
+        writePersistent(storageKey, refreshed);
+      }
+    }
+    return data;
+  })().finally(() => seasonWarmInflight.delete(key));
+
+  seasonWarmInflight.set(key, promise);
+  return promise;
 }
 
 /** Episode stills only exist on TMDB: allowed here as the single exception, with backdrop fallback. */
@@ -45,27 +100,35 @@ export function episodeStillUrl(value) {
   return raw.startsWith("/") ? `https://image.tmdb.org/t/p/w780${raw}` : "";
 }
 
-export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
+export default function useEpisodes(mediaId, enabled, preferredSeason, active, preferredEpisode = 1) {
   const preferred = Math.max(1, Number(preferredSeason || 1));
+  const preferredEpisodeNumber = Math.max(1, Number(preferredEpisode || 1));
   const seasonsCacheKey = `flixit:it-seasons:${mediaId}`;
+  const seasonsCached = useMemo(() => readPersistent(seasonsCacheKey), [seasonsCacheKey]);
 
   const seasonsQuery = useQuery({
-    queryKey: ["dp-seasons-it-v2", mediaId],
+    queryKey: ["dp-seasons-it-v3-persistent", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
-    initialData: () => readSession(seasonsCacheKey),
-    initialDataUpdatedAt: 0,
-    staleTime: 30 * 60 * 1000,
-    gcTime: 12 * 60 * 60 * 1000,
-    refetchOnMount: true,
+    initialData: seasonsCached?.data,
+    initialDataUpdatedAt: seasonsCached?.savedAt || 0,
+    staleTime: SEASONS_STALE_MS,
+    gcTime: 24 * 60 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
 
   useEffect(() => {
-    if (seasonsQuery.data?.seasons) writeSession(seasonsCacheKey, seasonsQuery.data);
+    if (seasonsQuery.data?.seasons) writePersistent(seasonsCacheKey, seasonsQuery.data);
   }, [seasonsCacheKey, seasonsQuery.data]);
+
+  useEffect(() => {
+    if (!enabled || !seasonsCached?.data) return undefined;
+    if (Date.now() - Number(seasonsCached.savedAt || 0) < SEASONS_STALE_MS) return undefined;
+    return scheduleIdle(() => seasonsQuery.refetch(), 2200);
+  }, [enabled, seasonsCached?.savedAt, mediaId]);
 
   const seasons = useMemo(
     () => (seasonsQuery.data?.seasons || []).filter(
@@ -91,26 +154,24 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
   }, [seasons, preferredSeason]);
 
   const episodeCacheKey = `flixit:it-episodes:${mediaId}:${selected}`;
+  const episodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-it-v3", mediaId, selected],
+    queryKey: ["dp-season-episodes-it-v4-persistent", mediaId, selected],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
     enabled: !!mediaId && !!selected && !!enabled,
-    initialData: () => readSession(episodeCacheKey),
-    initialDataUpdatedAt: 0,
+    initialData: episodeCached?.data,
+    initialDataUpdatedAt: episodeCached?.savedAt || 0,
     placeholderData: (previous) => previous,
-    staleTime: 15 * 60 * 1000,
-    gcTime: 12 * 60 * 60 * 1000,
-    refetchOnMount: true,
+    staleTime: EPISODES_STALE_MS,
+    gcTime: 24 * 60 * 60 * 1000,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
     refetchInterval: (query) => {
       const data = query?.state?.data || {};
       const pending = Number(data?.pending_recheck_seconds || 0);
-      // The backend returns 4s only while language checks are actually pending.
-      // A 90s value is merely the normal future-refresh hint and must not cause
-      // the tab to reload continuously.
-      if (pending > 0 && pending <= 10) return 750;
+      if (pending > 0 && pending <= 10) return 1000;
       return false;
     },
     refetchIntervalInBackground: true,
@@ -119,8 +180,14 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
   useEffect(() => {
     const data = episodesQuery.data;
     if (!data || !Array.isArray(data.episodes)) return;
-    writeSession(episodeCacheKey, data);
+    writePersistent(episodeCacheKey, data);
   }, [episodeCacheKey, episodesQuery.data]);
+
+  useEffect(() => {
+    if (!enabled || !episodeCached?.data) return undefined;
+    if (Date.now() - Number(episodeCached.savedAt || 0) < EPISODES_STALE_MS) return undefined;
+    return scheduleIdle(() => episodesQuery.refetch(), 1800);
+  }, [enabled, episodeCached?.savedAt, mediaId, selected]);
 
   const episodes = useMemo(
     () => (episodesQuery.data?.episodes || []).filter(
@@ -142,6 +209,46 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active) {
       image.src = src;
     });
   }, [episodes]);
+
+  // Resolve only the episode the user is most likely to play and its successor.
+  // The global fetch coalescer and backend stream_cache make duplicate calls cheap,
+  // while limiting this to two streams avoids hammering the provider.
+  useEffect(() => {
+    if (!enabled || !mediaId || !selected || !episodes.length) return undefined;
+    const wanted = Number(selected) === preferred
+      ? preferredEpisodeNumber
+      : Number(episodes[0]?.episode_number || 1);
+    let index = episodes.findIndex((episode) => Number(episode?.episode_number) === wanted);
+    if (index < 0) index = 0;
+    const targets = episodes.slice(index, index + 2)
+      .map((episode) => Number(episode?.episode_number || 0))
+      .filter(Boolean);
+    return scheduleIdle(() => {
+      targets.forEach((episodeNumber) => {
+        void warmPlayback("tv", Number(mediaId), Number(selected), episodeNumber);
+      });
+    }, active ? 500 : 1400);
+  }, [enabled, mediaId, selected, preferred, preferredEpisodeNumber, active, episodes]);
+
+  useEffect(() => {
+    if (!enabled || !mediaId || seasons.length < 2) return undefined;
+    let cancelled = false;
+    const pending = seasons
+      .map((season) => Number(season?.season_number || 0))
+      .filter((number) => number > 0 && number !== Number(selected));
+
+    const cancelIdle = scheduleIdle(async () => {
+      for (let index = 0; index < pending.length && !cancelled; index += BACKGROUND_SEASON_CONCURRENCY) {
+        const batch = pending.slice(index, index + BACKGROUND_SEASON_CONCURRENCY);
+        await Promise.allSettled(batch.map((number) => warmSeason(mediaId, number)));
+      }
+    }, 3200);
+
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
+  }, [enabled, mediaId, selected, seasons.map((season) => season?.season_number).join(",")]);
 
   const pendingItalianCheck = Number(episodesQuery.data?.pending_recheck_seconds || 0);
 
