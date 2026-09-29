@@ -5,10 +5,39 @@ const API_URL = process.env.REACT_APP_BACKEND_URL || "";
 export const POLL_MS = 60000;
 const EMPTY = { items: [], unread: 0, must_reset_password: false, role: "user" };
 const SHARED_NOTIFICATION_TTL_MS = 15 * 1000;
+const NOTIFICATION_CACHE_KEY = "flixit_notifications_v1";
 
 let notificationsMemo = null;
 const notificationSubscribers = new Set<() => void>();
 let notificationRuntimeCleanup: (() => void) | null = null;
+
+function tokenMarker(token) {
+  const value = String(token || "");
+  return value ? value.slice(-16) : "";
+}
+
+function readNotificationCache() {
+  try {
+    const token = localStorage.getItem("user_token") || "";
+    if (!token) return EMPTY;
+    const cached = JSON.parse(localStorage.getItem(NOTIFICATION_CACHE_KEY) || "null");
+    if (!cached?.data || cached?.tokenMarker !== tokenMarker(token)) return EMPTY;
+    return { ...EMPTY, ...cached.data };
+  } catch {
+    return EMPTY;
+  }
+}
+
+function persistNotificationCache(token, data) {
+  if (!token || !data) return;
+  try {
+    localStorage.setItem(NOTIFICATION_CACHE_KEY, JSON.stringify({
+      tokenMarker: tokenMarker(token),
+      savedAt: Date.now(),
+      data,
+    }));
+  } catch {}
+}
 
 export function authHeaders() {
   return { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("user_token") || ""}` };
@@ -20,6 +49,7 @@ export function handleBanned(res) {
     if (d?.detail?.code === "banned") {
       sessionStorage.setItem("flixit_banned_reason", d.detail.reason || "");
       localStorage.removeItem("user_token");
+      localStorage.removeItem(NOTIFICATION_CACHE_KEY);
       window.location.reload();
       return true;
     }
@@ -35,6 +65,7 @@ async function requestNotifications(token) {
   try {
     const res = await fetch(`${API_URL}/api/notifications`, {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      cache: "no-store",
     });
     if (res.status === 403) {
       await handleBanned(res);
@@ -42,10 +73,13 @@ async function requestNotifications(token) {
     }
     if (res.status === 401) {
       localStorage.removeItem("user_token");
+      localStorage.removeItem(NOTIFICATION_CACHE_KEY);
       window.location.reload();
       return null;
     }
-    return res.ok ? await res.json() : null;
+    const data = res.ok ? await res.json() : null;
+    if (data) persistNotificationCache(token, data);
+    return data;
   } catch {
     return null;
   }
@@ -107,7 +141,7 @@ export function subscribeNotificationRefresh(callback: () => void) {
 }
 
 export function useNotifications() {
-  const [state, setState] = useState(EMPTY);
+  const [state, setState] = useState(() => readNotificationCache());
   const loggedIn = !!localStorage.getItem("user_token");
 
   const refresh = useCallback(async () => {
@@ -123,7 +157,15 @@ export function useNotifications() {
   }, [loggedIn, refresh]);
 
   const markRead = useCallback(async (ids) => {
-    setState((s) => ({ ...s, unread: ids ? Math.max(0, s.unread - ids.length) : 0, items: s.items.map((n) => (!ids || ids.includes(n.id) ? { ...n, read: true } : n)) }));
+    setState((s) => {
+      const next = {
+        ...s,
+        unread: ids ? Math.max(0, s.unread - ids.length) : 0,
+        items: s.items.map((n) => (!ids || ids.includes(n.id) ? { ...n, read: true } : n)),
+      };
+      persistNotificationCache(localStorage.getItem("user_token") || "", next);
+      return next;
+    });
     invalidateNotificationsMemo();
     await fetch(`${API_URL}/api/notifications/read`, { method: "POST", headers: authHeaders(), body: JSON.stringify({ ids }) }).catch(() => {});
     notifySubscribers();
