@@ -82,6 +82,13 @@ def _install_ads_registration_hook():
         except Exception as exc:
             # Permission hardening is additive; never prevent the API booting.
             print(f"[admin-permissions] registration skipped: {exc}")
+        try:
+            from services.strict_italian_media import install_strict_italian_media
+            install_strict_italian_media(app, db)
+        except Exception as exc:
+            # Strict language filtering is fail-closed in its own service, but a
+            # registration failure must never make the whole API unavailable.
+            print(f"[strict-italian-media] registration skipped: {exc}")
         return result
 
     register_with_ads._flixit_ads_hook = True
