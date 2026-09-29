@@ -16,17 +16,36 @@ const HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
 const bootImageWarmers: HTMLImageElement[] = [];
 const warmedUrls = new Set<string>();
 
-function warmUrl(value: any, high = false) {
+function firstUrl(value: any) {
+  if (typeof value === "string") return value;
+  if (typeof value?.url === "string") return value.url;
+  return "";
+}
+
+function artworkUrl(value: any, size = "w780") {
+  const raw = String(firstUrl(value) || "").trim();
+  if (!raw) return "";
+  if (/^(?:https?:|data:|blob:)/i.test(raw)) return raw;
+
+  // These are genuine FlixIT paths. A bare /abc123.jpg is instead the normal
+  // TMDB path shape and must be warmed from image.tmdb.org, not from our origin.
+  if (/^\/(?:avatars|api|assets|static|uploads|media|images)\//i.test(raw)) return raw;
+  if (raw.startsWith("/")) return `https://image.tmdb.org/t/p/${size}${raw}`;
+  return raw;
+}
+
+function warmUrl(value: any, high = false, size = "w780") {
   if (typeof Image === "undefined") return;
-  const src = String(value || "").trim();
+  const src = artworkUrl(value, size);
   if (!src || warmedUrls.has(src)) return;
   warmedUrls.add(src);
   const image = new Image();
-  image.decoding = "async";
+  image.decoding = high ? "sync" : "async";
   (image as any).fetchPriority = high ? "high" : "auto";
   image.src = src;
+  try { image.decode?.().catch(() => {}); } catch {}
   bootImageWarmers.push(image);
-  if (bootImageWarmers.length > 80) bootImageWarmers.splice(0, bootImageWarmers.length - 80);
+  if (bootImageWarmers.length > 140) bootImageWarmers.splice(0, bootImageWarmers.length - 140);
 }
 
 function warmHomePayload(data: any) {
@@ -34,22 +53,31 @@ function warmHomePayload(data: any) {
   const mobile = window.innerWidth < 900;
   const hero = data?.hero || {};
   const assets = hero?.assets || {};
-  warmUrl(hero?.customBackdrop || assets?.hero_backdrop_path || assets?.backdrop_path, true);
-  warmUrl(assets?.logo_path || assets?.logo_url, true);
 
-  const rows = Array.isArray(data?.rows) ? data.rows.slice(0, 7) : [];
+  // Hero is the visual LCP: request its actual full-resolution URL first.
+  warmUrl(
+    hero?.customBackdrop || assets?.hero_backdrop_path || assets?.detail_backdrop_path || assets?.backdrop_path,
+    true,
+    "original"
+  );
+  warmUrl(assets?.logo_path || assets?.logo_url, true, "original");
+
+  // Warm enough cards to cover the initial viewport and the first horizontal
+  // scroll. Priority is reserved for the first two rows to avoid bandwidth
+  // competition with the Hero.
+  const rows = Array.isArray(data?.rows) ? data.rows.slice(0, 10) : [];
   let warmed = 0;
-  for (const row of rows) {
+  rows.forEach((row, rowIndex) => {
     const items = Array.isArray(row?.items) ? row.items : [];
-    for (const item of items.slice(0, mobile ? 5 : 9)) {
+    items.slice(0, mobile ? 7 : 10).forEach((item) => {
       const art = item?.__artwork || {};
-      const url = mobile
-        ? (art?.poster_url || item?.poster_path)
+      const value = mobile
+        ? (art?.poster_url || item?.poster_path || item?.poster)
         : (art?.backdrop_url || art?.titled_backdrop_url || item?.titled_backdrop_path || item?.backdrop_path);
-      warmUrl(url, warmed < (mobile ? 8 : 14));
+      warmUrl(value, rowIndex < 2 && warmed < (mobile ? 12 : 20), mobile ? "w500" : "w780");
       warmed += 1;
-    }
-  }
+    });
+  });
 }
 
 // MainHeader imports this module during bundle evaluation, before React paints.

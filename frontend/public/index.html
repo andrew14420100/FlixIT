@@ -8,7 +8,7 @@
         <meta name="description" content="FlixIT - La tua piattaforma streaming" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link rel="preconnect" href="https://image.tmdb.org" />
+        <link rel="preconnect" href="https://image.tmdb.org" crossorigin />
         <link rel="dns-prefetch" href="https://image.tmdb.org" />
         <link rel="preconnect" href="https://cdn.streamingcommunityz.ninja" crossorigin />
         <link rel="dns-prefetch" href="https://cdn.streamingcommunityz.ninja" />
@@ -21,14 +21,79 @@
         <script>
             window.__FLIXIT_SC_CATALOG_PROMISE__ = Promise.resolve(null);
 
-            // Start the tiny first-paint Home payload while the main JS bundle is
-            // still downloading/parsing. HomePage adopts this exact promise, so
-            // there is no duplicate request once React mounts.
+            // Start Home JSON and its LCP/first-row image requests before the
+            // React bundle downloads/parses. This removes an entire serial stage
+            // from Hero/card rendering on F5.
             (function () {
                 var path = window.location.pathname || "/";
                 var isHome = path === "/" || path === "/browse" || path === "/browse/" ||
                     path.indexOf("/browse/genre/") === 0 || path === "/browse/latest" || path === "/browse/trending";
                 if (!isHome || !window.fetch) return;
+
+                var warmed = Object.create(null);
+                var keepAlive = [];
+
+                function assetUrl(value, size) {
+                    var raw = "";
+                    if (typeof value === "string") raw = value;
+                    else if (value && typeof value.url === "string") raw = value.url;
+                    raw = String(raw || "").trim();
+                    if (!raw) return "";
+                    if (/^(?:https?:|data:|blob:)/i.test(raw)) return raw;
+                    if (/^\/(?:avatars|api|assets|static|uploads|media|images)\//i.test(raw)) return raw;
+                    if (raw.charAt(0) === "/") return "https://image.tmdb.org/t/p/" + (size || "w780") + raw;
+                    return raw;
+                }
+
+                function warm(value, priority, size) {
+                    var src = assetUrl(value, size);
+                    if (!src || warmed[src]) return;
+                    warmed[src] = true;
+                    try {
+                        var img = new Image();
+                        img.decoding = priority ? "sync" : "async";
+                        img.fetchPriority = priority ? "high" : "auto";
+                        img.src = src;
+                        keepAlive.push(img);
+                        if (keepAlive.length > 100) keepAlive.shift();
+                    } catch (_) {}
+                }
+
+                function warmPayload(data) {
+                    if (!data) return data;
+                    var mobile = window.innerWidth < 900;
+                    var hero = data.hero || {};
+                    var assets = hero.assets || {};
+                    warm(
+                        hero.customBackdrop || assets.hero_backdrop_path || assets.detail_backdrop_path || assets.backdrop_path,
+                        true,
+                        "original"
+                    );
+                    warm(assets.logo_path || assets.logo_url, true, "original");
+
+                    var rows = Array.isArray(data.rows) ? data.rows.slice(0, 8) : [];
+                    var count = 0;
+                    rows.forEach(function (row, rowIndex) {
+                        var items = row && Array.isArray(row.items) ? row.items : [];
+                        items.slice(0, mobile ? 6 : 9).forEach(function (item) {
+                            var art = item && item.__artwork || {};
+                            var value = mobile
+                                ? (art.poster_url || item.poster_path || item.poster)
+                                : (art.backdrop_url || art.titled_backdrop_url || item.titled_backdrop_path || item.backdrop_path);
+                            warm(value, rowIndex < 2 && count < (mobile ? 10 : 18), mobile ? "w500" : "w780");
+                            count += 1;
+                        });
+                    });
+                    return data;
+                }
+
+                // Use the last complete Home immediately, before even the fast
+                // bootstrap response arrives.
+                try {
+                    var cached = JSON.parse(localStorage.getItem("flix-home-bootstrap-v8-sc-logo-home-fixes") || "null");
+                    warmPayload(cached && cached.data);
+                } catch (_) {}
+
                 window.__FLIXIT_HOME_FAST_PROMISE__ = fetch("/api/public/home-bootstrap-fast", {
                     headers: { Accept: "application/json" },
                     cache: "no-store"
@@ -36,7 +101,9 @@
                     if (!response.ok) return null;
                     return response.json();
                 }).then(function (data) {
-                    return data && Array.isArray(data.rows) ? data : null;
+                    var valid = data && Array.isArray(data.rows) ? data : null;
+                    warmPayload(valid);
+                    return valid;
                 }).catch(function () { return null; });
             })();
         </script>
@@ -90,7 +157,6 @@
                                     return (
                                         "posthog" !== a && (e += "." + a),
                                         t || (e += " (stub)"),
-                                        e
                                     );
                                 },
                                 u.people.toString = function () {

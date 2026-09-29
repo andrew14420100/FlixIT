@@ -14,6 +14,7 @@ const SEASONS_STALE_MS = 30 * 60 * 1000;
 const EPISODES_STALE_MS = 10 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BACKGROUND_SEASON_CONCURRENCY = 2;
+const EPISODE_CACHE_PREFIX = "flixit:it-episodes-v2:";
 const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
@@ -48,7 +49,7 @@ function readPersistent(key) {
 
 function hasVerifiedEpisodes(value) {
   return Array.isArray(value?.episodes) && value.episodes.some(
-    (episode) => episode?.italian_available === true && String(episode?.italian_audio_status || "italian") === "italian"
+    (episode) => episode?.italian_available === true && String(episode?.italian_audio_status || "unknown") === "italian"
   );
 }
 
@@ -87,7 +88,7 @@ async function warmSeason(mediaId, seasonNumber) {
   if (seasonWarmInflight.has(key)) return seasonWarmInflight.get(key);
 
   const promise = (async () => {
-    const storageKey = `flixit:it-episodes:${mediaId}:${seasonNumber}`;
+    const storageKey = `${EPISODE_CACHE_PREFIX}${mediaId}:${seasonNumber}`;
     const cached = readPersistent(storageKey);
     if (cached && Date.now() - cached.savedAt < EPISODES_STALE_MS) return cached.data;
 
@@ -175,10 +176,10 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     });
   }, [seasons, preferredSeason]);
 
-  const episodeCacheKey = `flixit:it-episodes:${mediaId}:${selected}`;
+  const episodeCacheKey = `${EPISODE_CACHE_PREFIX}${mediaId}:${selected}`;
   const episodeCached = useMemo(() => readPersistent(episodeCacheKey), [episodeCacheKey]);
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-it-v5-never-blank", mediaId, selected],
+    queryKey: ["dp-season-episodes-it-v6-strict-language", mediaId, selected],
     queryFn: async ({ signal }) => {
       const fresh = await getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal);
       if (isShortCheckingResponse(fresh) && hasVerifiedEpisodes(episodeCached?.data)) {
@@ -228,7 +229,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
       (episode) =>
         episode?.vixsrc_available !== false &&
         episode?.italian_available === true &&
-        String(episode?.italian_audio_status || "italian") === "italian"
+        String(episode?.italian_audio_status || "unknown") === "italian"
     ),
     [episodeSource]
   );
