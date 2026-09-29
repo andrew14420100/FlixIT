@@ -1,21 +1,22 @@
 // @ts-nocheck
 /**
- * FlixIT Detail Page - StreamingCommunity direct snapshots (v18).
+ * FlixIT Detail episodes - SC direct snapshot v19.
  *
- * The browser never checks VixSrc/provider availability. The backend mirrors
- * SC's own public Detail flow: props.title.seasons and loadedSeason.episodes.
+ * The selected season is fetched as soon as Detail mounts, not when the user
+ * clicks the Episodes tab. All other SC seasons and their artwork are warmed in
+ * the background so tab/season changes read an already-populated snapshot.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { API_URL, warmPlayback } from "./detailUtils";
 
 const SEASONS_STALE_MS = 30 * 60 * 1000;
-const EPISODES_STALE_MS = 5 * 60 * 1000;
+const EPISODES_STALE_MS = 30 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const BACKGROUND_SEASON_CONCURRENCY = 3;
-const POLICY = "sc-direct-detail-v18";
-const EPISODE_CACHE_PREFIX = "flixit:sc-episodes-v18:";
-const SEASON_CACHE_PREFIX = "flixit:sc-seasons-v18:";
+const BACKGROUND_SEASON_CONCURRENCY = 4;
+const POLICY = "sc-direct-detail-v19-instant";
+const EPISODE_CACHE_PREFIX = "flixit:sc-episodes-v19:";
+const SEASON_CACHE_PREFIX = "flixit:sc-seasons-v19:";
 const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
@@ -72,13 +73,13 @@ function isScSeasonSnapshot(value) {
   );
 }
 
-function scheduleIdle(callback, timeout = 1800) {
+function scheduleIdle(callback, timeout = 600) {
   if (typeof window === "undefined") return () => {};
   if ("requestIdleCallback" in window) {
     const id = window.requestIdleCallback(callback, { timeout });
     return () => window.cancelIdleCallback?.(id);
   }
-  const id = window.setTimeout(callback, Math.min(250, timeout));
+  const id = window.setTimeout(callback, Math.min(80, timeout));
   return () => window.clearTimeout(id);
 }
 
@@ -114,7 +115,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const seasonsCached = isScSeasonSnapshot(rawSeasonsCached?.data) ? rawSeasonsCached : null;
 
   const seasonsQuery = useQuery({
-    queryKey: ["dp-seasons-sc-v18", mediaId],
+    queryKey: ["dp-seasons-sc-v19", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
     initialData: seasonsCached?.data,
@@ -124,7 +125,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     refetchOnMount: !seasonsCached,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    refetchInterval: (query) => isScSeasonSnapshot(query?.state?.data) ? false : 2000,
+    refetchInterval: (query) => isScSeasonSnapshot(query?.state?.data) ? false : 1200,
     retry: 2,
   });
 
@@ -160,7 +161,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const episodeCached = isScEpisodeSnapshot(rawEpisodeCached?.data) ? rawEpisodeCached : null;
 
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-sc-v18", mediaId, selected],
+    queryKey: ["dp-season-episodes-sc-v19", mediaId, selected],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
     enabled: !!mediaId && !!selected && !!enabled,
     initialData: episodeCached?.data,
@@ -171,7 +172,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     refetchOnMount: !episodeCached,
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    refetchInterval: (query) => isScEpisodeSnapshot(query?.state?.data) ? false : 1500,
+    refetchInterval: (query) => isScEpisodeSnapshot(query?.state?.data) ? false : 1000,
     retry: 2,
   });
 
@@ -193,16 +194,22 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
     [episodeSource]
   );
 
+  // Warm episode thumbnails before the Episodes panel becomes visible. First
+  // viewport rows get high priority; the rest are still requested ahead of tab
+  // interaction so the list appears already painted.
   useEffect(() => {
     if (typeof Image === "undefined" || !episodes.length) return;
-    episodes.slice(0, 40).forEach((episode) => {
-      const src = episodeStillUrl(episode?.still_path);
-      if (!src) return;
-      const image = new Image();
-      image.decoding = "async";
-      image.fetchPriority = "auto";
-      image.src = src;
-    });
+    const cancel = scheduleIdle(() => {
+      episodes.slice(0, 60).forEach((episode, index) => {
+        const src = episodeStillUrl(episode?.still_path);
+        if (!src) return;
+        const image = new Image();
+        image.decoding = "async";
+        image.fetchPriority = index < 8 ? "high" : "auto";
+        image.src = src;
+      });
+    }, 180);
+    return cancel;
   }, [episodes]);
 
   useEffect(() => {
@@ -217,11 +224,13 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
       .filter(Boolean);
     return scheduleIdle(() => {
       targets.forEach((episodeNumber) => void warmPlayback("tv", Number(mediaId), Number(selected), episodeNumber));
-    }, active ? 120 : 350);
+    }, active ? 80 : 220);
   }, [enabled, mediaId, selected, preferred, preferredEpisodeNumber, active, episodes]);
 
+  // Warm every other SC season immediately after the title's season list is
+  // available. This is independent from the active tab.
   useEffect(() => {
-    if (!enabled || !mediaId || seasons.length < 2) return undefined;
+    if (!enabled || !mediaId || !seasons.length) return undefined;
     let cancelled = false;
     const pending = seasons
       .map((season) => Number(season?.season_number || 0))
@@ -231,7 +240,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
         const batch = pending.slice(index, index + BACKGROUND_SEASON_CONCURRENCY);
         await Promise.allSettled(batch.map((number) => warmSeason(mediaId, number)));
       }
-    }, 250);
+    }, 100);
     return () => {
       cancelled = true;
       cancelIdle();

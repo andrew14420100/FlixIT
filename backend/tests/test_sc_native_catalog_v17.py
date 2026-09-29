@@ -1,4 +1,4 @@
-"""Regression tests for the StreamingCommunity-native v17 background catalogue."""
+"""Regression tests for the StreamingCommunity-native background catalogue."""
 from __future__ import annotations
 
 import html
@@ -61,23 +61,23 @@ def run():
     frontend = (ROOT / "frontend" / "src" / "pages" / "detail" / "useEpisodes.ts").read_text(encoding="utf-8")
     safety = (BACKEND / "services" / "sc_native_catalog_v17_safety.py").read_text(encoding="utf-8")
 
-    check('/api/list/' not in source and 'VIXSRC_BASE' not in source, "v17 still derives catalogue membership from VixSrc")
-    check('props.loadedSeason.episodes' in source, "v17 no longer documents SC loadedSeason as episode authority")
-    check('props.title.seasons' in source, "v17 no longer documents SC seasons as authority")
-    check('request_time_provider_checks": False' in source, "request-time provider checks reappeared in v17 background index")
+    check('/api/list/' not in source and 'VIXSRC_BASE' not in source, "catalogue membership still derives from VixSrc")
+    check('props.loadedSeason.episodes' in source, "SC loadedSeason is no longer episode authority")
+    check('props.title.seasons' in source, "SC seasons are no longer authority")
+    check('request_time_provider_checks": False' in source, "request-time provider checks reappeared")
 
     handler = source.split("async def sc_tv_episodes", 1)[1].split("async def status_payload", 1)[0]
     check("_get_title" not in handler and "httpx" not in handler and "client.get" not in handler,
-          "v17 cached season request path performs upstream work")
+          "cached season request path performs upstream work")
 
-    check("install_sc_native_catalog_v17" in sitecustomize, "v17 background index is not installed")
-    check("install_sc_direct_detail_v18" in sitecustomize, "v18 direct SC Detail path is not installed")
+    check("install_sc_native_catalog_v17" in sitecustomize, "SC background index is not installed")
+    check("install_sc_direct_detail_v18" in sitecustomize, "SC direct Detail path is not installed")
     check("install_italian_media_index_v16_fastboot" not in sitecustomize,
           "old v16 VixSrc catalogue is still registered as authority")
-    check('POLICY = "sc-direct-detail-v18"' in frontend, "frontend does not require SC direct v18 snapshots")
+    check('POLICY = "sc-direct-detail-v19-instant"' in frontend, "frontend does not require SC direct v19 snapshots")
     check("flixit:it-episodes-v16:" not in frontend, "old v16 episode cache can leak into SC Detail")
-    check("flixit:sc-seasons-v18:" in frontend, "SC direct season cache is not versioned")
-    check("flixit:sc-episodes-v18:" in frontend, "SC direct episode cache is not versioned")
+    check("flixit:sc-seasons-v19:" in frontend, "SC direct season cache is not versioned to v19")
+    check("flixit:sc-episodes-v19:" in frontend, "SC direct episode cache is not versioned to v19")
     check('title = {**title, "type": "tv"}' in safety, "TV inference safety is missing")
     check("indexed_count < minimum" in safety, "failed SC crawl can still become authoritative")
 

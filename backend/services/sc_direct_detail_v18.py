@@ -1,20 +1,21 @@
-"""StreamingCommunity-direct Detail mirror (v18).
+"""StreamingCommunity-direct Detail mirror (v19).
 
-This follows the same public page-data flow used by open-source SC clients:
-1) fetch the SC title page and parse the Inertia `data-page` JSON;
-2) read `props.title.seasons`;
-3) fetch `/it/titles/{id}-{slug}/season-{N}`;
-4) read `props.loadedSeason.episodes`.
+Public SC flow mirrored by FLIX-IT:
+1) resolve the exact SC title and its Inertia ``props.title``;
+2) read ``props.title.seasons``;
+3) fetch each ``season-N`` page;
+4) read ``props.loadedSeason.episodes``;
+5) cache/persist all season snapshots before the user opens the Episodes tab.
 
-The background SC v17 index remains a cache/prewarmer only. It is not required
-for a Detail request to return seasons or episodes. VixSrc is never consulted for
-catalogue membership here.
+VixSrc is playback-only. Catalogue membership and episode artwork come from SC.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter
@@ -23,13 +24,14 @@ from fastapi.routing import APIRoute
 from services import sc_native_catalog_v17 as sc
 from services.trailers.providers.streamingcommunity import _detail_path, _query_variants, _search_rows
 
-POLICY_VERSION = "sc-direct-detail-v18"
+POLICY_VERSION = "sc-direct-detail-v19-instant"
 SEASONS_PATH = "/api/public/tv/{tmdb_id}/seasons"
 SEASON_PATH = "/api/public/tv/{tmdb_id}/season/{season_number}"
 STATUS_PATH = "/api/public/sc-direct/status"
 
 TITLE_TTL_SECONDS = 30 * 60
-SEASON_TTL_SECONDS = 15 * 60
+SEASON_TTL_SECONDS = 30 * 60
+SEASON_PREWARM_CONCURRENCY = 4
 
 _INSTALLED = False
 _db = None
@@ -37,6 +39,7 @@ _title_cache: dict[int, tuple[float, dict, str, str]] = {}
 _season_cache: dict[tuple[int, int], tuple[float, dict]] = {}
 _inflight_titles: dict[int, asyncio.Task] = {}
 _inflight_seasons: dict[tuple[int, int], asyncio.Task] = {}
+_prewarm_tasks: dict[int, asyncio.Task] = {}
 
 
 def _fresh(saved_at: float, ttl: int) -> bool:
@@ -108,6 +111,99 @@ def _load_persisted_season(db, tmdb_id: int, season_number: int):
     return loaded if isinstance(loaded, dict) and loaded else None
 
 
+def _cdn_base(base: str = "") -> str:
+    configured = str(os.environ.get("SC_CDN_BASE") or "").strip().rstrip("/")
+    if configured:
+        return configured + "/"
+    chosen = str(base or sc._working_base or os.environ.get("SC_BASE_URL") or sc.SC_BASE_URL or "").strip()
+    try:
+        host = (urlparse(chosen).hostname or "").strip(".")
+    except Exception:
+        host = ""
+    if not host:
+        return str(getattr(sc, "SC_CDN_BASE", "") or "").rstrip("/") + "/"
+    if not host.startswith("cdn."):
+        host = f"cdn.{host}"
+    return f"https://{host}/images/"
+
+
+def _episode_image(row: dict, base: str = "") -> str:
+    images = row.get("images") if isinstance(row, dict) else None
+    candidates: list[dict] = []
+    if isinstance(images, dict):
+        for kind, value in images.items():
+            if isinstance(value, dict):
+                candidates.append({"type": value.get("type") or kind, **value})
+            elif value:
+                candidates.append({"type": kind, "filename": value})
+    elif isinstance(images, list):
+        candidates = [item for item in images if isinstance(item, dict)]
+
+    preferred = []
+    fallback = []
+    for image in candidates:
+        kind = str(image.get("type") or image.get("kind") or "").strip().lower()
+        bucket = preferred if kind in {"cover", "still", "background", "backdrop", "card"} else fallback
+        bucket.append(image)
+
+    for image in [*preferred, *fallback]:
+        original = str(image.get("original_url_field") or image.get("original_url") or "").strip()
+        if original.startswith("http://") or original.startswith("https://"):
+            return original
+        raw = str(
+            image.get("filename")
+            or image.get("file")
+            or image.get("path")
+            or image.get("url")
+            or image.get("src")
+            or ""
+        ).strip()
+        if not raw:
+            continue
+        if raw.startswith("http://") or raw.startswith("https://"):
+            return raw
+        filename = raw.rsplit("/", 1)[-1].split("?", 1)[0]
+        if filename:
+            return f"{_cdn_base(base)}{filename}"
+    return ""
+
+
+def _episodes_from_loaded(loaded: dict, season_number: int, base: str = "") -> list[dict]:
+    raw = loaded.get("episodes") if isinstance(loaded, dict) else []
+    out: list[dict] = []
+    seen: set[int] = set()
+    if not isinstance(raw, list):
+        return out
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        try:
+            number = int(row.get("number") or row.get("episode_number") or 0)
+        except Exception:
+            number = 0
+        try:
+            sc_episode_id = int(row.get("id") or 0)
+        except Exception:
+            sc_episode_id = 0
+        if number <= 0 or number in seen:
+            continue
+        seen.add(number)
+        try:
+            runtime = int(row.get("duration") or row.get("runtime") or 0) or None
+        except Exception:
+            runtime = None
+        out.append({
+            "season_number": int(season_number),
+            "episode_number": number,
+            "sc_episode_id": sc_episode_id or None,
+            "name": str(row.get("name") or f"Episodio {number}"),
+            "overview": str(row.get("plot") or row.get("overview") or ""),
+            "runtime": runtime,
+            "still_path": _episode_image(row, base),
+        })
+    return sorted(out, key=lambda item: int(item["episode_number"]))
+
+
 async def _verify_candidate(client: httpx.AsyncClient, tmdb_id: int, path: str, preferred_base: str = ""):
     title, base = await sc._get_title(client, path, preferred_base)
     if not title:
@@ -120,7 +216,6 @@ async def _verify_candidate(client: httpx.AsyncClient, tmdb_id: int, path: str, 
 
 async def _resolve_title_uncached(tmdb_id: int):
     tmdb_id = int(tmdb_id)
-    # Reuse the exact SC identity already discovered by the v17 background index.
     existing_path = sc._title_paths.get(tmdb_id)
     existing_base = sc._title_bases.get(tmdb_id, "")
 
@@ -152,8 +247,6 @@ async def _resolve_title_uncached(tmdb_id: int):
             if hit:
                 return hit
 
-        # This mirrors SC clients: /it/search returns the title catalogue rows,
-        # then the title page is the authority. tmdb_id is checked exactly.
         for base in sc._ordered_bases():
             for query in _query_variants(identity):
                 if not query:
@@ -178,16 +271,57 @@ async def _resolve_title_uncached(tmdb_id: int):
     return None
 
 
+def _schedule_all_seasons(tmdb_id: int, title: dict) -> None:
+    if not isinstance(title, dict):
+        return
+    descriptors = sc._season_descriptors(title)
+    if not descriptors:
+        return
+    current = _prewarm_tasks.get(int(tmdb_id))
+    if current is not None and not current.done():
+        return
+
+    async def run() -> None:
+        semaphore = asyncio.Semaphore(SEASON_PREWARM_CONCURRENCY)
+
+        async def one(number: int) -> None:
+            key = (int(tmdb_id), int(number))
+            cached = _season_cache.get(key)
+            if cached and _fresh(cached[0], SEASON_TTL_SECONDS):
+                return
+            async with semaphore:
+                try:
+                    await _resolve_season(int(tmdb_id), int(number))
+                except Exception:
+                    return
+
+        await asyncio.gather(
+            *(one(int(row["season_number"])) for row in descriptors if int(row.get("season_number") or 0) > 0),
+            return_exceptions=True,
+        )
+
+    task = asyncio.create_task(run())
+    _prewarm_tasks[int(tmdb_id)] = task
+
+    def cleanup(done: asyncio.Task) -> None:
+        if _prewarm_tasks.get(int(tmdb_id)) is done:
+            _prewarm_tasks.pop(int(tmdb_id), None)
+
+    task.add_done_callback(cleanup)
+
+
 async def _resolve_title(tmdb_id: int):
     tmdb_id = int(tmdb_id)
     cached = _title_cache.get(tmdb_id)
     if cached and _fresh(cached[0], TITLE_TTL_SECONDS):
+        _schedule_all_seasons(tmdb_id, cached[1])
         return cached[1], cached[2], cached[3]
 
     persisted = await asyncio.to_thread(_load_persisted_title, _db, tmdb_id)
     if persisted:
         title, base, path = persisted
         _cache_title(tmdb_id, title, base, path)
+        _schedule_all_seasons(tmdb_id, title)
         return title, base, path
 
     task = _inflight_titles.get(tmdb_id)
@@ -203,6 +337,7 @@ async def _resolve_title(tmdb_id: int):
         title, base, path = result
         _cache_title(tmdb_id, title, base, path)
         await asyncio.to_thread(_persist_title, _db, tmdb_id, title, base, path)
+        _schedule_all_seasons(tmdb_id, title)
         return title, base, path
     return None
 
@@ -234,7 +369,12 @@ async def _resolve_season(tmdb_id: int, season_number: int):
                 follow_redirects=True,
                 limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
             ) as client:
-                return await sc._get_season(client, base, path, key[1])
+                loaded = await sc._get_season(client, base, path, key[1])
+                if not loaded:
+                    return loaded
+                enriched = dict(loaded)
+                enriched["__flixit_sc_base"] = base
+                return enriched
         task = asyncio.create_task(fetch_one())
         _inflight_seasons[key] = task
     try:
@@ -250,7 +390,10 @@ async def _resolve_season(tmdb_id: int, season_number: int):
 
 
 def _episodes_payload(tmdb_id: int, season_number: int, loaded: dict) -> dict:
-    episodes = sc._episodes_from_loaded(loaded or {}, int(season_number))
+    cache_row = _title_cache.get(int(tmdb_id))
+    cached_base = cache_row[2] if cache_row else ""
+    base = str((loaded or {}).get("__flixit_sc_base") or cached_base or sc._working_base or "")
+    episodes = _episodes_from_loaded(loaded or {}, int(season_number), base)
     rows = []
     for row in episodes:
         number = int(row.get("episode_number") or 0)
@@ -281,6 +424,8 @@ def _episodes_payload(tmdb_id: int, season_number: int, loaded: dict) -> dict:
         "snapshot_source": "streamingcommunity_loadedSeason_direct",
         "validation_pending_count": 0,
         "pending_recheck_seconds": 0,
+        "episode_artwork_source": "streamingcommunity_episode_images",
+        "episode_artwork_cdn": _cdn_base(base),
     }
 
 
@@ -303,11 +448,11 @@ def install_sc_direct_detail_v18(app, db) -> bool:
     async def direct_sc_seasons(tmdb_id: int):
         hit = await _resolve_title(int(tmdb_id))
         if not hit:
-            # Use only an already-indexed SC snapshot as fallback, never TMDB or VixSrc.
             cached = sc._season_payload(int(tmdb_id))
             return {**cached, "policy": POLICY_VERSION, "direct_sc_ready": False}
         title, _base, _path = hit
         seasons = sc._season_descriptors(title)
+        _schedule_all_seasons(int(tmdb_id), title)
         return {
             "tmdbId": int(tmdb_id),
             "seasons": seasons,
@@ -316,6 +461,7 @@ def install_sc_direct_detail_v18(app, db) -> bool:
             "direct_sc_ready": True,
             "policy": POLICY_VERSION,
             "source": "StreamingCommunity props.title.seasons",
+            "prewarm_all_seasons": True,
         }
 
     @router.get(SEASON_PATH, tags=["catalog"])
@@ -323,7 +469,6 @@ def install_sc_direct_detail_v18(app, db) -> bool:
         loaded = await _resolve_season(int(tmdb_id), int(season_number))
         if loaded:
             return _episodes_payload(int(tmdb_id), int(season_number), loaded)
-        # SC-only fallback: background v17 snapshot, if one already exists.
         cached = sc._episodes_payload(int(tmdb_id), int(season_number))
         if cached.get("episodes"):
             return {
@@ -341,7 +486,7 @@ def install_sc_direct_detail_v18(app, db) -> bool:
             "italian_audio_policy_version": POLICY_VERSION,
             "snapshot_source": "streamingcommunity_direct_unavailable",
             "validation_pending_count": 0,
-            "pending_recheck_seconds": 2,
+            "pending_recheck_seconds": 1,
         }
 
     @router.get(STATUS_PATH, tags=["catalog"])
@@ -351,8 +496,10 @@ def install_sc_direct_detail_v18(app, db) -> bool:
             "source": "StreamingCommunity data-page",
             "title_source": "props.title.seasons",
             "episode_source": "props.loadedSeason.episodes",
+            "episode_artwork": "https://cdn.<sc-domain>/images/<filename>",
             "cached_titles": len(_title_cache),
             "cached_seasons": len(_season_cache),
+            "prewarming_titles": len(_prewarm_tasks),
             "vixsrc_role": "playback_only",
             "tmdb_role": "identity_metadata_only",
         }

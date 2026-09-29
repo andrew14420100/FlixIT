@@ -22,6 +22,16 @@ function isHlsUrl(value: string) {
   return /\.m3u8(?:$|[?#])/i.test(value || "") || /\/hls\//i.test(value || "");
 }
 
+function isScEmbed(value: string) {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    return (host === "vixcloud.co" || host.endsWith(".vixcloud.co")) && /^\/embed\/\d+\/?$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 function routeIdentity() {
   if (typeof window === "undefined") return null;
   const match = window.location.pathname.match(/\/browse\/(movie|tv)\/(\d+)/i);
@@ -31,11 +41,9 @@ function routeIdentity() {
 }
 
 /**
- * Unified native trailer player.
- *
- * A direct MP4/HLS URL is played as-is. Any legacy key/sentinel is treated only
- * as a request to resolve the current DetailPage title through FLIX-IT's central
- * trailer endpoint. There is deliberately no YouTube iframe or YouTube fallback.
+ * Unified trailer player.
+ * Direct SC MP4/HLS is played natively. Explicit SC Vixcloud trailer embeds are
+ * shown as their published iframe. YouTube is deliberately not supported here.
  */
 export default function TrailerPlayer({
   videoKey,
@@ -62,6 +70,7 @@ export default function TrailerPlayer({
   );
   const playbackKey = propDirect ? videoKey : resolved.url;
   const direct = isDirectUrl(playbackKey || "");
+  const scEmbed = !!playbackKey && isScEmbed(playbackKey);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -71,13 +80,13 @@ export default function TrailerPlayer({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || scEmbed) return;
     if (playing) video.play().catch(() => undefined);
     else video.pause();
-  }, [playing, playbackKey]);
+  }, [playing, playbackKey, scEmbed]);
 
   useEffect(() => {
-    if (!direct || !playbackKey) return;
+    if (!direct || !playbackKey || scEmbed) return;
     const video = videoRef.current;
     if (!video) return;
 
@@ -124,16 +133,10 @@ export default function TrailerPlayer({
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (!data?.fatal) return;
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          try {
-            hls.startLoad();
-            return;
-          } catch {}
+          try { hls.startLoad(); return; } catch {}
         }
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-          try {
-            hls.recoverMediaError();
-            return;
-          } catch {}
+          try { hls.recoverMediaError(); return; } catch {}
         }
         onError?.(500);
       });
@@ -156,19 +159,29 @@ export default function TrailerPlayer({
       video.removeAttribute("src");
       video.load();
     };
-  }, [direct, playbackKey, playing, onError]);
+  }, [direct, playbackKey, playing, onError, scEmbed]);
 
   if (!playbackKey || !direct) return null;
+
+  if (scEmbed) {
+    return (
+      <div data-testid="trailer-player" style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#000" }}>
+        <iframe
+          src={playbackKey}
+          title="Trailer StreamingCommunity"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+          referrerPolicy="origin-when-cross-origin"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0, background: "#000" }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
       data-testid="trailer-player"
-      style={{
-        position: "absolute",
-        inset: 0,
-        overflow: "hidden",
-        background: "#000",
-      }}
+      style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#000" }}
     >
       <video
         ref={videoRef}
@@ -180,9 +193,7 @@ export default function TrailerPlayer({
         disablePictureInPicture
         onPlaying={onPlaying}
         onEnded={onEnded}
-        onError={() => {
-          if (!hlsRef.current) onError?.(500);
-        }}
+        onError={() => { if (!hlsRef.current) onError?.(500); }}
         style={{
           position: "absolute",
           top: "50%",
