@@ -1,18 +1,20 @@
 """Final fail-closed guard for Italian TV episode audio.
 
 A provider request made with ``lang=it`` can echo locale/routing information in
-JSON or URLs even while the media audio is original/English.  The public
+JSON or URLs even while the media audio is original/English. The public
 catalogue therefore accepts an episode only when an audio/dub/voice track carries
-an explicit Italian language marker.  Generic page/request locale never counts.
+an explicit Italian language marker. Generic page/request locale never counts.
 
-This module is installed after the legacy Italian policy.  It replaces the hint
+Installed after the legacy Italian policy, this module replaces the hint
 extractor, wraps the final source inspector, bumps the policy version (invalidating
-older Mongo snapshots/verdicts), and exposes an explicit evidence bit that the
-frontend can also require as a last line of defence.
+older Mongo snapshots/verdicts), persists the final v9 verdict and exposes an
+explicit evidence bit that the frontend also requires.
 """
 from __future__ import annotations
 
+import asyncio
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 POLICY_VERSION = "strict-explicit-it-v9-confirmed-audio-track-only"
@@ -47,12 +49,7 @@ def _leaf_strings(value: Any, limit: int = 40) -> list[str]:
 
 
 def _strict_language_hints_factory(policy_module):
-    """Return only language evidence that belongs to an audio context.
-
-    Top-level ``lang``, ``language`` and ``locale`` are deliberately ignored.
-    Generic stream/track arrays are neutral until a child identifies itself as
-    audio/dub/voice via a key or ``type/kind/role`` marker.
-    """
+    """Return only language evidence that belongs to an audio context."""
 
     def strict_language_hints(payload: dict) -> list[str]:
         hints: list[str] = []
@@ -60,8 +57,8 @@ def _strict_language_hints_factory(policy_module):
         def add(value: Any) -> None:
             for item in _leaf_strings(value):
                 text = str(item).strip()
-                # URLs frequently contain ?lang=it for the UI/player request.
-                # A URL itself is never audio-language evidence.
+                # URLs often carry ?lang=it only because the interface/player was
+                # requested in Italian. A URL is never audio-language evidence.
                 if not text or "://" in text or text.startswith("/"):
                     continue
                 if text not in hints:
@@ -94,8 +91,6 @@ def _strict_language_hints_factory(policy_module):
                     next_context = node_audio or is_audio_key
 
                     if is_audio_key:
-                        # Explicit fields such as audio_language, dubbing,
-                        # audioTracks etc. are allowed to contribute evidence.
                         add(value)
                     elif node_audio and key in {
                         "lang", "language", "locale", "name", "label", "title", "code"
@@ -129,6 +124,7 @@ def install_strict_audio_evidence(app=None) -> bool:
         return True
 
     try:
+        import server_core as core
         import services.italian_episode_policy as episode_policy
         import services.strict_italian_tv as strict_tv
         import services.streamportal_availability as availability
@@ -141,9 +137,12 @@ def install_strict_audio_evidence(app=None) -> bool:
     strict_tv.STRICT_AVAILABILITY_POLICY_VERSION = AVAILABILITY_VERSION
     availability.POLICY_VERSION = AVAILABILITY_VERSION
 
-    # Wrap the *final* inspector as well.  The legacy implementation used to
-    # interpret "stream exists + no explicit English" as Italian.  Unknown audio
-    # must instead fail closed.
+    persistent = None
+    try:
+        persistent = core.db["italian_episode_audio_cache"]
+    except Exception:
+        persistent = None
+
     current_inspect = episode_policy._inspect_source
     if not getattr(current_inspect, "_flixit_confirmed_audio_v9", False):
         async def confirmed_audio_inspect(tmdb_id: int, season: int, episode: int):
@@ -174,18 +173,60 @@ def install_strict_audio_evidence(app=None) -> bool:
             out["italian_audio_evidence_explicit"] = bool(explicit_it and source_available)
             out["italian_audio_policy_version"] = POLICY_VERSION
 
+            key = (int(tmdb_id), int(season), int(episode))
             try:
-                key = (int(tmdb_id), int(season), int(episode))
                 episode_policy._cache[key] = (time.monotonic() + ttl, dict(out))
             except Exception:
                 pass
+
+            # strict_italian_tv persists its intermediate result before this final
+            # guard runs. Rewrite the same record with the authoritative v9
+            # payload so startup snapshot seeding is immediately usable too.
+            if persistent is not None:
+                try:
+                    now = datetime.now(timezone.utc)
+                    await asyncio.to_thread(
+                        persistent.update_one,
+                        {"tmdbId": key[0], "season": key[1], "episode": key[2]},
+                        {"$set": {
+                            "tmdbId": key[0],
+                            "season": key[1],
+                            "episode": key[2],
+                            "result": dict(out),
+                            "policy": POLICY_VERSION,
+                            "checked_at": now.isoformat(),
+                            "expires_at": (now + timedelta(seconds=ttl)).isoformat(),
+                        }},
+                        True,
+                    )
+                except TypeError:
+                    # PyMongo's upsert is keyword-only in some versions.
+                    try:
+                        def persist_keyword():
+                            persistent.update_one(
+                                {"tmdbId": key[0], "season": key[1], "episode": key[2]},
+                                {"$set": {
+                                    "tmdbId": key[0],
+                                    "season": key[1],
+                                    "episode": key[2],
+                                    "result": dict(out),
+                                    "policy": POLICY_VERSION,
+                                    "checked_at": now.isoformat(),
+                                    "expires_at": (now + timedelta(seconds=ttl)).isoformat(),
+                                }},
+                                upsert=True,
+                            )
+                        await asyncio.to_thread(persist_keyword)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
             return out
 
         confirmed_audio_inspect._flixit_confirmed_audio_v9 = True
         confirmed_audio_inspect._original = current_inspect
         episode_policy._inspect_source = confirmed_audio_inspect
 
-    # Anything produced by v8 or the legacy policy must be recomputed under v9.
     try:
         episode_policy._cache.clear()
     except Exception:
@@ -200,6 +241,7 @@ def install_strict_audio_evidence(app=None) -> bool:
                 "generic_lang_locale_is_not_audio_evidence": True,
                 "unknown_audio_is_italian": False,
                 "frontend_evidence_bit": "italian_audio_evidence_explicit",
+                "persistent_final_verdict": True,
             }
     except Exception:
         pass
