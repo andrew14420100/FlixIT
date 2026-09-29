@@ -1,10 +1,4 @@
-"""FlixIT backend startup hooks.
-
-Premium 3/6/12-month prices are monthly rates in the admin UI. Legacy plans may
-still have that monthly value stored directly in ``price_cents``; the migration
-converts those old records to the one-off checkout total and stores the original
-monthly rate as metadata.
-"""
+"""FlixIT backend startup hooks."""
 
 import os
 
@@ -72,23 +66,19 @@ def _install_ads_registration_hook():
         except Exception as exc:
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # v16 remains the only Italian availability authority, but its Mongo
-        # hydration is scheduled after startup so a slow Atlas read can never
-        # prevent FastAPI (and therefore the website shell) from becoming ready.
-        italian_index_installed = False
+        # v17 follows StreamingCommunity's own catalogue hierarchy. It registers
+        # routes synchronously but never reads Mongo or contacts SC in this path;
+        # hydration/crawling starts only after FastAPI startup.
+        sc_index_installed = False
         try:
-            from services.italian_media_index_v16_fastboot import (
-                install_italian_media_index_v16_fastboot,
-            )
-            italian_index_installed = bool(
-                install_italian_media_index_v16_fastboot(app, db)
-            )
+            from services.sc_native_catalog_v17 import install_sc_native_catalog_v17
+            sc_index_installed = bool(install_sc_native_catalog_v17(app, db))
         except Exception as exc:
-            print(f"[italian-index-v16] fastboot registration skipped: {exc}")
+            print(f"[sc-native-catalog-v17] registration skipped: {exc}")
 
         async def install_post_registration_guards():
-            # Track selection stays separate from availability. Availability comes
-            # only from the prebuilt v16 index once its persisted generation loads.
+            # Audio-track preference belongs only to playback. Catalogue
+            # membership comes from StreamingCommunity v17, never from VixSrc.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -101,18 +91,15 @@ def _install_ads_registration_hook():
             except Exception as exc:
                 print(f"[logo-integrity] registration skipped: {exc}")
 
-            # Fallback only if registration ordering changes in a future refactor.
             try:
-                installed = italian_index_installed or bool(
-                    getattr(app.state, "flixit_italian_media_index_v16_fastboot", False)
+                installed = sc_index_installed or bool(
+                    getattr(app.state, "flixit_sc_native_catalog_v17", False)
                 )
                 if not installed:
-                    from services.italian_media_index_v16_fastboot import (
-                        install_italian_media_index_v16_fastboot,
-                    )
-                    install_italian_media_index_v16_fastboot(app, db)
+                    from services.sc_native_catalog_v17 import install_sc_native_catalog_v17
+                    install_sc_native_catalog_v17(app, db)
             except Exception as exc:
-                print(f"[italian-index-v16] startup fallback skipped: {exc}")
+                print(f"[sc-native-catalog-v17] startup fallback skipped: {exc}")
 
         app.add_event_handler("startup", install_post_registration_guards)
         return result
