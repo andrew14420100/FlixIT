@@ -3,7 +3,7 @@
  * Runtime integrity guard installed before React/router code.
  *
  * - invalidates season payloads produced by old language policies once;
- * - accepts only v10 VixSrc Italian-episode-catalog verdicts;
+ * - accepts only v11 direct VixSrc Italian-episode-catalog verdicts;
  * - removes account playback residue for guest sessions;
  * - invalidates fabricated legacy episode-completion history;
  * - removes the old truncated Home-v8 cache after the first upgraded bundle;
@@ -11,10 +11,10 @@
  *   player coalescer cannot pin a temporary source failure for two minutes.
  */
 
-const FLAG = "__flixitRuntimeIntegrityV10";
-const POLICY = "strict-it-v10-vixsrc-episode-catalog";
+const FLAG = "__flixitRuntimeIntegrityV11";
+const POLICY = "strict-it-v11-direct-vixsrc-episode-catalog";
 const EPISODE_SCHEMA_KEY = "flixit-episode-audio-schema";
-const EPISODE_SCHEMA = "10";
+const EPISODE_SCHEMA = "11";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
 const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
