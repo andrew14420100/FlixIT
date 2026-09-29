@@ -57,9 +57,6 @@ def install_strict_italian_tv_policy(app) -> bool:
     except Exception:
         return False
 
-    # The strict wrapper used to patch helper functions without guaranteeing that
-    # the actual public season route had been installed. Install it explicitly
-    # first, then patch the globals it reads at request time.
     try:
         episode_policy.install_italian_episode_policy(app)
     except Exception:
@@ -74,16 +71,11 @@ def install_strict_italian_tv_policy(app) -> bool:
     except Exception:
         pass
 
-    # Never fill missing Italian episode text from en-US. If Italian metadata is
-    # missing the frontend shows its neutral "Episodio N" fallback instead.
     async def no_english_episode_map(_tmdb_id: int, _season_number: int):
         return {}
 
     episode_policy._english_episode_map = no_english_episode_map
 
-    # Title-level catalogue checks must also fail closed. The old helper returned
-    # True when the lang=it catalogue had not loaded yet, which could temporarily
-    # expose English/unverified titles after a restart.
     def strict_is_on_vixsrc(media_type: str, tmdb_id: int) -> bool:
         kind = "tv" if str(media_type or "").lower() == "tv" else "movie"
         try:
@@ -100,8 +92,6 @@ def install_strict_italian_tv_policy(app) -> bool:
 
     core.is_on_vixsrc = strict_is_on_vixsrc
 
-    # Persist per-episode language decisions. This is deliberately separate from
-    # source URLs: only the language/availability verdict is stored.
     persistent = None
     try:
         persistent = core.db["italian_episode_audio_cache"]
@@ -243,16 +233,14 @@ def install_strict_italian_tv_policy(app) -> bool:
     except Exception:
         pass
 
-    # Guaranteed runtime registration path for the SC-direct Detail routes.
-    # services.__init__ always calls this policy from premium registration, while
-    # sitecustomize is not guaranteed to execute in every Emergent launch mode.
-    # Install v18 LAST so its /seasons and /season/{n} handlers replace the older
-    # language-probe routes and /api/public/sc-direct/status always exists.
+    # Register SC direct routes on THIS FastAPI app instance. The per-app runtime
+    # registrar deliberately avoids process-global installer flags, which can be
+    # wrong under reload/multi-import launch modes.
     try:
-        from services.sc_direct_detail_v18 import install_sc_direct_detail_v18
-        install_sc_direct_detail_v18(app, core.db)
+        from services.sc_direct_detail_runtime import install_sc_direct_detail_runtime
+        install_sc_direct_detail_runtime(app, core.db)
     except Exception as exc:
-        print(f"[sc-direct-detail-v18] guaranteed registration skipped: {exc}")
+        print(f"[sc-direct-detail-runtime] guaranteed registration skipped: {exc}")
 
     try:
         app.state.flixit_strict_italian_tv_policy = {
@@ -263,7 +251,7 @@ def install_strict_italian_tv_policy(app) -> bool:
             "catalog_rendering": "cached_lang_it_no_live_probe",
             "english_episode_metadata_fallback": False,
             "sc_direct_detail_v18_registered": bool(
-                getattr(app.state, "flixit_sc_direct_detail_v18", False)
+                getattr(app.state, "flixit_sc_direct_detail_runtime", False)
             ),
         }
     except Exception:
