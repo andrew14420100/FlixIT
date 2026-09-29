@@ -2,15 +2,14 @@
 /**
  * Runtime integrity guard installed before React/router code.
  *
- * v14 keeps guest/account cleanup and rejects cacheable player failures, but the
- * backend is now authoritative for TV-season visibility.  The browser must not
- * filter a season down to only already-verified positives: unknown episodes are
- * intentionally visible while Italian-audio validation runs in the background.
+ * v15 invalidates every pre-v15 episode cache because v14 intentionally allowed
+ * validation-pending rows to remain visible. The backend is authoritative for TV
+ * season membership; the browser only guards player failures and account state.
  */
 
-const FLAG = "__flixitRuntimeIntegrityV14";
+const FLAG = "__flixitRuntimeIntegrityV15";
 const EPISODE_SCHEMA_KEY = "flixit-episode-audio-schema";
-const EPISODE_SCHEMA = "14";
+const EPISODE_SCHEMA = "15";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
 const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
@@ -20,6 +19,7 @@ const OLD_EPISODE_PREFIXES = [
   "flixit:it-episodes-v12:",
   "flixit:it-episodes-v13:",
   "flixit:it-episodes-v14:",
+  "flixit:it-episodes-v15:",
 ];
 const PLAYER_RE = /^\/api\/player\/(?:movie\/\d+|tv\/\d+\/\d+\/\d+)\/?$/;
 
@@ -115,9 +115,8 @@ if (typeof window !== "undefined" && !(window as any)[FLAG]) {
       }
     }
 
-    // TV-season responses pass through unchanged.  The v14 backend route already
-    // hides definitive negatives and deliberately keeps validation-pending rows
-    // visible so the episode panel is never empty just because VixSrc is slow.
+    // TV-season responses pass through unchanged. v15 already applies the
+    // season-level Italian catalogue and explicit-audio policy server-side.
     return response;
   };
 }
