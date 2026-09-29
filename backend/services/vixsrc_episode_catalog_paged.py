@@ -1,8 +1,9 @@
 """Paged loader for VixSrc's Italian episode catalogue.
 
-Recent VixSrc responses may be Laravel-style paginated objects (`data`,
-`current_page`, `last_page`) while older deployments returned one JSON array.
-Fetch page 1 first, then load remaining pages concurrently with a bounded pool.
+VixSrc deployments have exposed this endpoint in two forms: a complete JSON
+array from the documented URL, and a Laravel-style paginated object (`data`,
+`current_page`, `last_page`). Request the documented URL first; only if it is
+paginated do we fetch the remaining pages concurrently with a bounded pool.
 Only a *complete* page set replaces the authoritative catalogue; partial network
 failures keep the last persisted snapshot instead of hiding valid episodes.
 """
@@ -83,9 +84,11 @@ def install_paged_episode_catalog(policy_module) -> bool:
                     follow_redirects=True,
                     headers=headers,
                 ) as client:
+                    # Try the exact documented URL first. On deployments that
+                    # still return the complete array, this is a single request.
                     first = await client.get(
                         policy_module.CATALOG_URL,
-                        params={"lang": "it", "page": 1},
+                        params={"lang": "it"},
                     )
                     if first.status_code != 200:
                         return bool(policy_module._catalog_keys)
@@ -99,8 +102,6 @@ def install_paged_episode_catalog(policy_module) -> bool:
                         current = 1
                         last = 1
 
-                    # Known clients cap this endpoint at 500 pages. If the server
-                    # reports anything larger, refuse to publish a truncated set.
                     if last < current or last > 500:
                         return bool(policy_module._catalog_keys)
 
