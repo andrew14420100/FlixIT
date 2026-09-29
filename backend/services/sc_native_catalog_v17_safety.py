@@ -1,11 +1,8 @@
-"""Safety patches for the SC-native v17 index.
-
-Kept separate so the core indexer remains readable while these migration/runtime
-protections can be regression-tested independently.
-"""
+"""Safety patches for the SC-native v17 index."""
 from __future__ import annotations
 
 import asyncio
+import time
 
 
 def install_sc_v17_safety() -> None:
@@ -29,8 +26,22 @@ def install_sc_v17_safety() -> None:
     base._get_title = get_title_with_type
 
     original_crawl_batch = base._crawl_batch
+    full_crawl_clock = {"completed": 0.0}
 
     async def crawl_batch_safe(db):
+        now = time.monotonic()
+        if base._catalog_complete:
+            if not full_crawl_clock["completed"]:
+                # A persisted completed catalogue was hydrated after this patch
+                # was installed. Do not immediately re-crawl the whole archive.
+                full_crawl_clock["completed"] = now
+                return 0, True
+            if now - full_crawl_clock["completed"] < base.FULL_REFRESH_SECONDS:
+                return 0, True
+            # The broad refresh window is due. Existing membership remains in
+            # memory while individual titles are refreshed; failures never erase it.
+            base._catalog_complete = False
+
         success, finished = await original_crawl_batch(db)
         if not finished:
             return success, finished
@@ -68,6 +79,7 @@ def install_sc_v17_safety() -> None:
                 pass
         else:
             base._catalog_complete = True
+            full_crawl_clock["completed"] = time.monotonic()
             try:
                 await asyncio.to_thread(
                     db[base.META_COLLECTION].update_one,
