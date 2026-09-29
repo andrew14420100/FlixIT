@@ -3,6 +3,8 @@ from __future__ import annotations
 import pathlib
 import sys
 
+from fastapi import FastAPI
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -55,6 +57,22 @@ def run() -> None:
     assert 'const POLICY = "sc-direct-detail-v18"' in frontend
     assert "sc-episodes-v18" in frontend
     assert "sc-seasons-v18" in frontend
+
+    # The installer must create the real FastAPI routes, including the diagnostic
+    # endpoint the deployment uses to verify v18 is active.
+    app = FastAPI()
+    direct._INSTALLED = False
+    direct._db = None
+    assert direct.install_sc_direct_detail_v18(app, object()) is True
+    paths = {getattr(route, "path", "") for route in app.router.routes}
+    assert direct.SEASONS_PATH in paths
+    assert direct.SEASON_PATH in paths
+    assert direct.STATUS_PATH in paths
+
+    # Emergent's guaranteed service-registration path must also install v18;
+    # sitecustomize is only a fallback and cannot be the sole registration path.
+    strict_source = (ROOT / "services/strict_italian_tv.py").read_text(encoding="utf-8")
+    assert "install_sc_direct_detail_v18(app, core.db)" in strict_source
 
     print("sc-direct-detail-v18: PASS")
 
