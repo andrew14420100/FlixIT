@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
- * FlixIT Detail Page - StreamingCommunity-native snapshots (v17).
+ * FlixIT Detail Page - StreamingCommunity direct snapshots (v18).
  *
- * The browser never checks language/provider availability. The backend returns
- * the exact seasons and loadedSeason.episodes already indexed from SC.
+ * The browser never checks VixSrc/provider availability. The backend mirrors
+ * SC's own public Detail flow: props.title.seasons and loadedSeason.episodes.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -13,9 +13,9 @@ const SEASONS_STALE_MS = 30 * 60 * 1000;
 const EPISODES_STALE_MS = 5 * 60 * 1000;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const BACKGROUND_SEASON_CONCURRENCY = 3;
-const POLICY = "sc-native-catalog-v17";
-const EPISODE_CACHE_PREFIX = "flixit:sc-episodes-v17:";
-const SEASON_CACHE_PREFIX = "flixit:sc-seasons-v17:";
+const POLICY = "sc-direct-detail-v18";
+const EPISODE_CACHE_PREFIX = "flixit:sc-episodes-v18:";
+const SEASON_CACHE_PREFIX = "flixit:sc-seasons-v18:";
 const seasonWarmInflight = new Map();
 
 async function getJson(path, signal) {
@@ -114,7 +114,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const seasonsCached = isScSeasonSnapshot(rawSeasonsCached?.data) ? rawSeasonsCached : null;
 
   const seasonsQuery = useQuery({
-    queryKey: ["dp-seasons-sc-v17", mediaId],
+    queryKey: ["dp-seasons-sc-v18", mediaId],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/seasons`, signal),
     enabled: !!mediaId && !!enabled,
     initialData: seasonsCached?.data,
@@ -159,7 +159,7 @@ export default function useEpisodes(mediaId, enabled, preferredSeason, active, p
   const episodeCached = isScEpisodeSnapshot(rawEpisodeCached?.data) ? rawEpisodeCached : null;
 
   const episodesQuery = useQuery({
-    queryKey: ["dp-season-episodes-sc-v17", mediaId, selected],
+    queryKey: ["dp-season-episodes-sc-v18", mediaId, selected],
     queryFn: ({ signal }) => getJson(`${API_URL}/api/public/tv/${mediaId}/season/${selected}`, signal),
     enabled: !!mediaId && !!selected && !!enabled,
     initialData: episodeCached?.data,
