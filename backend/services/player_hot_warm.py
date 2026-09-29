@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
 
@@ -104,6 +105,28 @@ def install_player_hot_warm(app, _db=None) -> bool:
         import player
         import server_core as core
 
+        # strict_italian_media has already hydrated all still-valid Mongo verdicts
+        # into memory. From this point onward card rendering must never perform a
+        # per-card Atlas lookup: unknown/expired movies fail closed until the
+        # background verifier refreshes them.
+        verifier = getattr(app.state, "flixit_movie_italian_verifier", None)
+        if verifier is not None and not getattr(verifier, "_flixit_memory_only_hot_path", False):
+            def memory_only_cached(tmdb_id):
+                try:
+                    tmdb_id = int(tmdb_id)
+                except Exception:
+                    return False
+                hit = verifier._memory.get(tmdb_id)
+                if not hit:
+                    return None
+                if hit[0] <= time.monotonic():
+                    verifier._memory.pop(tmdb_id, None)
+                    return None
+                return bool(hit[1])
+
+            verifier.cached = memory_only_cached
+            verifier._flixit_memory_only_hot_path = True
+
         async def one(target):
             media_type, tmdb_id, season, episode = target
             # By startup time strict_italian_media has patched player.resolve_stream,
@@ -128,6 +151,7 @@ def install_player_hot_warm(app, _db=None) -> bool:
             "targets": "hero_plus_first_five_rows",
             "concurrency": WARM_CONCURRENCY,
             "refresh_seconds": REFRESH_SECONDS,
+            "catalogue_checks": "memory_only",
         }
 
     app.add_event_handler("startup", startup)
