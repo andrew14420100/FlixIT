@@ -65,37 +65,28 @@ def _install_ads_registration_hook():
             register_admin_permissions(app, db, get_current_admin, log_admin_action)
         except Exception as exc:
             print(f"[admin-permissions] registration skipped: {exc}")
-        try:
-            from services.strict_italian_media import install_strict_italian_media
-            install_strict_italian_media(app, db)
-        except Exception as exc:
-            print(f"[strict-italian-media] registration skipped: {exc}")
+
+        # Player stream URLs can still request Italian as the preferred track,
+        # but availability itself is no longer inferred here or during a request.
         try:
             from services.player_hot_warm import install_player_hot_warm
             install_player_hot_warm(app, db)
         except Exception as exc:
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # Install v14 first so its helpers/caches stay available, then immediately
-        # replace its public season route with v15. v15 is therefore the final
-        # route before FastAPI starts accepting user requests.
-        episode_route_installed = False
+        # v16 is installed synchronously before FastAPI starts accepting requests.
+        # It hydrates the last complete Mongo generation immediately and replaces
+        # every older v10-v15 request-time season filter with one index-only route.
+        italian_index_installed = False
         try:
-            from services.episode_availability_v12 import install_episode_availability_v12
-            install_episode_availability_v12(app, db)
-            from services.strict_italian_episode_catalog_v15 import (
-                install_strict_italian_episode_catalog_v15,
-            )
-            episode_route_installed = bool(
-                install_strict_italian_episode_catalog_v15(app, db)
-            )
+            from services.italian_media_index_v16 import install_italian_media_index_v16
+            italian_index_installed = bool(install_italian_media_index_v16(app, db))
         except Exception as exc:
-            print(f"[episode-availability-v15] direct registration skipped: {exc}")
+            print(f"[italian-index-v16] direct registration skipped: {exc}")
 
         async def install_post_registration_guards():
-            # Player resolver itself requests VixSrc with lang=it. Keep the
-            # playlist-level guard as a final preference, but v15 does not treat
-            # that preference alone as proof of an Italian dub.
+            # This only influences which audio track the provider selects after an
+            # already-indexed title reaches the player. It is not availability proof.
             try:
                 from services.vixsrc_italian_audio import install_vixsrc_italian_audio
                 install_vixsrc_italian_audio()
@@ -108,27 +99,18 @@ def _install_ads_registration_hook():
             except Exception as exc:
                 print(f"[logo-integrity] registration skipped: {exc}")
 
-            # Refresh the complete Italian episode catalogue at startup. The
-            # persisted Mongo snapshot remains available immediately while this
-            # refresh runs, so user requests do not wait on the provider.
+            # Normally install_italian_media_index_v16 already registered its
+            # startup worker. This fallback exists only if registration ordering
+            # changes in a future backend refactor.
             try:
-                from services.strict_italian_episode_catalog_v15 import (
-                    ensure_catalog_warm,
-                    install_strict_italian_episode_catalog_v15,
-                )
-                installed = episode_route_installed or bool(
-                    getattr(app.state, "flixit_episode_availability_v15", False)
+                installed = italian_index_installed or bool(
+                    getattr(app.state, "flixit_italian_media_index_v16", False)
                 )
                 if not installed:
-                    installed = bool(
-                        install_strict_italian_episode_catalog_v15(app, db)
-                    )
-                if installed:
-                    await ensure_catalog_warm(force=False)
-                    from services.episode_prewarm_launcher import launch_episode_prewarm
-                    launch_episode_prewarm(app, db)
+                    from services.italian_media_index_v16 import install_italian_media_index_v16
+                    install_italian_media_index_v16(app, db)
             except Exception as exc:
-                print(f"[episode-availability-v15] prewarm skipped: {exc}")
+                print(f"[italian-index-v16] startup fallback skipped: {exc}")
 
         app.add_event_handler("startup", install_post_registration_guards)
         return result
