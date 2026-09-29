@@ -52,3 +52,5 @@ jobs:
         run: python -m compileall -q backend
       - name: Verify Italian episode catalog policy
         run: python backend/tests/test_strict_audio_evidence_v10.py
+      - name: Verify direct v11 episode route
+        run: python backend/tests/test_episode_route_v11_static.py
