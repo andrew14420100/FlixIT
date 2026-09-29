@@ -23,7 +23,7 @@ function warmUrl(value: any, high = false) {
   warmedUrls.add(src);
   const image = new Image();
   image.decoding = "async";
-  image.fetchPriority = high ? "high" : "auto";
+  (image as any).fetchPriority = high ? "high" : "auto";
   image.src = src;
   bootImageWarmers.push(image);
   if (bootImageWarmers.length > 80) bootImageWarmers.splice(0, bootImageWarmers.length - 80);
