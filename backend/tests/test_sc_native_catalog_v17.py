@@ -1,4 +1,4 @@
-"""Regression tests for the StreamingCommunity-native v17 catalogue."""
+"""Regression tests for the StreamingCommunity-native v17 background catalogue."""
 from __future__ import annotations
 
 import html
@@ -29,8 +29,6 @@ def run():
             "id": 991,
             "name": "Miraculous - Le storie di Ladybug e Chat Noir",
             "tmdb_id": 65334,
-            # Intentionally omit `type`: public SC clients determine TV-ness
-            # from seasons/preview metadata, so the v17 safety layer must cope.
             "seasons_count": 6,
             "seasons": [
                 {"number": 1, "title_id": 991},
@@ -48,8 +46,6 @@ def run():
             "episodes": [
                 {"id": 1001, "number": 1, "name": "Episodio 1", "duration": 22},
                 {"id": 1018, "number": 18, "name": "Episodio 18", "duration": 22},
-                # 19, 20, 21 are deliberately absent: SC membership, not a
-                # hard-coded language exception, must decide their visibility.
                 {"id": 1022, "number": 22, "name": "Episodio 22", "duration": 22},
             ]
         }
@@ -68,18 +64,20 @@ def run():
     check('/api/list/' not in source and 'VIXSRC_BASE' not in source, "v17 still derives catalogue membership from VixSrc")
     check('props.loadedSeason.episodes' in source, "v17 no longer documents SC loadedSeason as episode authority")
     check('props.title.seasons' in source, "v17 no longer documents SC seasons as authority")
-    check('request_time_provider_checks": False' in source, "request-time provider checks reappeared")
+    check('request_time_provider_checks": False' in source, "request-time provider checks reappeared in v17 background index")
 
     handler = source.split("async def sc_tv_episodes", 1)[1].split("async def status_payload", 1)[0]
     check("_get_title" not in handler and "httpx" not in handler and "client.get" not in handler,
-          "season request path performs upstream work")
+          "v17 cached season request path performs upstream work")
 
-    check("install_sc_native_catalog_v17" in sitecustomize, "v17 is not installed")
+    check("install_sc_native_catalog_v17" in sitecustomize, "v17 background index is not installed")
+    check("install_sc_direct_detail_v18" in sitecustomize, "v18 direct SC Detail path is not installed")
     check("install_italian_media_index_v16_fastboot" not in sitecustomize,
           "old v16 VixSrc catalogue is still registered as authority")
-    check('POLICY = "sc-native-catalog-v17"' in frontend, "frontend does not require SC v17 snapshots")
-    check("flixit:it-episodes-v16:" not in frontend, "old v16 episode cache can leak into v17")
-    check("flixit:sc-seasons-v17:" in frontend, "SC season cache is not versioned")
+    check('POLICY = "sc-direct-detail-v18"' in frontend, "frontend does not require SC direct v18 snapshots")
+    check("flixit:it-episodes-v16:" not in frontend, "old v16 episode cache can leak into SC Detail")
+    check("flixit:sc-seasons-v18:" in frontend, "SC direct season cache is not versioned")
+    check("flixit:sc-episodes-v18:" in frontend, "SC direct episode cache is not versioned")
     check('title = {**title, "type": "tv"}' in safety, "TV inference safety is missing")
     check("indexed_count < minimum" in safety, "failed SC crawl can still become authoritative")
 
