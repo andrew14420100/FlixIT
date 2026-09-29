@@ -1,11 +1,18 @@
+"""Standalone smoke test for the v9 Italian-audio evidence policy.
+
+This file deliberately uses only the Python standard library so the CI quality
+gate can validate the critical fail-closed rule without importing the full
+backend or installing a test framework.
+"""
 import importlib.util
 from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "services" / "strict_audio_evidence.py"
 spec = importlib.util.spec_from_file_location("strict_audio_evidence_v9_test", MODULE_PATH)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"Cannot load policy module: {MODULE_PATH}")
 policy = importlib.util.module_from_spec(spec)
-assert spec and spec.loader
 spec.loader.exec_module(policy)
 
 
@@ -29,32 +36,45 @@ def hints(payload):
     return policy._strict_language_hints_factory(FakeEpisodePolicy)(payload)
 
 
-def test_generic_request_locale_is_not_audio_evidence():
-    payload = {
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+def run():
+    generic = {
         "lang": "it",
         "locale": "it-IT",
         "url": "https://player.invalid/embed/123?lang=it&locale=it-IT",
         "data": {"language": "it"},
     }
-    assert hints(payload) == []
+    detected = hints(generic)
+    check(detected == [], f"generic locale leaked into audio evidence: {detected!r}")
 
-
-def test_explicit_audio_track_italian_is_accepted():
     detected = hints({"tracks": [{"type": "audio", "language": "it"}]})
-    assert "it" in detected
-    assert policy._explicit_italian(FakeEpisodePolicy, detected) is True
+    check("it" in detected, f"explicit audio track was not detected: {detected!r}")
+    check(policy._explicit_italian(FakeEpisodePolicy, detected) is True, "Italian audio track rejected")
 
-
-def test_explicit_audio_language_field_is_accepted():
     detected = hints({"audio_language": "it-IT"})
-    assert "it-IT" in detected
-    assert policy._explicit_italian(FakeEpisodePolicy, detected) is True
+    check("it-IT" in detected, f"audio_language was not detected: {detected!r}")
+    check(policy._explicit_italian(FakeEpisodePolicy, detected) is True, "audio_language=it-IT rejected")
 
-
-def test_original_audio_is_not_italian():
     detected = hints({"audio": {"language": "en", "label": "English"}})
-    assert policy._explicit_italian(FakeEpisodePolicy, detected) is False
+    check(policy._explicit_italian(FakeEpisodePolicy, detected) is False, "English audio accepted as Italian")
+
+    check(policy._explicit_italian(FakeEpisodePolicy, []) is False, "missing audio evidence did not fail closed")
+
+    mixed = hints({"audio": {"language": "it", "alternate": "en"}})
+    check(policy._explicit_italian(FakeEpisodePolicy, mixed) is False, f"mixed/ambiguous audio incorrectly accepted: {mixed!r}")
+
+    print("strict-audio-evidence-v9: PASS")
 
 
-def test_missing_audio_evidence_fails_closed():
-    assert policy._explicit_italian(FakeEpisodePolicy, []) is False
+# pytest can still collect this if desired, but CI executes the deterministic
+# standalone path below.
+def test_policy_smoke():
+    run()
+
+
+if __name__ == "__main__":
+    run()
