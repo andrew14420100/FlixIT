@@ -71,6 +71,8 @@ def _install_ads_registration_hook():
         # hydration/crawling starts only after FastAPI startup.
         sc_index_installed = False
         try:
+            from services.sc_native_catalog_v17_safety import install_sc_v17_safety
+            install_sc_v17_safety()
             from services.sc_native_catalog_v17 import install_sc_native_catalog_v17
             sc_index_installed = bool(install_sc_native_catalog_v17(app, db))
         except Exception as exc:
@@ -96,6 +98,8 @@ def _install_ads_registration_hook():
                     getattr(app.state, "flixit_sc_native_catalog_v17", False)
                 )
                 if not installed:
+                    from services.sc_native_catalog_v17_safety import install_sc_v17_safety
+                    install_sc_v17_safety()
                     from services.sc_native_catalog_v17 import install_sc_native_catalog_v17
                     install_sc_native_catalog_v17(app, db)
             except Exception as exc:
