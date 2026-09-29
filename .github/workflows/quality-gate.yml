@@ -52,9 +52,7 @@ jobs:
         run: python -m compileall -q backend
       - name: Install minimal test dependencies
         run: python -m pip install -q httpx fastapi
-      - name: Verify legacy catalogue parser remains valid
+      - name: Verify legacy parser helpers remain valid
         run: python backend/tests/test_strict_audio_evidence_v10.py
-      - name: Verify final v16 preindexed Italian media architecture
-        run: python backend/tests/test_italian_media_index_v16.py
-      - name: Verify v16 cannot block backend startup
-        run: python backend/tests/test_v16_fast_start.py
+      - name: Verify StreamingCommunity-native catalogue v17
+        run: python backend/tests/test_sc_native_catalog_v17.py
