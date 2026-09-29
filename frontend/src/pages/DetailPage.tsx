@@ -21,7 +21,7 @@ import DetailSimilar from "./detail/DetailSimilar";
 import { API_URL, detailTabsFor, warmPlayback } from "./detail/detailUtils";
 import "./detail/detail-page.css";
 
-const AVAILABILITY_CACHE_PREFIX = "flixit:availability:v1:";
+const AVAILABILITY_CACHE_PREFIX = "flixit:availability:v2-strict-it:";
 const AVAILABILITY_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 export async function loader() {
@@ -103,8 +103,7 @@ export function Component() {
         writeAvailability(typeSlug, mediaId, next);
         setItalianAvailability(next);
       } catch {
-        // Availability is synchronization data, never a reason to replace an
-        // already-rendered Detail page with a loading state on transient errors.
+        // Availability sync never replaces an already-rendered page on a transient error.
       } finally {
         running = false;
       }
@@ -142,6 +141,16 @@ export function Component() {
     () => warmPlayback(typeSlug, mediaId, data.season, data.episode),
     [typeSlug, mediaId, data.season, data.episode]
   );
+
+  // Do not wait for a hover/click. As soon as Detail is usable, resolve the
+  // exact movie/episode in the background. The Watch route then joins the same
+  // in-flight request or consumes the warmed result immediately.
+  useEffect(() => {
+    if (!validType || !mediaId || !data.detail || italianAvailability !== "available") return;
+    const timer = window.setTimeout(() => { void warm(); }, 80);
+    return () => window.clearTimeout(timer);
+  }, [validType, mediaId, data.detail, italianAvailability, warm]);
+
   const goPlay = useCallback(() => {
     if (italianAvailability !== "available") return;
     warm();
@@ -233,37 +242,19 @@ export function Component() {
         ) : null}
 
         {activeTab === "trailers" ? (
-          <section
-            className="dp-panel"
-            role="tabpanel"
-            id="dp-panel-trailers"
-            aria-labelledby="dp-tab-trailers"
-            data-testid="detail-panel-trailers"
-          >
+          <section className="dp-panel" role="tabpanel" id="dp-panel-trailers" aria-labelledby="dp-tab-trailers" data-testid="detail-panel-trailers">
             <DetailTrailers data={data} />
           </section>
         ) : null}
 
         {activeTab === "download" ? (
-          <section
-            className="dp-panel"
-            role="tabpanel"
-            id="dp-panel-download"
-            aria-labelledby="dp-tab-download"
-            data-testid="detail-panel-download"
-          >
+          <section className="dp-panel" role="tabpanel" id="dp-panel-download" aria-labelledby="dp-tab-download" data-testid="detail-panel-download">
             <DetailDownload />
           </section>
         ) : null}
 
         {activeTab === "similar" ? (
-          <section
-            className="dp-panel"
-            role="tabpanel"
-            id="dp-panel-similar"
-            aria-labelledby="dp-tab-similar"
-            data-testid="detail-panel-similar"
-          >
+          <section className="dp-panel" role="tabpanel" id="dp-panel-similar" aria-labelledby="dp-tab-similar" data-testid="detail-panel-similar">
             <DetailSimilar items={similar.items} loading={similar.loading} isTV={data.isTV} />
           </section>
         ) : null}
