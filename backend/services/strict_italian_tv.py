@@ -45,8 +45,25 @@ def _strict_episode_result(policy_module, value: Any):
     }
 
 
+def _ensure_sc_direct_runtime(app) -> bool:
+    """Attach SC-direct routes to this exact FastAPI app instance."""
+    try:
+        import server_core as core
+        from services.sc_direct_detail_runtime import install_sc_direct_detail_runtime
+        return bool(install_sc_direct_detail_runtime(app, core.db))
+    except Exception as exc:
+        print(f"[sc-direct-detail-runtime] guaranteed registration skipped: {exc}")
+        return False
+
+
 def install_strict_italian_tv_policy(app) -> bool:
     global _INSTALLED
+
+    # This MUST happen before the process-global early return. Emergent reloads
+    # can create a fresh FastAPI app while this module still has _INSTALLED=True.
+    # The runtime registrar is per-app and idempotent.
+    _ensure_sc_direct_runtime(app)
+
     if _INSTALLED:
         return True
 
@@ -233,14 +250,9 @@ def install_strict_italian_tv_policy(app) -> bool:
     except Exception:
         pass
 
-    # Register SC direct routes on THIS FastAPI app instance. The per-app runtime
-    # registrar deliberately avoids process-global installer flags, which can be
-    # wrong under reload/multi-import launch modes.
-    try:
-        from services.sc_direct_detail_runtime import install_sc_direct_detail_runtime
-        install_sc_direct_detail_runtime(app, core.db)
-    except Exception as exc:
-        print(f"[sc-direct-detail-runtime] guaranteed registration skipped: {exc}")
+    # Old route installers above may have replaced the season routes after the
+    # first per-app registration. Re-apply SC-direct LAST so it is authoritative.
+    _ensure_sc_direct_runtime(app)
 
     try:
         app.state.flixit_strict_italian_tv_policy = {
