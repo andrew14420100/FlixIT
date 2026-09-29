@@ -11,6 +11,7 @@ package may wrap the same function afterwards for trailers/artwork; the wrappers
 compose cleanly.
 """
 
+import asyncio
 import os
 
 
@@ -62,7 +63,6 @@ def _install_ads_registration_hook():
             from services.ads import register_ad_service
             register_ad_service(app, db, get_current_admin, log_admin_action)
         except Exception as exc:
-            # Advertising must never prevent the main streaming API from booting.
             print(f"[ads] registration skipped: {exc}")
         try:
             from services.manual_users import register_manual_user_service
@@ -74,34 +74,48 @@ def _install_ads_registration_hook():
                 log_admin_action,
             )
         except Exception as exc:
-            # Manual account management is additive and must not block boot.
             print(f"[manual-users] registration skipped: {exc}")
         try:
             from services.admin_permissions import register_admin_permissions
             register_admin_permissions(app, db, get_current_admin, log_admin_action)
         except Exception as exc:
-            # Permission hardening is additive; never prevent the API booting.
             print(f"[admin-permissions] registration skipped: {exc}")
         try:
             from services.strict_italian_media import install_strict_italian_media
             install_strict_italian_media(app, db)
         except Exception as exc:
-            # Strict language filtering is fail-closed in its own service, but a
-            # registration failure must never make the whole API unavailable.
             print(f"[strict-italian-media] registration skipped: {exc}")
         try:
             from services.player_hot_warm import install_player_hot_warm
             install_player_hot_warm(app, db)
         except Exception as exc:
-            # Playback warming is best effort only and never blocks API boot.
             print(f"[player-hot-warm] registration skipped: {exc}")
 
-        # These guards run after package/service registration has finished, so
-        # strict_italian_tv and the final public season route already exist.
         async def install_post_registration_guards():
+            # Direct VixSrc playback bypasses the iframe player, so preserve its
+            # documented Italian audio preference on the resolved master URL.
             try:
-                from services.strict_audio_evidence import install_strict_audio_evidence
+                from services.vixsrc_italian_audio import install_vixsrc_italian_audio
+                install_vixsrc_italian_audio()
+            except Exception as exc:
+                print(f"[vixsrc-italian-audio] registration skipped: {exc}")
+
+            try:
+                from services.strict_audio_evidence import (
+                    install_strict_audio_evidence,
+                    warm_italian_episode_catalog,
+                )
                 install_strict_audio_evidence(app)
+                # Load the provider's Italian episode catalogue before season
+                # snapshots begin their prewarm. A persisted catalogue is used
+                # immediately if the network refresh is temporarily slow.
+                try:
+                    await asyncio.wait_for(
+                        warm_italian_episode_catalog(),
+                        timeout=float(os.environ.get("VIXSRC_EPISODE_STARTUP_WARM_TIMEOUT", "40")),
+                    )
+                except Exception as exc:
+                    print(f"[strict-audio-evidence] catalog warm fallback: {exc}")
             except Exception as exc:
                 print(f"[strict-audio-evidence] registration skipped: {exc}")
             try:
