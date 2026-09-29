@@ -54,5 +54,5 @@ jobs:
         run: python -m pip install -q httpx fastapi
       - name: Verify legacy catalog parser still compiles
         run: python backend/tests/test_strict_audio_evidence_v10.py
-      - name: Verify v13 instant Italian episode policy
+      - name: Verify v14 metadata-first episode visibility
         run: python backend/tests/test_episode_availability_v12.py
