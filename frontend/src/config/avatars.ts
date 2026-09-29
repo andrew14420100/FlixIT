@@ -69,7 +69,7 @@ function scheduleVisibleCardWarm(data: any) {
   if ("requestIdleCallback" in window) {
     (window as any).requestIdleCallback(run, { timeout: 500 });
   } else {
-    window.setTimeout(run, 100);
+    (window as any).setTimeout(run, 100);
   }
 }
 
