@@ -6,6 +6,7 @@
  * - accepts only v9 explicit Italian-audio evidence from season APIs;
  * - removes account playback residue for guest sessions;
  * - invalidates fabricated legacy episode-completion history;
+ * - removes the old truncated Home-v8 cache after the first upgraded bundle;
  * - converts HTTP-200 player failures into non-cacheable errors so the global
  *   player coalescer cannot pin a temporary source failure for two minutes.
  */
@@ -14,6 +15,7 @@ const FLAG = "__flixitRuntimeIntegrityV9";
 const POLICY = "strict-explicit-it-v9-confirmed-audio-track-only";
 const COMPLETION_SCHEMA_KEY = "flixit-episode-completion-schema";
 const COMPLETION_SCHEMA = "2";
+const LEGACY_HOME_CACHE_KEY = "flix-home-bootstrap-v8-sc-logo-home-fixes";
 const OLD_EPISODE_PREFIXES = [
   "flixit:it-episodes-v2:",
   "flixit:it-episodes-v3-audio-evidence:",
@@ -35,6 +37,8 @@ function purgeLegacyAndGuestState() {
   }
 
   try {
+    window.localStorage.removeItem(LEGACY_HOME_CACHE_KEY);
+
     if (window.localStorage.getItem(COMPLETION_SCHEMA_KEY) !== COMPLETION_SCHEMA) {
       const removeCompletion: string[] = [];
       for (let index = 0; index < window.localStorage.length; index += 1) {
