@@ -4,61 +4,36 @@ import { useNavigate } from "react-router-dom";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import { MAIN_PATH } from "src/constant";
-import { useContinueWatching } from "src/hooks/useContinueWatching";
 import { episodeStillUrl } from "./useEpisodes";
 import { warmPlayback } from "./detailUtils";
 import "./detail-episodes.css";
 
-function localUserId() {
-  let id = localStorage.getItem("netflix_user_id");
-  if (!id) {
-    id = `user_${Math.random().toString(36).slice(2, 11)}`;
-    localStorage.setItem("netflix_user_id", id);
+function authenticatedProfileId() {
+  if (typeof window === "undefined") return null;
+  try {
+    const token = localStorage.getItem("user_token");
+    const userId = localStorage.getItem("netflix_user_id");
+    return token && userId ? userId : null;
+  } catch {
+    return null;
   }
-  return id;
 }
 
 function completionStorageKey(mediaId) {
-  return `flixit-completed-episodes:${localUserId()}:${mediaId}`;
+  const profileId = authenticatedProfileId();
+  return profileId ? `flixit-completed-episodes:${profileId}:${mediaId}` : null;
 }
 
 function readCompleted(mediaId) {
   if (typeof window === "undefined" || !mediaId) return new Set();
+  const key = completionStorageKey(mediaId);
+  if (!key) return new Set();
   try {
-    const parsed = JSON.parse(localStorage.getItem(completionStorageKey(mediaId)) || "[]");
+    const parsed = JSON.parse(localStorage.getItem(key) || "[]");
     return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
   } catch {
     return new Set();
   }
-}
-
-function writeCompleted(mediaId, completed, source = "episode-selection") {
-  try {
-    localStorage.setItem(completionStorageKey(mediaId), JSON.stringify(Array.from(completed)));
-    window.dispatchEvent(new CustomEvent("flixit-episode-completion-changed", {
-      detail: { mediaId, source },
-    }));
-  } catch {}
-}
-
-function completeBefore(mediaId, seasons, targetSeason, targetEpisode) {
-  const completed = readCompleted(mediaId);
-  for (const season of seasons || []) {
-    const seasonNumber = Number(season?.season_number || 0);
-    if (!seasonNumber || seasonNumber > targetSeason) continue;
-    const count = Math.max(0, Number(season?.episode_count || 0));
-    if (seasonNumber < targetSeason) {
-      for (let episode = 1; episode <= count; episode += 1) {
-        completed.add(`${seasonNumber}:${episode}`);
-      }
-    } else {
-      for (let episode = 1; episode < targetEpisode; episode += 1) {
-        completed.add(`${seasonNumber}:${episode}`);
-      }
-    }
-  }
-  writeCompleted(mediaId, completed);
-  return completed;
 }
 
 function SeasonSelect({ seasons, value, onChange }) {
@@ -136,17 +111,19 @@ function SeasonSelect({ seasons, value, onChange }) {
 }
 
 function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, currentEpisode, completed) {
+  // Completed is an explicit playback fact, never inferred merely because the
+  // user selected a later episode.
   if (completed?.has(`${seasonNumber}:${episodeNumber}`)) return { kind: "done" };
-  if (progressItem && (seasonNumber < currentSeason || (seasonNumber === currentSeason && episodeNumber < currentEpisode))) {
-    return { kind: "done" };
-  }
+
   if (progressItem && seasonNumber === currentSeason && episodeNumber === currentEpisode) {
     const duration = Number(progressItem.duration || 0);
     const progress = Number(progressItem.progress || 0);
     if (duration > 0 && progress > 0) {
+      const ratio = progress / duration;
+      if (ratio >= 0.95) return { kind: "done" };
       return {
         kind: "progress",
-        percent: Math.min(100, Math.max(3, (progress / duration) * 100)),
+        percent: Math.min(100, Math.max(3, ratio * 100)),
         remainingMinutes: Math.max(1, Math.ceil(Math.max(0, duration - progress) / 60)),
       };
     }
@@ -156,8 +133,7 @@ function episodeState(episodeNumber, seasonNumber, progressItem, currentSeason, 
 
 export default function DetailEpisodes({ mediaId, data, episodesState }) {
   const navigate = useNavigate();
-  const { saveProgress } = useContinueWatching();
-  const { progressItem, season: currentSeason, episode: currentEpisode, backdropUrl, title } = data;
+  const { progressItem, season: currentSeason, episode: currentEpisode, backdropUrl } = data;
   const { seasons, selected, setSelected, episodes, loadingSeasons, loadingEpisodes } = episodesState;
   const [completedVersion, setCompletedVersion] = useState(0);
 
@@ -166,39 +142,26 @@ export default function DetailEpisodes({ mediaId, data, episodesState }) {
       if (event?.detail?.mediaId && Number(event.detail.mediaId) !== Number(mediaId)) return;
       setCompletedVersion((value) => value + 1);
     };
+    const onStorage = (event) => {
+      if (!event.key || event.key.startsWith("flixit-completed-episodes:") || event.key === "user_token" || event.key === "netflix_user_id") {
+        setCompletedVersion((value) => value + 1);
+      }
+    };
     window.addEventListener("flixit-episode-completion-changed", refresh);
-    return () => window.removeEventListener("flixit-episode-completion-changed", refresh);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("flixit-episode-completion-changed", refresh);
+      window.removeEventListener("storage", onStorage);
+    };
   }, [mediaId]);
 
   const completed = useMemo(() => readCompleted(mediaId), [mediaId, completedVersion]);
 
   const play = (episode) => {
     const episodeNumber = Number(episode?.episode_number || episode || 1);
-    const nextCompleted = completeBefore(mediaId, seasons, Number(selected), episodeNumber);
-    setCompletedVersion((value) => value + 1);
-
-    const runtimeSeconds = Number(episode?.runtime || 0) > 0
-      ? Number(episode.runtime) * 60
-      : Math.max(60, Number(progressItem?.duration || 2700));
-
-    // Record the selected episode immediately. Ten seconds is deliberately below
-    // WatchPage's 30-second resume threshold, so playback still starts at 0 while
-    // the series cursor advances and all earlier episodes render as completed.
-    saveProgress({
-      tmdb_id: Number(mediaId),
-      media_type: "tv",
-      progress: 10,
-      duration: runtimeSeconds,
-      title: title || progressItem?.title || `Serie TV ${mediaId}`,
-      backdrop_path: progressItem?.backdrop_path || backdropUrl || "",
-      poster_path: progressItem?.poster_path || "",
-      season: Number(selected),
-      episode: episodeNumber,
-    });
-
-    // Keep the write referenced so aggressive minifiers cannot drop the local
-    // completion update before navigation.
-    void nextCompleted;
+    // Selecting an episode is navigation, not evidence that it or any prior
+    // episode was watched. WatchPage/WatchEpisodeAdvanceTracker records progress
+    // only after real media playback events.
     warmPlayback("tv", mediaId, selected, episodeNumber);
     window.scrollTo(0, 0);
     navigate(`/${MAIN_PATH.watch}/tv/${mediaId}?s=${selected}&e=${episodeNumber}`);
