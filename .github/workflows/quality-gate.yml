@@ -56,3 +56,5 @@ jobs:
         run: python backend/tests/test_strict_audio_evidence_v10.py
       - name: Verify v14 metadata-first episode visibility
         run: python backend/tests/test_episode_availability_v12.py
+      - name: Verify v15 strict Italian episode catalogue
+        run: python backend/tests/test_strict_italian_episode_catalog_v15.py
