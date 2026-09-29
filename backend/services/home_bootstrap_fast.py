@@ -1,18 +1,26 @@
-"""Compact first-paint Home endpoint.
+"""Ultra-fast first-paint Home endpoint.
 
-This endpoint never rebuilds the full catalogue in the user's request. It reads
-the persistent snapshot directly, trims it before FastAPI serializes the payload,
-and schedules any expensive refresh in the background. The canonical full Home
-endpoint remains responsible for rebuilding stale data.
+The request path is intentionally boring: return the last persistent snapshot
+from process memory and move every refresh/rebuild outside the user's request.
+MongoDB is touched only when the worker hot cache is cold or periodically
+reloaded. This keeps F5 latency stable even when Atlas/providers are slow.
 """
 from __future__ import annotations
 
 import asyncio
+import time
 
 from fastapi import APIRouter
 
 FAST_ROWS = 8
 FAST_ITEMS_PER_ROW = 18
+HOT_RELOAD_SECONDS = 5 * 60
+HOT_REFRESH_SETTLE_SECONDS = 2.0
+
+_hot_payload: dict | None = None
+_hot_generated = None
+_hot_loaded_at = 0.0
+_hot_reload_tasks: set[asyncio.Task] = set()
 
 
 def _compact(payload: dict) -> dict:
@@ -33,14 +41,48 @@ def _compact(payload: dict) -> dict:
     }
 
 
-def _empty(hero=None) -> dict:
+def _empty() -> dict:
     return {
         "compact": True,
-        "hero": hero,
+        "hero": None,
         "rows": [],
         "row_count": 0,
         "total_row_count": 0,
     }
+
+
+def _read_hot(core, home, *, force: bool = False):
+    global _hot_payload, _hot_generated, _hot_loaded_at
+    now = time.monotonic()
+    if (
+        not force
+        and _hot_payload is not None
+        and now - _hot_loaded_at < HOT_RELOAD_SECONDS
+    ):
+        return _hot_payload, _hot_generated
+
+    payload, generated = home._read_snapshot(core)
+    if payload:
+        _hot_payload = payload
+        _hot_generated = generated
+        _hot_loaded_at = now
+    return payload, generated
+
+
+def _schedule_hot_reload(core, home) -> None:
+    if any(not task.done() for task in _hot_reload_tasks):
+        return
+
+    async def runner():
+        try:
+            await asyncio.sleep(HOT_REFRESH_SETTLE_SECONDS)
+            await asyncio.to_thread(_read_hot, core, home, force=True)
+        except Exception:
+            pass
+
+    task = asyncio.create_task(runner())
+    _hot_reload_tasks.add(task)
+    task.add_done_callback(_hot_reload_tasks.discard)
 
 
 def install_home_bootstrap_fast(app) -> bool:
@@ -54,66 +96,50 @@ def install_home_bootstrap_fast(app) -> bool:
 
     @router.get("/api/public/home-bootstrap-fast", tags=["catalog"])
     async def public_home_bootstrap_fast():
-        payload, generated = await asyncio.to_thread(home._read_snapshot, core)
+        payload, generated = await asyncio.to_thread(_read_hot, core, home)
 
         if payload:
-            version_stale = payload.get("version") != home.SNAPSHOT_VERSION
-
-            # A version-stale snapshot may still be useful for first-paint rows,
-            # but never send its old Hero/logo back to React. Rehydrate the Hero
-            # through the current SC-only policy immediately while the full row
-            # snapshot rebuild runs in the background.
-            if version_stale:
-                try:
-                    home._schedule_refresh(app, core)
-                except Exception:
-                    pass
-                try:
-                    fresh_hero = await home._load_current_hero(app)
-                except Exception:
-                    fresh_hero = None
-                if fresh_hero:
-                    payload = {**payload, "hero": fresh_hero}
-
-            try:
-                current_settings = await asyncio.to_thread(home._current_hero_settings, core)
-                cached_hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
-                if home._hero_fingerprint(current_settings) != home._hero_fingerprint(cached_hero):
-                    fresh_hero = await home._load_current_hero(app)
-                    if fresh_hero:
-                        updated = dict(payload)
-                        # Only mark the persisted payload as current when the old
-                        # snapshot version was already current. A version-stale
-                        # row set must remain stale so /home-bootstrap rebuilds it.
-                        if not version_stale:
-                            updated["version"] = home.SNAPSHOT_VERSION
-                        updated["hero"] = fresh_hero
-                        if not version_stale:
-                            await asyncio.to_thread(home._persist_snapshot_payload, core, updated, generated)
-                        payload = updated
-            except Exception:
-                pass
-
             try:
                 age = home._now() - generated if generated else None
-                if version_stale or age is None or age >= home.FRESH_FOR:
+                stale = (
+                    payload.get("version") != home.SNAPSHOT_VERSION
+                    or age is None
+                    or age >= home.FRESH_FOR
+                )
+                if stale:
                     home._schedule_refresh(app, core)
+                    _schedule_hot_reload(core, home)
             except Exception:
                 pass
-
             return _compact(payload)
 
+        # A brand-new database has no snapshot yet. Never make the first user
+        # build the catalogue; start the build and return immediately. Existing
+        # deployments normally never enter this branch because snapshots persist.
         try:
             home._schedule_refresh(app, core)
+            _schedule_hot_reload(core, home)
+        except Exception:
+            pass
+        return _empty()
+
+    async def prime_hot_snapshot() -> None:
+        try:
+            payload, generated = await asyncio.to_thread(_read_hot, core, home, force=True)
+            if (
+                not payload
+                or payload.get("version") != home.SNAPSHOT_VERSION
+                or not generated
+                or home._now() - generated >= home.FRESH_FOR
+            ):
+                home._schedule_refresh(app, core)
+                _schedule_hot_reload(core, home)
         except Exception:
             pass
 
-        hero = None
-        try:
-            hero = await home._load_current_hero(app)
-        except Exception:
-            pass
-        return _empty(hero)
+    @app.on_event("startup")
+    async def _prime_fast_home_snapshot_on_startup():
+        asyncio.create_task(prime_hot_snapshot())
 
     app.include_router(router)
     app.state.flixit_home_bootstrap_fast_registered = True
