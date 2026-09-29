@@ -14,6 +14,8 @@ interface HeroSettings {
   assets?: any;
 }
 
+const HERO_LOCK_MS = 10 * 60 * 1000;
+
 function heroProfile() {
   if (typeof window === 'undefined') return 'guest';
   try {
@@ -91,8 +93,6 @@ function normalizeHero(value: any, extraArtwork: any = null, mediaAssets: any = 
     : null;
   const scLogo = officialScLogo || embeddedScLogo || null;
 
-  // Keep media/backdrop metadata, but make every Hero logo-bearing field SC-only
-  // so the later HeroSection cannot resurrect TMDB/Netflix/legacy title logos.
   const normalizedAssets = {
     ...media,
     ...assets,
@@ -228,9 +228,6 @@ async function enrichHero(value: any, signal?: AbortSignal) {
   const id = Number(normalized.contentId);
   if (!id) return normalized;
 
-  // Even when the bootstrap already supplied a usable backdrop, resolve the
-  // official artwork once so an SC title logo can be recovered. Previously the
-  // early return on customBackdrop meant the logo lookup was skipped entirely.
   try {
     const [officialResponse, mediaResponse] = await Promise.all([
       fetch(`/api/public/official-artwork/${mediaType}/${id}`, {
@@ -268,9 +265,20 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
   const hydrated = heroMatchesMediaType(candidate, mediaFilter) ? candidate : null;
 
   return useQuery<HeroSettings | null>({
-    queryKey: ['hero-settings-v9-media-filter', profile, viewport, mediaFilter || 'all'],
+    queryKey: ['hero-settings-v10-locked-first-paint', profile, viewport, mediaFilter || 'all'],
     queryFn: async ({ signal }: any) => {
       try {
+        // The Home bootstrap is the source of truth for this page visit. Enrich
+        // that exact title, but never replace it with a second /api/public/hero
+        // result after the user has already seen the first backdrop.
+        if (hydrated?.contentId && !mediaFilter) {
+          const locked = await enrichHero(hydrated, signal);
+          if (typeof window !== 'undefined') {
+            (window as any).__flixitHomeHero = locked;
+          }
+          return locked;
+        }
+
         const response = await fetch('/api/public/hero', {
           signal,
           cache: 'no-store',
@@ -279,11 +287,7 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
 
         const data = response.ok ? await response.json() : null;
         if (data?.contentId && heroMatchesMediaType(data, mediaFilter)) {
-          const normalized = await enrichHero(data, signal);
-          if (typeof window !== 'undefined' && !mediaFilter) {
-            (window as any).__flixitHomeHero = normalized;
-          }
-          return normalized;
+          return enrichHero(data, signal);
         }
 
         if (mediaFilter) {
@@ -307,11 +311,11 @@ export function useHeroData(initialHero: HeroSettings | null = null) {
     },
     initialData: hydrated?.contentId ? normalizeHero(hydrated) : undefined,
     initialDataUpdatedAt: hydrated?.contentId ? Date.now() : undefined,
-    staleTime: 0,
+    staleTime: HERO_LOCK_MS,
     gcTime: 30 * 60 * 1000,
-    refetchOnWindowFocus: true,
-    refetchOnReconnect: true,
-    refetchOnMount: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false,
     retry: 1,
   });
 }
