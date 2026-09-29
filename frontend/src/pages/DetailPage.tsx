@@ -21,7 +21,7 @@ import DetailSimilar from "./detail/DetailSimilar";
 import { API_URL, detailTabsFor, warmPlayback } from "./detail/detailUtils";
 import "./detail/detail-page.css";
 
-const AVAILABILITY_CACHE_PREFIX = "flixit:availability:v1:";
+const AVAILABILITY_CACHE_PREFIX = "flixit:availability:v2-strict-it:";
 const AVAILABILITY_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 export async function loader() {
@@ -142,6 +142,15 @@ export function Component() {
     () => warmPlayback(typeSlug, mediaId, data.season, data.episode),
     [typeSlug, mediaId, data.season, data.episode]
   );
+
+  // Resolve the exact target while the user reads the Detail page, not after
+  // Play is clicked. The global player coalescer lets Watch reuse this request.
+  useEffect(() => {
+    if (!validType || !mediaId || !data.detail || italianAvailability !== "available") return;
+    const timer = window.setTimeout(() => { void warm(); }, 80);
+    return () => window.clearTimeout(timer);
+  }, [validType, mediaId, data.detail, italianAvailability, warm]);
+
   const goPlay = useCallback(() => {
     if (italianAvailability !== "available") return;
     warm();
@@ -197,73 +206,35 @@ export function Component() {
   }
 
   return (
-    <Box
-      component="main"
-      className="dp-page"
-      data-testid="detail-page"
-      data-media-type={typeSlug}
-      sx={{ pt: { xs: 0, md: "80px" } }}
-    >
+    <Box component="main" className="dp-page" data-testid="detail-page" data-media-type={typeSlug} sx={{ pt: { xs: 0, md: "80px" } }}>
       <DetailAmbientExact />
       <DetailHero data={data} mediaId={mediaId} onPlay={goPlay} onWarm={warm} onMoreInfo={showMoreInfo} />
       <DetailTabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
       <div className="dp-content">
-        <section
-          className="dp-panel"
-          role="tabpanel"
-          id="dp-panel-overview"
-          aria-labelledby="dp-tab-overview"
-          data-testid="detail-panel-overview"
-          hidden={activeTab !== "overview"}
-        >
+        <section className="dp-panel" role="tabpanel" id="dp-panel-overview" aria-labelledby="dp-tab-overview" data-testid="detail-panel-overview" hidden={activeTab !== "overview"}>
           <DetailOverview data={data} onPlay={goPlay} onWarm={warm} />
         </section>
 
         {data.isTV ? (
-          <section
-            className="dp-panel"
-            role="tabpanel"
-            id="dp-panel-episodes"
-            aria-labelledby="dp-tab-episodes"
-            data-testid="detail-panel-episodes"
-            hidden={activeTab !== "episodes"}
-          >
+          <section className="dp-panel" role="tabpanel" id="dp-panel-episodes" aria-labelledby="dp-tab-episodes" data-testid="detail-panel-episodes" hidden={activeTab !== "episodes"}>
             <DetailEpisodes mediaId={mediaId} data={data} episodesState={episodesState} />
           </section>
         ) : null}
 
         {activeTab === "trailers" ? (
-          <section
-            className="dp-panel"
-            role="tabpanel"
-            id="dp-panel-trailers"
-            aria-labelledby="dp-tab-trailers"
-            data-testid="detail-panel-trailers"
-          >
+          <section className="dp-panel" role="tabpanel" id="dp-panel-trailers" aria-labelledby="dp-tab-trailers" data-testid="detail-panel-trailers">
             <DetailTrailers data={data} />
           </section>
         ) : null}
 
         {activeTab === "download" ? (
-          <section
-            className="dp-panel"
-            role="tabpanel"
-            id="dp-panel-download"
-            aria-labelledby="dp-tab-download"
-            data-testid="detail-panel-download"
-          >
+          <section className="dp-panel" role="tabpanel" id="dp-panel-download" aria-labelledby="dp-tab-download" data-testid="detail-panel-download">
             <DetailDownload />
           </section>
         ) : null}
 
         {activeTab === "similar" ? (
-          <section
-            className="dp-panel"
-            role="tabpanel"
-            id="dp-panel-similar"
-            aria-labelledby="dp-tab-similar"
-            data-testid="detail-panel-similar"
-          >
+          <section className="dp-panel" role="tabpanel" id="dp-panel-similar" aria-labelledby="dp-tab-similar" data-testid="detail-panel-similar">
             <DetailSimilar items={similar.items} loading={similar.loading} isTV={data.isTV} />
           </section>
         ) : null}
