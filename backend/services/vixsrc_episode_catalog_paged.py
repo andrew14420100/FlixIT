@@ -3,7 +3,8 @@
 Recent VixSrc responses may be Laravel-style paginated objects (`data`,
 `current_page`, `last_page`) while older deployments returned one JSON array.
 Fetch page 1 first, then load remaining pages concurrently with a bounded pool.
-The resulting set is handed back to strict_audio_evidence and persisted there.
+Only a *complete* page set replaces the authoritative catalogue; partial network
+failures keep the last persisted snapshot instead of hiding valid episodes.
 """
 from __future__ import annotations
 
@@ -58,8 +59,6 @@ def install_paged_episode_catalog(policy_module) -> bool:
                 if persisted:
                     policy_module._catalog_keys = persisted
                     policy_module._catalog_loaded_at = loaded_at or time.monotonic()
-                    # A recently persisted complete catalogue is immediately
-                    # usable; refresh it later instead of blocking startup.
                     if (
                         not force
                         and time.monotonic() - policy_module._catalog_loaded_at
@@ -100,8 +99,12 @@ def install_paged_episode_catalog(policy_module) -> bool:
                         current = 1
                         last = 1
 
-                    # Hard guard against a malformed/unbounded pagination value.
-                    last = min(max(current, last), 500)
+                    # Known clients cap this endpoint at 500 pages. If the server
+                    # reports anything larger, refuse to publish a truncated set.
+                    if last < current or last > 500:
+                        return bool(policy_module._catalog_keys)
+
+                    complete = True
                     if last > current:
                         semaphore = asyncio.Semaphore(12)
 
@@ -113,18 +116,23 @@ def install_paged_episode_catalog(policy_module) -> bool:
                                         params={"lang": "it", "page": page},
                                     )
                                     if response.status_code != 200:
-                                        return set()
+                                        return None
                                     return policy_module._parse_episode_catalog(response.json())
                                 except Exception:
-                                    return set()
+                                    return None
 
                         results = await asyncio.gather(
                             *(fetch_page(page) for page in range(current + 1, last + 1)),
                             return_exceptions=True,
                         )
                         for result in results:
-                            if isinstance(result, set):
-                                keys.update(result)
+                            if not isinstance(result, set):
+                                complete = False
+                                break
+                            keys.update(result)
+
+                    if not complete:
+                        return bool(policy_module._catalog_keys)
 
                 if keys:
                     policy_module._catalog_keys = keys
