@@ -24,6 +24,7 @@ import { avatarSrc } from "src/config/avatars";
 
 const API_URL = "";
 const MENU_CACHE_KEY = "flixit_public_menu_v4_premium";
+const USER_CACHE_KEY = "flixit_current_user_v1";
 const MENU_CACHE_MS = 30 * 60 * 1000;
 const ME_MEMO_MS = 60 * 1000;
 
@@ -82,6 +83,35 @@ function normalizeMenuItems(items) {
 let menuMemo: { at: number; promise: Promise<any> } | null = null;
 let meMemo: { token: string; at: number; promise: Promise<any> } | null = null;
 
+function tokenMarker(token) {
+  const value = String(token || "");
+  return value ? value.slice(-16) : "";
+}
+
+function readCachedUser() {
+  if (typeof window === "undefined") return null;
+  try {
+    const token = localStorage.getItem("user_token");
+    if (!token) return null;
+    const cached = JSON.parse(localStorage.getItem(USER_CACHE_KEY) || "null");
+    if (!cached?.user || cached?.tokenMarker !== tokenMarker(token)) return null;
+    return cached.user;
+  } catch {
+    return null;
+  }
+}
+
+function persistCachedUser(token, user) {
+  if (!token || !user) return;
+  try {
+    localStorage.setItem(USER_CACHE_KEY, JSON.stringify({
+      tokenMarker: tokenMarker(token),
+      savedAt: Date.now(),
+      user,
+    }));
+  } catch {}
+}
+
 function readMenuCache() {
   try {
     const cached = JSON.parse(localStorage.getItem(MENU_CACHE_KEY) || "null");
@@ -119,35 +149,47 @@ function fetchMeShared(token: string) {
   if (meMemo?.token === token && now - meMemo.at < ME_MEMO_MS) return meMemo.promise;
   const promise = fetch(`${API_URL}/api/auth/me`, {
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    cache: "no-store",
   })
-    .then((response) => response.ok ? response.json() : null)
+    .then(async (response) => {
+      if (!response.ok) return null;
+      const data = await response.json().catch(() => null);
+      if (data) persistCachedUser(token, data);
+      return data;
+    })
     .catch(() => null);
   meMemo = { token, at: now, promise };
   return promise;
+}
+
+const BOOT_USER = readCachedUser();
+if (typeof window !== "undefined" && typeof Image !== "undefined") {
+  try {
+    const bootAvatar = new Image();
+    bootAvatar.fetchPriority = "high";
+    bootAvatar.decoding = "async";
+    bootAvatar.src = avatarSrc(BOOT_USER?.profileImage || null);
+  } catch {}
 }
 
 const MainHeader = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isOffset = useOffSetTop(APP_BAR_HEIGHT);
-  const [menuItems, setMenuItems] = React.useState(() => readMenuCache()?.items || NAV_ITEMS);
+  const [menuItems] = React.useState(() => readMenuCache()?.items || NAV_ITEMS);
   const [anchorElNav, setAnchorElNav] = React.useState(null);
   const [anchorElUser, setAnchorElUser] = React.useState(null);
-  const [userInfo, setUserInfo] = React.useState(null);
+  const [userInfo, setUserInfo] = React.useState(() => BOOT_USER || readCachedUser());
 
   React.useEffect(() => {
     let cancelled = false;
     let idleId: any = null;
     let timer = 0;
     const cached = readMenuCache();
-    if (cached?.items?.length) setMenuItems(cached.items);
 
-    const refreshMenu = () => {
-      fetchMenuShared().then((data) => {
-        if (!cancelled && data?.items?.length) setMenuItems(data.items);
-      });
-    };
-
+    // Menu changes are refreshed only for the next render. Never mutate the
+    // visible header after first paint and create the impression that it loads.
+    const refreshMenu = () => { void fetchMenuShared(); };
     const cacheIsFresh = cached?.savedAt && Date.now() - Number(cached.savedAt) < MENU_CACHE_MS;
     if (!cacheIsFresh) {
       if ("requestIdleCallback" in window) {
@@ -297,6 +339,7 @@ const MainHeader = () => {
             <Avatar
               variant="rounded"
               src={avatarImage}
+              imgProps={{ loading: "eager", fetchPriority: "high", decoding: "sync" }}
               alt={isLoggedIn ? (userInfo?.name || 'Profilo') : 'Ospite'}
               data-testid="header-avatar"
               sx={{
@@ -322,7 +365,13 @@ const MainHeader = () => {
               user={userInfo}
               avatarImage={avatarImage}
               onNavigate={(to) => { setAnchorElUser(null); navigate(to); }}
-              onLogout={() => { setAnchorElUser(null); localStorage.removeItem('user_token'); localStorage.removeItem('admin_token'); window.location.reload(); }}
+              onLogout={() => {
+                setAnchorElUser(null);
+                localStorage.removeItem('user_token');
+                localStorage.removeItem('admin_token');
+                localStorage.removeItem(USER_CACHE_KEY);
+                window.location.reload();
+              }}
             />
           )}
         </Stack>
