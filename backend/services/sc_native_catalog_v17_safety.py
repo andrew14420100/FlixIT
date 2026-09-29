@@ -5,6 +5,10 @@ import asyncio
 import time
 
 
+def _truthy(value) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def install_sc_v17_safety() -> None:
     from services import sc_native_catalog_v17 as base
 
@@ -15,6 +19,10 @@ def install_sc_v17_safety() -> None:
 
     async def get_title_with_type(client, path: str, preferred_base: str = ""):
         title, working_base = await original_get_title(client, path, preferred_base)
+        # SC exposes `sub_ita` on the title. The user asked for dubbed Italian
+        # only, so subtitle-only/original-language titles never enter the index.
+        if title and _truthy(title.get("sub_ita")):
+            return {}, working_base
         if title and not title.get("type"):
             has_seasons = bool(title.get("seasons")) or bool(base._int(title.get("seasons_count")))
             if has_seasons:
@@ -32,14 +40,10 @@ def install_sc_v17_safety() -> None:
         now = time.monotonic()
         if base._catalog_complete:
             if not full_crawl_clock["completed"]:
-                # A persisted completed catalogue was hydrated after this patch
-                # was installed. Do not immediately re-crawl the whole archive.
                 full_crawl_clock["completed"] = now
                 return 0, True
             if now - full_crawl_clock["completed"] < base.FULL_REFRESH_SECONDS:
                 return 0, True
-            # The broad refresh window is due. Existing membership remains in
-            # memory while individual titles are refreshed; failures never erase it.
             base._catalog_complete = False
 
         success, finished = await original_crawl_batch(db)
