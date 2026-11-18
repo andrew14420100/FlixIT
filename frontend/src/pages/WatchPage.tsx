@@ -129,7 +129,7 @@ function approvedVidZenEmbed(mediaType, id, season, episode) {
     const url = new URL(entries[key]);
     if (!["https://vidzen.fun", "https://www.vidzen.fun"].includes(url.origin) || url.username || url.password) return null;
     if (!url.searchParams.has("sub")) url.searchParams.set("sub", "it");
-    if (!url.searchParams.has("autoPlay")) url.searchParams.set("autoPlay", "false");
+    url.searchParams.set("autoPlay", "true");
     return url.toString();
   } catch {
     return null;
@@ -150,7 +150,7 @@ function AuthorizedVidZenPlayer({ src }) {
         title="Player video VidZen"
         src={src}
         sandbox="allow-scripts allow-same-origin allow-presentation"
-        allow="encrypted-media; fullscreen"
+        allow="autoplay; encrypted-media; fullscreen"
         allowFullScreen
         referrerPolicy="no-referrer"
         style={{ border: 0, width: "100%", flex: 1, minHeight: 0 }}
