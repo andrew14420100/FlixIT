@@ -114,11 +114,74 @@ function cacheStream(mediaType, tmdbId, season, episode, data) {
   } catch {}
 }
 
+// Production integration for licensed titles only. Build-time variables are public;
+// never put credentials in them. Use a JSON array of authorized movie TMDB IDs
+// or a JSON object of exact authorized embed URLs keyed by cacheKeyFor().
+function resolveAuthorizedVidZen(mediaType, id, season, episode, startAt) {
+  if (!/^[1-9]\d*$/.test(String(id)) || !["movie", "tv"].includes(mediaType)) return null;
+  if (mediaType === "tv" && (!/^[1-9]\d*$/.test(season) || !/^[1-9]\d*$/.test(episode))) return null;
+  try {
+    const embeds = JSON.parse(process.env.REACT_APP_AUTHORIZED_VIDZEN_EMBEDS || "{}");
+    const movieIds = JSON.parse(process.env.REACT_APP_AUTHORIZED_VIDZEN_MOVIE_IDS || "[]");
+    const key = cacheKeyFor(mediaType, id, season, episode);
+    let source = Object.prototype.hasOwnProperty.call(embeds, key) && typeof embeds[key] === "string" ? embeds[key] : null;
+    if (!source && mediaType === "movie" && Array.isArray(movieIds) && movieIds.some(value => String(value) === String(id))) {
+      source = `https://vidzen.fun/movie/${id}`;
+    }
+    if (!source) return null;
+    const url = new URL(source);
+    if (!["https://vidzen.fun", "https://www.vidzen.fun"].includes(url.origin) || url.username || url.password) return null;
+    url.searchParams.set("autoPlay", "true");
+    if (!url.searchParams.has("sub")) url.searchParams.set("sub", "it");
+    if (!url.searchParams.has("theme")) url.searchParams.set("theme", "e50914");
+    if (!url.searchParams.has("fullscreenButton")) url.searchParams.set("fullscreenButton", "true");
+    // Provider-specific server identifiers must be configured after verification.
+    const preferredServer = process.env.REACT_APP_VIDZEN_PREFERRED_SERVER;
+    if (preferredServer && !url.searchParams.has("server")) url.searchParams.set("server", preferredServer);
+    if (startAt !== null && /^\d+$/.test(startAt) && Number.isSafeInteger(Number(startAt))) {
+      url.searchParams.set("startAt", String(Number(startAt)));
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function AuthorizedVidZenPlayer({ src, onNative }) {
+  const navigate = useNavigate();
+  return (
+    <Box sx={{ position: "fixed", inset: 0, bgcolor: "#000", zIndex: 9999, display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1, py: 0.5, color: "#fff" }}>
+        <IconButton aria-label="Indietro" onClick={() => navigate(-1)} sx={{ color: "#fff" }}>
+          <ArrowBackIcon />
+        </IconButton>
+        <Typography variant="body2" sx={{ flex: 1 }}>VidZen · Qualità e audio dipendono dalla sorgente</Typography>
+        <Button color="inherit" onClick={onNative}>Player FlixIT</Button>
+      </Box>
+      <iframe title="Player VidZen" src={src}
+        sandbox="allow-scripts allow-same-origin allow-presentation"
+        allow="autoplay; encrypted-media; fullscreen" allowFullScreen
+        referrerPolicy="no-referrer"
+        style={{ border: 0, width: "100%", flex: 1, minHeight: 0 }}
+      />
+    </Box>
+  );
+}
+
+function PlaybackSelection({ embed }) {
+  const [native, setNative] = useState(false);
+  if (embed && !native) return <AuthorizedVidZenPlayer src={embed} onNative={() => setNative(true)} />;
+  return <WatchPlayer />;
+}
+
 export function Component() {
   const { mediaType, id } = useParams();
   const [searchParams] = useSearchParams();
-  const playerKey = `${mediaType}-${id}-${searchParams.get("s") || "1"}-${searchParams.get("e") || "1"}`;
-  return <WatchPlayer key={playerKey} />;
+  const season = searchParams.get("s") || "1";
+  const episode = searchParams.get("e") || "1";
+  const playerKey = `${mediaType}-${id}-${season}-${episode}`;
+  const embed = resolveAuthorizedVidZen(mediaType, id, season, episode, searchParams.get("t"));
+  return <PlaybackSelection key={playerKey} embed={embed} />;
 }
 
 function WatchPlayer() {
