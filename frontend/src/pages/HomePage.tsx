@@ -6,6 +6,7 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 
 import HeroSection from "src/components/HeroSection";
+import { LocalLibraryPreview } from "src/pages/LocalLibraryPage";
 import HomepageSlider from "src/components/HomepageSlider";
 import Top10Slider from "src/components/Top10Slider";
 import { useContinueWatching } from "src/hooks/useContinueWatching";
@@ -312,6 +313,8 @@ export function Component() {
           }}
         />
       )}
+
+      {!filteredPage && <LocalLibraryPreview />}
 
       {hasReadyRows && (
         <Stack

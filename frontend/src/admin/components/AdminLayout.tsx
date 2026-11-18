@@ -63,6 +63,7 @@ const menuGroups: Array<{ label: string; items: NavItem[] }> = [
     label: 'Catalogo',
     items: [
       { text: 'Contenuti', icon: <MovieCreationOutlinedIcon />, path: 'contents' },
+      { text: 'FlixIT Studio', icon: <MovieCreationOutlinedIcon />, path: 'studio' },
       { text: 'Hero', icon: <ViewCarouselOutlinedIcon />, path: 'hero' },
       { text: 'Sezioni', icon: <ViewAgendaOutlinedIcon />, path: 'sections' },
       { text: 'In arrivo', icon: <UpcomingOutlinedIcon />, path: 'coming-soon' },
