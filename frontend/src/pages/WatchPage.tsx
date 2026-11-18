@@ -114,10 +114,59 @@ function cacheStream(mediaType, tmdbId, season, episode, data) {
   } catch {}
 }
 
+// Optional, disabled-by-default experiment. The operator must obtain permission
+// to embed each listed title before adding its exact provider URL at build time.
+// REACT_APP_AUTHORIZED_VIDZEN_EMBEDS is a JSON object keyed by
+// movie:TMDB_ID:0:0 or tv:TMDB_ID:SEASON:EPISODE. Do not store secrets here.
+// Unlisted titles keep the current native playback path.
+function approvedVidZenEmbed(mediaType, id, season, episode) {
+  if (!/^[1-9]\d*$/.test(String(id)) || !["movie", "tv"].includes(mediaType)) return null;
+  if (mediaType === "tv" && (!/^[1-9]\d*$/.test(season) || !/^[1-9]\d*$/.test(episode))) return null;
+  try {
+    const entries = JSON.parse(process.env.REACT_APP_AUTHORIZED_VIDZEN_EMBEDS || "{}");
+    const key = cacheKeyFor(mediaType, id, season, episode);
+    if (!Object.prototype.hasOwnProperty.call(entries, key) || typeof entries[key] !== "string") return null;
+    const url = new URL(entries[key]);
+    if (!["https://vidzen.fun", "https://www.vidzen.fun"].includes(url.origin) || url.username || url.password) return null;
+    if (!url.searchParams.has("sub")) url.searchParams.set("sub", "it");
+    if (!url.searchParams.has("autoPlay")) url.searchParams.set("autoPlay", "false");
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function AuthorizedVidZenPlayer({ src }) {
+  const navigate = useNavigate();
+  return (
+    <Box sx={{ position: "fixed", inset: 0, bgcolor: "#000", zIndex: 9999, display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1, py: 0.5, color: "#fff" }}>
+        <IconButton aria-label="Indietro" onClick={() => navigate(-1)} sx={{ color: "#fff" }}>
+          <ArrowBackIcon />
+        </IconButton>
+        <Typography variant="body2">VidZen · Player esterno · Qualità e audio dipendono dal titolo</Typography>
+      </Box>
+      <iframe
+        title="Player video VidZen"
+        src={src}
+        sandbox="allow-scripts allow-same-origin allow-presentation"
+        allow="encrypted-media; fullscreen"
+        allowFullScreen
+        referrerPolicy="no-referrer"
+        style={{ border: 0, width: "100%", flex: 1, minHeight: 0 }}
+      />
+    </Box>
+  );
+}
+
 export function Component() {
   const { mediaType, id } = useParams();
   const [searchParams] = useSearchParams();
-  const playerKey = `${mediaType}-${id}-${searchParams.get("s") || "1"}-${searchParams.get("e") || "1"}`;
+  const season = searchParams.get("s") || "1";
+  const episode = searchParams.get("e") || "1";
+  const playerKey = `${mediaType}-${id}-${season}-${episode}`;
+  const embed = approvedVidZenEmbed(mediaType, id, season, episode);
+  if (embed) return <AuthorizedVidZenPlayer key={playerKey} src={embed} />;
   return <WatchPlayer key={playerKey} />;
 }
 
